@@ -1,0 +1,149 @@
+{
+  "resource_group": "sentinel-layer-rg",
+  "subscription_id": "demo-subscription-id",
+  "resources": [
+    {
+      "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.Compute/virtualMachines/vm-23",
+      "name": "vm-23",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "eastus",
+      "sku": "Standard_D8s_v3",
+      "monthly_cost": 847.00,
+      "tags": {
+        "purpose": "disaster-recovery",
+        "environment": "production",
+        "criticality": "high",
+        "owner": "platform-team",
+        "dr-plan": "DR-2024-007"
+      },
+      "dependencies": [
+        "nic-vm23-primary",
+        "disk-vm23-os",
+        "nsg-east"
+      ],
+      "dependents": [
+        "dr-failover-service",
+        "backup-coordinator",
+        "compliance-monitor"
+      ]
+    },
+    {
+      "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.Compute/virtualMachines/api-server-03",
+      "name": "api-server-03",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "eastus",
+      "sku": "Standard_D8s_v3",
+      "monthly_cost": 847.00,
+      "tags": {
+        "environment": "production",
+        "service": "api-gateway",
+        "criticality": "high"
+      },
+      "dependencies": [
+        "nic-api03-primary",
+        "nsg-east",
+        "vnet-prod-subnet-api"
+      ],
+      "dependents": [
+        "web-frontend",
+        "mobile-backend",
+        "payment-api"
+      ]
+    },
+    {
+      "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.Compute/virtualMachines/web-tier-01",
+      "name": "web-tier-01",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "eastus",
+      "sku": "Standard_D4s_v3",
+      "monthly_cost": 420.00,
+      "tags": {
+        "environment": "production",
+        "service": "web-frontend",
+        "criticality": "medium",
+        "auto-scale": "enabled"
+      },
+      "dependencies": [
+        "nic-web01-primary",
+        "nsg-web",
+        "vnet-prod-subnet-web",
+        "lb-web-frontend"
+      ],
+      "dependents": []
+    },
+    {
+      "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.Network/networkSecurityGroups/nsg-east",
+      "name": "nsg-east",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "location": "eastus",
+      "tags": {
+        "environment": "production",
+        "criticality": "critical"
+      },
+      "governs": [
+        "vnet-prod-subnet-api",
+        "vnet-prod-subnet-internal",
+        "vnet-prod-subnet-admin"
+      ],
+      "rules": [
+        {"name": "allow-https", "port": 443, "access": "Allow"},
+        {"name": "allow-ssh-internal", "port": 22, "access": "Allow", "source": "10.0.0.0/8"},
+        {"name": "deny-all-inbound", "port": "*", "access": "Deny", "priority": 4096}
+      ]
+    },
+    {
+      "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.ContainerService/managedClusters/aks-prod",
+      "name": "aks-prod",
+      "type": "Microsoft.ContainerService/managedClusters",
+      "location": "eastus",
+      "sku": "Standard",
+      "node_count": 5,
+      "monthly_cost": 2100.00,
+      "tags": {
+        "environment": "production",
+        "criticality": "critical"
+      },
+      "services_hosted": [
+        "payment-api",
+        "notification-service",
+        "order-processing",
+        "user-auth"
+      ],
+      "dependencies": [
+        "vnet-prod-subnet-aks",
+        "acr-prod",
+        "keyvault-prod"
+      ]
+    },
+    {
+      "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.Storage/storageAccounts/storageshared01",
+      "name": "storageshared01",
+      "type": "Microsoft.Storage/storageAccounts",
+      "location": "eastus",
+      "monthly_cost": 125.00,
+      "tags": {
+        "environment": "production",
+        "purpose": "shared-messaging",
+        "criticality": "high"
+      },
+      "consumers": [
+        "order-processing",
+        "notification-service",
+        "analytics-pipeline",
+        "audit-logger"
+      ]
+    }
+  ],
+  "dependency_edges": [
+    {"from": "web-tier-01", "to": "api-server-03", "type": "http_dependency"},
+    {"from": "api-server-03", "to": "aks-prod", "type": "service_dependency"},
+    {"from": "payment-api", "to": "notification-service", "type": "circular_dependency"},
+    {"from": "notification-service", "to": "payment-api", "type": "circular_dependency"},
+    {"from": "order-processing", "to": "storageshared01", "type": "storage_dependency"},
+    {"from": "notification-service", "to": "storageshared01", "type": "storage_dependency"},
+    {"from": "vm-23", "to": "dr-failover-service", "type": "dr_dependency"},
+    {"from": "vm-23", "to": "backup-coordinator", "type": "dr_dependency"},
+    {"from": "nsg-east", "to": "api-server-03", "type": "network_governance"},
+    {"from": "nsg-east", "to": "admin-dashboard", "type": "network_governance"}
+  ]
+}

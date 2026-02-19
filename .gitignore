@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Azure Functions
+local.settings.json
+.python_packages/
+
+# Node / Dashboard
+dashboard/node_modules/
+dashboard/dist/
+dashboard/build/
+dashboard/.env
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Logs
+*.log
+
+# Secrets (NEVER commit)
+*.pem
+*.key
+*.cert

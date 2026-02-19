@@ -1,0 +1,46 @@
+# ============================================
+# SentinelLayer — Python Dependencies
+# ============================================
+
+# --- Azure Services ---
+azure-identity>=1.15.0
+azure-mgmt-resourcegraph>=8.0.0
+azure-search-documents>=11.4.0
+azure-cosmos>=4.5.0
+azure-functions>=1.18.0
+azure-monitor-query>=1.2.0
+azure-keyvault-secrets>=4.7.0
+
+# --- AI / LLM ---
+openai>=1.12.0
+
+# --- MCP Server ---
+mcp>=1.0.0
+
+# --- Web Framework (Dashboard API) ---
+fastapi>=0.109.0
+uvicorn>=0.27.0
+
+# --- Data Validation ---
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# --- Graph Database ---
+gremlinpython>=3.7.0
+
+# --- Async HTTP ---
+aiohttp>=3.9.0
+httpx>=0.27.0
+
+# --- Configuration ---
+python-dotenv>=1.0.0
+
+# --- Testing ---
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# --- Code Quality ---
+black>=24.0.0
+ruff>=0.2.0
+mypy>=1.8.0

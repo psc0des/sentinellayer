@@ -1,0 +1,86 @@
+[
+  {
+    "incident_id": "INC-2025-0847",
+    "description": "Payment service restart caused cascade failure due to circular dependency with notification-service",
+    "action_taken": "restart_service:payment-api",
+    "outcome": "2-hour outage affecting 12,000 users. $200K estimated revenue loss. Required manual intervention to break circular restart loop.",
+    "lesson": "Use staged restart with 2-minute connection drain. Never restart payment-api without first isolating notification-service dependency.",
+    "service": "payment-api",
+    "severity": "critical",
+    "date": "2025-06-15",
+    "resource_type": "Microsoft.ContainerService/managedClusters",
+    "tags": ["cascade-failure", "circular-dependency", "restart"]
+  },
+  {
+    "incident_id": "INC-2025-1204",
+    "description": "Disaster recovery VM deleted by cost optimization automation. VM had been idle for 30+ days as expected for standby DR.",
+    "action_taken": "delete_resource:vm-23",
+    "outcome": "DR plan compromised for 72 hours. $50K remediation cost to rebuild and recertify DR environment. Compliance violation DR-2024-007.",
+    "lesson": "Always check resource tags for 'disaster-recovery' or 'standby' before deletion. Idle VMs tagged for DR are intentionally idle.",
+    "service": "infrastructure",
+    "severity": "high",
+    "date": "2025-09-22",
+    "resource_type": "Microsoft.Compute/virtualMachines",
+    "tags": ["disaster-recovery", "cost-optimization-failure", "compliance"]
+  },
+  {
+    "incident_id": "INC-2025-0923",
+    "description": "Network security group modification exposed internal admin dashboard to public internet via port 8080",
+    "action_taken": "modify_nsg:nsg-east:allow-8080",
+    "outcome": "4-hour exposure window. Security team detected via anomaly monitoring. No confirmed data breach but triggered full security audit.",
+    "lesson": "Audit ALL resources governed by an NSG before modifying rules. NSGs often govern multiple subnets with different security requirements.",
+    "service": "security",
+    "severity": "critical",
+    "date": "2025-07-03",
+    "resource_type": "Microsoft.Network/networkSecurityGroups",
+    "tags": ["security-exposure", "nsg-change", "admin-dashboard"]
+  },
+  {
+    "incident_id": "INC-2025-1089",
+    "description": "Auto-scaler reduced AKS node count during Black Friday traffic ramp. Premature scale-down based on 5-minute metric window.",
+    "action_taken": "scale_down:aks-prod:node_count:5_to_3",
+    "outcome": "45-minute degraded performance. 503 errors for 8% of requests. $30K estimated lost sales during peak shopping period.",
+    "lesson": "Use minimum 30-minute metric windows for scale-down decisions during known high-traffic periods. Implement scale-down cooldown of 1 hour.",
+    "service": "web-frontend",
+    "severity": "high",
+    "date": "2025-11-29",
+    "resource_type": "Microsoft.ContainerService/managedClusters",
+    "tags": ["scale-down", "premature-optimization", "traffic-spike"]
+  },
+  {
+    "incident_id": "INC-2025-0634",
+    "description": "Database connection string rotation broke 3 downstream services that cached old credentials",
+    "action_taken": "update_config:sql-prod:connection_string",
+    "outcome": "1-hour partial outage. Services recovered after pod restarts but required manual credential refresh in 2 legacy services.",
+    "lesson": "Coordinate connection string rotations with downstream service teams. Verify all consumers support dynamic credential refresh.",
+    "service": "sql-database",
+    "severity": "medium",
+    "date": "2025-04-11",
+    "resource_type": "Microsoft.Sql/servers",
+    "tags": ["config-change", "credential-rotation", "downstream-impact"]
+  },
+  {
+    "incident_id": "INC-2025-0456",
+    "description": "Storage account deletion removed shared blob container used by 4 microservices for async message passing",
+    "action_taken": "delete_resource:storage-legacy-01",
+    "outcome": "3-hour outage for order processing pipeline. Required emergency storage account recreation and data recovery from backup.",
+    "lesson": "Storage accounts with 'shared' or 'common' in naming are likely used by multiple services. Verify zero active connections before deletion.",
+    "service": "order-processing",
+    "severity": "critical",
+    "date": "2025-03-18",
+    "resource_type": "Microsoft.Storage/storageAccounts",
+    "tags": ["shared-resource", "deletion", "data-loss"]
+  },
+  {
+    "incident_id": "INC-2026-0012",
+    "description": "Web tier scale-up from D4 to D8 during planned marketing campaign. Smooth execution with no issues.",
+    "action_taken": "scale_up:web-tier:D4_to_D8",
+    "outcome": "Successful. Handled 3x normal traffic. Scaled back down after 48 hours. Total additional cost: $280.",
+    "lesson": "Pre-scaling for known traffic events is safe when target SKU is within tested range. D8 is validated for web-tier.",
+    "service": "web-frontend",
+    "severity": "low",
+    "date": "2026-01-15",
+    "resource_type": "Microsoft.Compute/virtualMachines",
+    "tags": ["scale-up", "successful", "planned-event"]
+  }
+]

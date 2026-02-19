@@ -1,0 +1,75 @@
+[
+  {
+    "id": "POL-DR-001",
+    "name": "Disaster Recovery Protection",
+    "description": "Resources tagged 'disaster-recovery' cannot be deleted or downsized without VP approval",
+    "severity": "critical",
+    "conditions": {
+      "tags_match": {"purpose": "disaster-recovery"},
+      "blocked_actions": ["delete_resource", "scale_down"]
+    },
+    "override_requires": "vp_approval",
+    "category": "compliance"
+  },
+  {
+    "id": "POL-SEC-001",
+    "name": "Network Security Baseline",
+    "description": "Network security group changes require security team review before execution",
+    "severity": "high",
+    "conditions": {
+      "resource_type_match": "Microsoft.Network/networkSecurityGroups",
+      "blocked_actions": ["modify_nsg", "delete_resource"]
+    },
+    "override_requires": "security_team_review",
+    "category": "security"
+  },
+  {
+    "id": "POL-CHG-001",
+    "name": "Change Window Enforcement",
+    "description": "Production changes prohibited Friday 5PM through Monday 8AM UTC",
+    "severity": "medium",
+    "conditions": {
+      "environment_match": "production",
+      "blocked_windows": [
+        {"day_start": "Friday", "time_start": "17:00", "day_end": "Monday", "time_end": "08:00"}
+      ]
+    },
+    "override_requires": "on_call_approval",
+    "category": "change_management"
+  },
+  {
+    "id": "POL-COST-001",
+    "name": "Cost Change Threshold",
+    "description": "Actions with greater than $500/month impact require finance team review",
+    "severity": "medium",
+    "conditions": {
+      "cost_impact_threshold": 500
+    },
+    "override_requires": "finance_review",
+    "category": "financial"
+  },
+  {
+    "id": "POL-CRIT-001",
+    "name": "Critical Resource Protection",
+    "description": "Resources tagged 'criticality: critical' require change advisory board approval for any modification",
+    "severity": "high",
+    "conditions": {
+      "tags_match": {"criticality": "critical"},
+      "blocked_actions": ["delete_resource", "scale_down", "restart_service", "update_config"]
+    },
+    "override_requires": "cab_approval",
+    "category": "governance"
+  },
+  {
+    "id": "POL-SHARED-001",
+    "name": "Shared Resource Protection",
+    "description": "Resources tagged 'shared' or with multiple consumers cannot be deleted without verifying zero active connections",
+    "severity": "high",
+    "conditions": {
+      "tags_match": {"purpose": "shared-messaging"},
+      "blocked_actions": ["delete_resource"]
+    },
+    "override_requires": "multi_team_approval",
+    "category": "governance"
+  }
+]

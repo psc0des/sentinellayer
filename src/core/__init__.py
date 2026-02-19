@@ -1,0 +1,1 @@
+"""SentinelLayer — core module."""
