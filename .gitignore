@@ -50,3 +50,9 @@ htmlcov/
 *.pem
 *.key
 *.cert
+
+# AI Agent Context (private)
+CLAUDE.md
+
+# Learning notes (personal)
+learning/
