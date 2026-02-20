@@ -24,6 +24,7 @@ import logging
 # Suppress noisy library INFO logs so the demo output is clean.
 logging.basicConfig(level=logging.WARNING)
 
+from src.core.decision_tracker import DecisionTracker  # noqa: E402
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency  # noqa: E402
 from src.core.pipeline import SentinelLayerPipeline  # noqa: E402
 
@@ -100,7 +101,7 @@ def _print_verdict(
 # ---------------------------------------------------------------------------
 
 
-def scenario_1(pipeline: SentinelLayerPipeline) -> None:
+def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
     """Cost agent deletes idle disaster-recovery VM. Expect: DENIED."""
     action = ProposedAction(
         agent_id="cost-optimization-agent",
@@ -121,6 +122,7 @@ def scenario_1(pipeline: SentinelLayerPipeline) -> None:
         projected_savings_monthly=847.0,
     )
     verdict = pipeline.evaluate(action)
+    tracker.record(verdict)
     _print_verdict(
         1,
         "Cost agent deletes disaster-recovery VM  ->  expect  DENIED",
@@ -129,7 +131,7 @@ def scenario_1(pipeline: SentinelLayerPipeline) -> None:
     )
 
 
-def scenario_2(pipeline: SentinelLayerPipeline) -> None:
+def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
     """SRE agent scales web tier D4 to D8 for traffic event. Expect: APPROVED."""
     action = ProposedAction(
         agent_id="monitoring-agent",
@@ -151,6 +153,7 @@ def scenario_2(pipeline: SentinelLayerPipeline) -> None:
         urgency=Urgency.MEDIUM,
     )
     verdict = pipeline.evaluate(action)
+    tracker.record(verdict)
     _print_verdict(
         2,
         "SRE agent scales web-tier D4 -> D8       ->  expect  APPROVED",
@@ -159,7 +162,7 @@ def scenario_2(pipeline: SentinelLayerPipeline) -> None:
     )
 
 
-def scenario_3(pipeline: SentinelLayerPipeline) -> None:
+def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
     """Deploy agent opens port 8080 on nsg-east. Expect: ESCALATED."""
     action = ProposedAction(
         agent_id="deploy-agent",
@@ -178,6 +181,7 @@ def scenario_3(pipeline: SentinelLayerPipeline) -> None:
         urgency=Urgency.MEDIUM,
     )
     verdict = pipeline.evaluate(action)
+    tracker.record(verdict)
     _print_verdict(
         3,
         "Deploy agent modifies NSG -- port 8080   ->  expect  ESCALATED",
@@ -207,12 +211,13 @@ def main() -> None:
     print("  Initialising pipeline...")
 
     pipeline = SentinelLayerPipeline()
+    tracker = DecisionTracker()
     print("  Pipeline ready.")
     print()
 
-    scenario_1(pipeline)
-    scenario_2(pipeline)
-    scenario_3(pipeline)
+    scenario_1(pipeline, tracker)
+    scenario_2(pipeline, tracker)
+    scenario_3(pipeline, tracker)
 
     print(f"\n{_bar()}")
     print("  Demo complete -- 3 scenarios evaluated.")
