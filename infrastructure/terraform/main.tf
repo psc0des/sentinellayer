@@ -208,8 +208,9 @@ resource "azurerm_cosmosdb_sql_container" "governance_decisions" {
   database_name       = azurerm_cosmosdb_sql_database.sentinellayer.name
 
   # Partition key — resource_id spreads decisions across partitions evenly
-  partition_key_path    = "/resource_id"
-  partition_key_version = 1
+  # partition_key_paths replaces the deprecated partition_key_path (azurerm v4+)
+  partition_key_paths   = ["/resource_id"]
+  partition_key_version = 2
 
   # Automatic indexing of all fields (good for development)
   indexing_policy {
