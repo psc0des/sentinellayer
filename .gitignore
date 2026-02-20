@@ -51,6 +51,9 @@ htmlcov/
 *.key
 *.cert
 
+# Runtime-generated data (not source code)
+data/decisions/
+
 # AI Agent Context (private)
 CLAUDE.md
 
