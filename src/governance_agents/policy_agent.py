@@ -225,8 +225,12 @@ class PolicyComplianceAgent:
                     return True
                 if wd == e_day and t_min < e_min:
                     return True
+            elif s_day == e_day:
+                # Same-day window (e.g. Monday 17:00-20:00)
+                if wd == s_day and s_min <= t_min < e_min:
+                    return True
             else:
-                # Forward window within the same week
+                # Forward window spanning multiple days within the same week
                 if s_day < wd < e_day:
                     return True
                 if wd == s_day and t_min >= s_min:

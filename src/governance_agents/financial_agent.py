@@ -211,8 +211,10 @@ class FinancialImpactAgent:
             return (-action.projected_savings_monthly, False)
 
         # Helper — resolve current monthly cost from target or resource graph
-        current_cost: float | None = action.target.current_monthly_cost or (
-            resource.get("monthly_cost") if resource else None
+        current_cost: float | None = (
+            action.target.current_monthly_cost
+            if action.target.current_monthly_cost is not None
+            else (resource.get("monthly_cost") if resource else None)
         )
 
         # 2. DELETE removes the resource's full monthly cost
