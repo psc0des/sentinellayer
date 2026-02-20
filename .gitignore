@@ -51,6 +51,14 @@ htmlcov/
 *.key
 *.cert
 
+# Terraform
+infrastructure/terraform/.terraform/
+infrastructure/terraform/*.tfstate
+infrastructure/terraform/*.tfstate.*
+infrastructure/terraform/*.tfstate.backup
+infrastructure/terraform/terraform.tfvars
+infrastructure/terraform/.terraform.lock.hcl
+
 # Runtime-generated data (not source code)
 data/decisions/
 

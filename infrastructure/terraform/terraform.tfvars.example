@@ -1,0 +1,39 @@
+# =============================================================================
+# terraform.tfvars.example
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your real values.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# terraform.tfvars is in .gitignore — it will NOT be committed to git.
+# NEVER commit real subscription IDs, suffixes, or secrets to git.
+# =============================================================================
+
+# Your Azure Subscription ID
+# Find it with: az account show --query id -o tsv
+subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Resource group name (leave as default unless you need a different one)
+resource_group_name = "sentinel-layer-rg"
+
+# Azure region — must support Azure OpenAI GPT-4o
+# Supported: eastus, eastus2, westus, swedencentral, uksouth, australiaeast
+location = "eastus"
+
+# Environment label (used in tags)
+env = "dev"
+
+# Short unique suffix for globally-unique resource names.
+# Choose something unique: your initials + 4 random digits works well.
+# Example: "jd4821" — results in names like "sentinel-kv-jd4821"
+# IMPORTANT: Once deployed, do not change this suffix (would recreate all resources)
+suffix = "replace-me"
+
+# Azure AI Search SKU
+# "free"  = no cost, but only 1 free Search per subscription
+# "basic" = ~$73/month, no subscription-wide limit
+search_sku = "free"
+
+# Enable Cosmos DB free tier (400 RU/s free)
+# Set to false if your subscription already uses Cosmos DB free tier elsewhere
+cosmos_free_tier = true

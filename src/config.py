@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # --- Mock vs Azure mode ---
+    # True  → all infrastructure clients use local JSON files (default, safe offline)
+    # False → clients use real Azure SDKs (requires credentials set above)
+    # If False but credentials are missing, each client falls back to mock automatically.
+    use_local_mocks: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
