@@ -29,6 +29,13 @@ env = "dev"
 # IMPORTANT: Once deployed, do not change this suffix (would recreate all resources)
 suffix = "replace-me"
 
+# Azure OpenAI model settings
+# gpt-4o-mini is the safe default — quota is available on most subscriptions.
+# Switch to gpt-4o only after requesting quota: https://aka.ms/oai/quotaincrease
+openai_model         = "gpt-4o-mini"
+openai_model_version = "2024-07-18"
+openai_capacity      = 1   # 1 = 1 000 tokens/min (minimum). Increase after quota approved.
+
 # Azure AI Search SKU
 # "free"  = no cost, but only 1 free Search per subscription
 # "basic" = ~$73/month, no subscription-wide limit

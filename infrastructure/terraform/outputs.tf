@@ -35,7 +35,7 @@ output "openai_primary_key" {
 }
 
 output "openai_deployment" {
-  description = "Name of the GPT-4o model deployment"
+  description = "Name of the deployed OpenAI model (matches var.openai_model)"
   value       = azurerm_cognitive_deployment.gpt4o.name
 }
 

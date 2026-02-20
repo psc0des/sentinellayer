@@ -59,6 +59,37 @@ variable "search_sku" {
   }
 }
 
+variable "openai_model" {
+  description = <<-EOT
+    Azure OpenAI model to deploy.
+    "gpt-4o-mini" — cheaper, higher quota availability on new subscriptions.
+    "gpt-4o"      — more capable; requires quota approval first:
+                    https://aka.ms/oai/quotaincrease
+  EOT
+  type        = string
+  default     = "gpt-4o-mini"
+}
+
+variable "openai_model_version" {
+  description = <<-EOT
+    Model version string.
+    gpt-4o-mini → "2024-07-18"
+    gpt-4o      → "2024-11-20"
+  EOT
+  type        = string
+  default     = "2024-07-18"
+}
+
+variable "openai_capacity" {
+  description = <<-EOT
+    Tokens-per-minute quota to request, in thousands.
+    Minimum is 1 (= 1 000 TPM). Start low and increase after quota is approved.
+    Run `az cognitiveservices account list-skus` to see available capacity.
+  EOT
+  type        = number
+  default     = 1
+}
+
 variable "cosmos_free_tier" {
   description = <<-EOT
     Enable Cosmos DB free tier (400 RU/s + 25 GB free).

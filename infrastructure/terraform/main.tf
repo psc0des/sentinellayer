@@ -131,20 +131,25 @@ resource "azurerm_cognitive_account" "openai" {
   tags = local.common_tags
 }
 
-# GPT-4o model deployment inside the OpenAI account
+# Model deployment inside the OpenAI account.
+# Default model is gpt-4o-mini — it shares the same API as gpt-4o but has
+# much higher quota availability on new subscriptions.
+# To use gpt-4o, first request quota at: https://aka.ms/oai/quotaincrease
+# then set openai_model = "gpt-4o" and openai_model_version = "2024-11-20"
+# in terraform.tfvars.
 resource "azurerm_cognitive_deployment" "gpt4o" {
-  name                 = "gpt-4o"
+  name                 = var.openai_model
   cognitive_account_id = azurerm_cognitive_account.openai.id
 
   model {
     format  = "OpenAI"
-    name    = "gpt-4o"
-    version = "2024-11-20"   # latest stable version at time of writing
+    name    = var.openai_model
+    version = var.openai_model_version
   }
 
   scale {
     type     = "Standard"
-    capacity = 10   # 10K tokens per minute — sufficient for dev/hackathon
+    capacity = var.openai_capacity   # tokens-per-minute in thousands
   }
 }
 
@@ -184,9 +189,12 @@ resource "azurerm_cosmosdb_account" "sentinel" {
   }
 
   # Single-region for dev — add more geo_locations for production HA
+  # zone_redundant = false: explicitly opt out of Availability Zones.
+  # AZ accounts require reserved capacity that East US is currently out of.
   geo_location {
     location          = azurerm_resource_group.sentinel.location
     failover_priority = 0
+    zone_redundant    = false
   }
 
   # Enable free tier (400 RU/s + 25 GB free) — only 1 per subscription
