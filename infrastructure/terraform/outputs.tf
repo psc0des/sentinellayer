@@ -21,28 +21,16 @@ output "location" {
   value       = azurerm_resource_group.sentinel.location
 }
 
-# --- Azure AI Foundry ---
-
-output "openai_endpoint" {
-  description = "Azure AI Foundry endpoint URL (used by the OpenAI SDK — same env var name)"
-  value       = azurerm_cognitive_account.foundry.endpoint
-}
-
-output "openai_primary_key" {
-  description = "Azure AI Foundry primary API key (sensitive)"
-  value       = azurerm_cognitive_account.foundry.primary_access_key
-  sensitive   = true
-}
-
-output "openai_deployment" {
-  description = "Name of the deployed model. Empty if create_openai_deployment = false."
-  value       = var.create_openai_deployment ? azurerm_cognitive_deployment.gpt4o[0].name : ""
-}
-
-output "foundry_account_name" {
-  description = "Azure AI Foundry account name (useful for az cli commands)"
-  value       = azurerm_cognitive_account.foundry.name
-}
+# --- Microsoft Foundry / GPT-4.1 [NOT a Terraform output] ---
+#
+# The Foundry endpoint, API key, and deployment name are NOT output here
+# because the resource is managed manually via the portal (not by Terraform).
+#
+# After deploying GPT-4.1 in the Foundry portal, set these in your .env:
+#   AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/
+#   AZURE_OPENAI_API_KEY=<key from portal>
+#   AZURE_OPENAI_DEPLOYMENT=gpt-41
+#   AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
 # --- Azure AI Search ---
 
@@ -120,16 +108,22 @@ output "next_steps" {
     Next steps:
     1. Run from project root:
          bash scripts/setup_env.sh
-       This generates .env with all connection strings.
+       This generates .env with Search, Cosmos, and Key Vault connection strings.
 
-    2. Add your subscription and tenant IDs to .env:
+    2. Manually add your Microsoft Foundry credentials to .env:
+         AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/
+         AZURE_OPENAI_API_KEY=<key from Foundry portal>
+         AZURE_OPENAI_DEPLOYMENT=gpt-41
+         AZURE_OPENAI_API_VERSION=2025-01-01-preview
+
+    3. Add your subscription and tenant IDs:
          AZURE_SUBSCRIPTION_ID=<your-id>
          AZURE_TENANT_ID=<your-id>
 
-    3. Switch from mock to Azure mode:
+    4. Switch from mock to Azure mode:
          USE_LOCAL_MOCKS=false   (already set by setup_env.sh)
 
-    4. Upload seed data to Azure AI Search:
+    5. Upload seed data to Azure AI Search:
          python scripts/seed_data.py
 
   EOT

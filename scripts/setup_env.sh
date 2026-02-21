@@ -54,13 +54,10 @@ tf_value() {
 
 # Sensitive values must be read with terraform output -raw (bypasses masking)
 echo "Reading sensitive values (API keys) ..."
-OPENAI_KEY=$(terraform output -raw openai_primary_key)
 SEARCH_KEY=$(terraform output -raw search_primary_key)
 COSMOS_KEY=$(terraform output -raw cosmos_primary_key)
 
 # Non-sensitive values
-OPENAI_ENDPOINT=$(tf_value openai_endpoint)
-OPENAI_DEPLOYMENT=$(tf_value openai_deployment)
 SEARCH_ENDPOINT=$(tf_value search_endpoint)
 COSMOS_ENDPOINT=$(tf_value cosmos_endpoint)
 COSMOS_DATABASE=$(tf_value cosmos_database)
@@ -89,11 +86,13 @@ cat > "$ENV_FILE" <<EOF
 # all the credentials needed). Set to true to use local JSON files.
 USE_LOCAL_MOCKS=false
 
-# --- Azure AI Foundry (accessed via OpenAI SDK — same env var names) ---
-AZURE_OPENAI_ENDPOINT=$OPENAI_ENDPOINT
-AZURE_OPENAI_API_KEY=$OPENAI_KEY
-AZURE_OPENAI_DEPLOYMENT=$OPENAI_DEPLOYMENT
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
+# --- Microsoft Foundry — GPT-4.1 (fill in manually from the Foundry portal) ---
+# Go to https://ai.azure.com → your project → Models → gpt-41 deployment
+# Copy the endpoint and API key shown there.
+AZURE_OPENAI_ENDPOINT=<paste-your-foundry-endpoint-here>
+AZURE_OPENAI_API_KEY=<paste-your-foundry-api-key-here>
+AZURE_OPENAI_DEPLOYMENT=gpt-41
+AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
 # --- Azure AI Search ---
 AZURE_SEARCH_ENDPOINT=$SEARCH_ENDPOINT
@@ -129,11 +128,17 @@ EOF
 echo ""
 echo "✓ .env written to $ENV_FILE"
 echo ""
-echo "ACTION REQUIRED — fill in these two values manually in .env:"
-echo "  AZURE_SUBSCRIPTION_ID=<your-subscription-id>"
-echo "  AZURE_TENANT_ID=<your-tenant-id>"
+echo "ACTION REQUIRED — fill in these values manually in .env:"
 echo ""
-echo "Find them with:"
+echo "  1. Microsoft Foundry (GPT-4.1) credentials:"
+echo "       AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/"
+echo "       AZURE_OPENAI_API_KEY=<key from https://ai.azure.com>"
+echo ""
+echo "  2. Subscription and tenant IDs:"
+echo "       AZURE_SUBSCRIPTION_ID=<your-subscription-id>"
+echo "       AZURE_TENANT_ID=<your-tenant-id>"
+echo ""
+echo "Find subscription/tenant with:"
 echo "  az account show --query '{subscriptionId:id, tenantId:tenantId}'"
 echo ""
 echo "Then upload seed data to Azure AI Search:"

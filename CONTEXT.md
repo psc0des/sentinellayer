@@ -65,10 +65,11 @@ Operational Agent proposes action (ProposedAction)
 5. `data/seed_resources.json` — Mock Azure resource topology with dependencies.
 
 ## Current Development Phase
-- We are building with LOCAL MOCKS first (no Azure services yet).
-- Use data/ JSON files instead of Azure API calls.
-- All agents should work without any cloud connection.
-- Azure integration will be added later.
+- Core logic is complete and tested with LOCAL MOCKS (data/ JSON files).
+- Azure infrastructure is provisioned via Terraform (Search, Cosmos, Key Vault).
+- LLM: GPT-4.1 is deployed manually via Microsoft Foundry portal (https://ai.azure.com).
+  Set USE_LOCAL_MOCKS=false and fill in AZURE_OPENAI_* vars in .env to enable live calls.
+- All agents still work without any cloud connection (mock mode is the default).
 
 ## Coding Standards
 - Python 3.11+

@@ -123,7 +123,7 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 | Model Intelligence | Microsoft Foundry + Model Router | Cost-optimized model routing |
 | Cloud Interception | Azure MCP (consumer + provider) | Intercept actions, query Azure |
 | Infrastructure Graph | Azure Resource Graph | Real-time resource dependencies |
-| LLM Reasoning | Azure AI Foundry (GPT-4o, Llama, Mistral, Phi) | Simulation reasoning |
+| LLM Reasoning | Microsoft Foundry — GPT-4.1 | Simulation reasoning |
 | Vector Search | Azure AI Search | Incident history similarity |
 | Graph + Audit DB | Cosmos DB (Gremlin + SQL API) | Dependencies + decision trail |
 | Serverless Compute | Azure Functions | Event processing |
@@ -138,7 +138,7 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 
 - Python 3.11+
 - Azure subscription with the following services:
-  - Azure AI Foundry (AIServices account with model deployed)
+  - Microsoft Foundry — GPT-4.1 deployed via https://ai.azure.com (manual setup)
   - Azure AI Search
   - Cosmos DB (SQL + Gremlin API)
   - Azure Monitor + Log Analytics

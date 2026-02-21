@@ -6,11 +6,13 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from .env file."""
 
-    # --- Azure AI Foundry (accessed via the OpenAI SDK — same env var names) ---
+    # --- Microsoft Foundry — GPT-4.1 ---
+    # Endpoint and key come from the Foundry portal (https://ai.azure.com).
+    # The openai SDK is used for all calls — Foundry exposes a compatible API.
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
-    azure_openai_deployment: str = "gpt-4o-mini"
-    azure_openai_api_version: str = "2024-12-01-preview"
+    azure_openai_deployment: str = "gpt-41"
+    azure_openai_api_version: str = "2025-01-01-preview"
 
     # --- Azure AI Search ---
     azure_search_endpoint: str = ""

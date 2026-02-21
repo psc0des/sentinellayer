@@ -1,11 +1,15 @@
-"""Azure AI Foundry client wrapper — LLM calls for governance reasoning.
+"""Microsoft Foundry client wrapper — GPT-4.1 calls for governance reasoning.
 
-This client connects to Azure AI Foundry (resource kind = "AIServices"),
-which gives access to OpenAI models (GPT-4o, o3-mini) AND third-party
-models (Meta Llama, Mistral, xAI Grok, Microsoft Phi).
+The model (GPT-4.1) is deployed manually via the Microsoft Foundry portal
+(https://ai.azure.com).  This client reads the endpoint and key from env vars
+and calls it using the standard ``openai.AzureOpenAI`` SDK — Foundry exposes
+a fully OpenAI-compatible chat completions API.
 
-The Python ``openai`` SDK is used for all models — Azure AI Foundry exposes
-a unified OpenAI-compatible chat completions API regardless of model family.
+Required env vars (set in .env after portal deployment):
+    AZURE_OPENAI_ENDPOINT  — e.g. https://your-project.services.ai.azure.com/
+    AZURE_OPENAI_API_KEY   — API key from the Foundry portal
+    AZURE_OPENAI_DEPLOYMENT — deployment name, default "gpt-41"
+    AZURE_OPENAI_API_VERSION — e.g. 2025-01-01-preview
 
 Mode selection
 --------------
@@ -13,8 +17,8 @@ Mock mode (USE_LOCAL_MOCKS=true, or endpoint not set):
     Returns a canned string without making any network call.
     This preserves the fully-offline behavior used in development.
 
-Azure mode (USE_LOCAL_MOCKS=false + AZURE_OPENAI_ENDPOINT set):
-    Uses the ``openai.AzureOpenAI`` SDK to call the deployed Foundry model.
+Live mode (USE_LOCAL_MOCKS=false + AZURE_OPENAI_ENDPOINT set):
+    Calls GPT-4.1 on Microsoft Foundry and returns the real reasoning text.
 
 Usage::
 
@@ -57,7 +61,7 @@ class AzureOpenAIClient:
         )
 
         if self._is_mock:
-            logger.info("AzureOpenAIClient: LOCAL MOCK mode (no Azure call).")
+            logger.info("AzureOpenAIClient: LOCAL MOCK mode (no Foundry call).")
             self._client = None
         else:
             # Import lazily so the openai package is not required in mock mode
@@ -69,7 +73,7 @@ class AzureOpenAIClient:
                 api_version=self._cfg.azure_openai_api_version,
             )
             logger.info(
-                "AzureOpenAIClient: connected to %s (deployment=%s)",
+                "AzureOpenAIClient: connected to Microsoft Foundry at %s (deployment=%s)",
                 self._cfg.azure_openai_endpoint,
                 self._cfg.azure_openai_deployment,
             )
