@@ -6,8 +6,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from .env file."""
 
-    # --- Microsoft Foundry — GPT-4.1 ---
-    # Endpoint and key come from the Foundry portal (https://ai.azure.com).
+    # --- Microsoft Foundry — GPT-4.1 (Terraform-managed) ---
+    # Endpoint and key are populated automatically by scripts/setup_env.sh
+    # from Terraform outputs (foundry_endpoint, foundry_primary_key).
     # The openai SDK is used for all calls — Foundry exposes a compatible API.
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""

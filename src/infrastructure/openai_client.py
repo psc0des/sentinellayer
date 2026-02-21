@@ -1,15 +1,15 @@
 """Microsoft Foundry client wrapper — GPT-4.1 calls for governance reasoning.
 
-The model (GPT-4.1) is deployed manually via the Microsoft Foundry portal
-(https://ai.azure.com).  This client reads the endpoint and key from env vars
-and calls it using the standard ``openai.AzureOpenAI`` SDK — Foundry exposes
-a fully OpenAI-compatible chat completions API.
+The Foundry account and GPT-4.1 model deployment are Terraform-managed
+(azurerm_ai_services + azurerm_cognitive_deployment in infrastructure/terraform/).
+After `terraform apply`, run `bash scripts/setup_env.sh` to auto-populate .env
+with the endpoint and key from Terraform outputs.
 
-Required env vars (set in .env after portal deployment):
-    AZURE_OPENAI_ENDPOINT  — e.g. https://your-project.services.ai.azure.com/
-    AZURE_OPENAI_API_KEY   — API key from the Foundry portal
-    AZURE_OPENAI_DEPLOYMENT — deployment name, default "gpt-41"
-    AZURE_OPENAI_API_VERSION — e.g. 2025-01-01-preview
+Required env vars (written automatically by setup_env.sh):
+    AZURE_OPENAI_ENDPOINT   — from Terraform output: foundry_endpoint
+    AZURE_OPENAI_API_KEY    — from Terraform output: foundry_primary_key
+    AZURE_OPENAI_DEPLOYMENT — from Terraform output: foundry_deployment (default "gpt-41")
+    AZURE_OPENAI_API_VERSION — 2025-01-01-preview
 
 Mode selection
 --------------
