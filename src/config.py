@@ -6,10 +6,10 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from .env file."""
 
-    # --- Azure OpenAI ---
+    # --- Azure AI Foundry (accessed via the OpenAI SDK — same env var names) ---
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
-    azure_openai_deployment: str = "gpt-4o"
+    azure_openai_deployment: str = "gpt-4o-mini"
     azure_openai_api_version: str = "2024-12-01-preview"
 
     # --- Azure AI Search ---

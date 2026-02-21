@@ -21,22 +21,27 @@ output "location" {
   value       = azurerm_resource_group.sentinel.location
 }
 
-# --- Azure OpenAI ---
+# --- Azure AI Foundry ---
 
 output "openai_endpoint" {
-  description = "Azure OpenAI service endpoint URL"
-  value       = azurerm_cognitive_account.openai.endpoint
+  description = "Azure AI Foundry endpoint URL (used by the OpenAI SDK — same env var name)"
+  value       = azurerm_cognitive_account.foundry.endpoint
 }
 
 output "openai_primary_key" {
-  description = "Azure OpenAI primary API key (sensitive)"
-  value       = azurerm_cognitive_account.openai.primary_access_key
+  description = "Azure AI Foundry primary API key (sensitive)"
+  value       = azurerm_cognitive_account.foundry.primary_access_key
   sensitive   = true
 }
 
 output "openai_deployment" {
-  description = "Name of the deployed OpenAI model (matches var.openai_model)"
-  value       = azurerm_cognitive_deployment.gpt4o.name
+  description = "Name of the deployed model. Empty if create_openai_deployment = false."
+  value       = var.create_openai_deployment ? azurerm_cognitive_deployment.gpt4o[0].name : ""
+}
+
+output "foundry_account_name" {
+  description = "Azure AI Foundry account name (useful for az cli commands)"
+  value       = azurerm_cognitive_account.foundry.name
 }
 
 # --- Azure AI Search ---

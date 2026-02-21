@@ -7,7 +7,7 @@
 #   1. Resource Group          — container for all resources
 #   2. Log Analytics Workspace — monitoring, created early so others can link
 #   3. Key Vault               — secret store for API keys
-#   4. Azure OpenAI            — GPT-4o for governance reasoning
+#   4. Azure AI Foundry        — multi-model AI (GPT-4o, Llama, Mistral, xAI, Phi)
 #   5. Azure AI Search         — incident history vector search
 #   6. Cosmos DB (SQL API)     — governance decision audit trail
 #
@@ -113,43 +113,59 @@ resource "azurerm_key_vault" "sentinel" {
 }
 
 # =============================================================================
-# 4. Azure OpenAI
-# NOTE: Azure OpenAI requires manual access approval per subscription.
-# Request access at: https://aka.ms/oai/access
+# 4. Azure AI Foundry (AI Services)
+# "AIServices" kind replaces the old "OpenAI" kind and gives access to
+# OpenAI models PLUS third-party models (Meta Llama, Mistral, xAI Grok, Phi).
+# This is what the Azure portal calls "upgrading to Foundry".
 #
-# GPT-4o is available in: East US, East US 2, West US, Sweden Central,
-# France Central, UK South, Australia East, Japan East.
+# No manual access approval needed — AIServices is available immediately
+# on any subscription without waiting for Microsoft quota approval.
+#
+# Supported regions (broader than old Azure OpenAI):
+# eastus, eastus2, westus, westus3, swedencentral, francecentral,
+# uksouth, australiaeast, japaneast, canadaeast, and more.
 # =============================================================================
 
-resource "azurerm_cognitive_account" "openai" {
-  name                = "sentinel-openai-${local.name_suffix}"
+resource "azurerm_cognitive_account" "foundry" {
+  name                = "sentinel-foundry-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.sentinel.name
   location            = azurerm_resource_group.sentinel.location
-  kind                = "OpenAI"
-  sku_name            = "S0"   # Only SKU available for Azure OpenAI
+  kind                = "AIServices"   # Foundry — unlocks all model families
+  sku_name            = "S0"
 
   tags = local.common_tags
 }
 
-# Model deployment inside the OpenAI account.
-# Default model is gpt-4o-mini — it shares the same API as gpt-4o but has
-# much higher quota availability on new subscriptions.
-# To use gpt-4o, first request quota at: https://aka.ms/oai/quotaincrease
-# then set openai_model = "gpt-4o" and openai_model_version = "2024-11-20"
-# in terraform.tfvars.
+# Model deployment inside the Foundry account.
+#
+# With AIServices / Foundry you can deploy:
+#   OpenAI  : gpt-4o, gpt-4o-mini, o1, o3-mini
+#   Meta    : Meta-Llama-3.1-8B-Instruct, Meta-Llama-3.3-70B-Instruct
+#   Mistral : Mistral-Small, Mistral-Large
+#   xAI     : grok-3, grok-3-mini
+#   Microsoft: Phi-4, Phi-4-mini
+#
+# Quota for Foundry models is available immediately (no special approval).
+# Set create_openai_deployment = true in terraform.tfvars, then re-run apply.
+#
+# count = 0 means "don't create this resource yet".
+# count = 1 means "create it".  Controlled by var.create_openai_deployment.
 resource "azurerm_cognitive_deployment" "gpt4o" {
+  count                = var.create_openai_deployment ? 1 : 0
   name                 = var.openai_model
-  cognitive_account_id = azurerm_cognitive_account.openai.id
+  cognitive_account_id = azurerm_cognitive_account.foundry.id
 
   model {
-    format  = "OpenAI"
+    format  = "OpenAI"   # "OpenAI" is the format name even for non-OpenAI models
     name    = var.openai_model
     version = var.openai_model_version
   }
 
   scale {
-    type     = "Standard"
-    capacity = var.openai_capacity   # tokens-per-minute in thousands
+    # GlobalStandard routes across Azure regions for better availability.
+    # Use "Standard" if GlobalStandard is unavailable in your region.
+    type     = "GlobalStandard"
+    capacity = var.openai_capacity
   }
 }
 

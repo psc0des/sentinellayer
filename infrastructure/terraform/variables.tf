@@ -19,8 +19,9 @@ variable "resource_group_name" {
 variable "location" {
   description = <<-EOT
     Azure region for all resources.
-    Azure OpenAI GPT-4o is available in: eastus, eastus2, westus,
-    swedencentral, francecentral, uksouth, australiaeast, japaneast.
+    Azure AI Foundry (AIServices) is available in most regions including:
+    eastus, eastus2, westus, westus3, swedencentral, francecentral,
+    uksouth, australiaeast, japaneast, canadaeast.
   EOT
   type        = string
   default     = "eastus"
@@ -59,12 +60,24 @@ variable "search_sku" {
   }
 }
 
+variable "create_openai_deployment" {
+  description = <<-EOT
+    Whether to create the model deployment inside the Foundry account.
+    Azure AI Foundry (AIServices) quota is available immediately — no
+    Microsoft approval wait. Set to true and run terraform apply.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "openai_model" {
   description = <<-EOT
-    Azure OpenAI model to deploy.
-    "gpt-4o-mini" — cheaper, higher quota availability on new subscriptions.
-    "gpt-4o"      — more capable; requires quota approval first:
-                    https://aka.ms/oai/quotaincrease
+    Model to deploy in Azure AI Foundry. Examples:
+    OpenAI  : "gpt-4o-mini" (default), "gpt-4o", "o3-mini"
+    Meta    : "Meta-Llama-3.1-8B-Instruct", "Meta-Llama-3.3-70B-Instruct"
+    Mistral : "Mistral-Small", "Mistral-Large"
+    xAI     : "grok-3-mini"
+    Microsoft: "Phi-4", "Phi-4-mini"
   EOT
   type        = string
   default     = "gpt-4o-mini"
@@ -72,9 +85,10 @@ variable "openai_model" {
 
 variable "openai_model_version" {
   description = <<-EOT
-    Model version string.
+    Model version string. Leave empty ("") to use the latest version.
     gpt-4o-mini → "2024-07-18"
     gpt-4o      → "2024-11-20"
+    Third-party models (Llama, Mistral, etc.) typically use "" (latest).
   EOT
   type        = string
   default     = "2024-07-18"
@@ -82,9 +96,9 @@ variable "openai_model_version" {
 
 variable "openai_capacity" {
   description = <<-EOT
-    Tokens-per-minute quota to request, in thousands.
-    Minimum is 1 (= 1 000 TPM). Start low and increase after quota is approved.
-    Run `az cognitiveservices account list-skus` to see available capacity.
+    Tokens-per-minute quota in thousands (GlobalStandard scale).
+    Minimum is 1 (= 1 000 TPM). GlobalStandard has much higher limits
+    than Standard. Start at 1 and increase as needed for the hackathon.
   EOT
   type        = number
   default     = 1

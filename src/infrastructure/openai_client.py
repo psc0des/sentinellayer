@@ -1,4 +1,11 @@
-"""Azure OpenAI client wrapper — LLM calls for governance reasoning.
+"""Azure AI Foundry client wrapper — LLM calls for governance reasoning.
+
+This client connects to Azure AI Foundry (resource kind = "AIServices"),
+which gives access to OpenAI models (GPT-4o, o3-mini) AND third-party
+models (Meta Llama, Mistral, xAI Grok, Microsoft Phi).
+
+The Python ``openai`` SDK is used for all models — Azure AI Foundry exposes
+a unified OpenAI-compatible chat completions API regardless of model family.
 
 Mode selection
 --------------
@@ -7,8 +14,7 @@ Mock mode (USE_LOCAL_MOCKS=true, or endpoint not set):
     This preserves the fully-offline behavior used in development.
 
 Azure mode (USE_LOCAL_MOCKS=false + AZURE_OPENAI_ENDPOINT set):
-    Uses the ``openai.AzureOpenAI`` SDK to make real chat completion
-    calls against the deployed GPT-4o model.
+    Uses the ``openai.AzureOpenAI`` SDK to call the deployed Foundry model.
 
 Usage::
 
@@ -129,6 +135,6 @@ class AzureOpenAIClient:
         """Canned response for offline / test use."""
         return (
             "[MOCK] LLM reasoning not available in local mock mode. "
-            "Set USE_LOCAL_MOCKS=false and provide Azure OpenAI credentials "
-            "to enable GPT-4o-powered governance reasoning."
+            "Set USE_LOCAL_MOCKS=false and provide Azure AI Foundry credentials "
+            "to enable AI-powered governance reasoning."
         )

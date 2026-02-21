@@ -16,8 +16,8 @@ subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # Resource group name (leave as default unless you need a different one)
 resource_group_name = "sentinel-layer-rg"
 
-# Azure region — must support Azure OpenAI GPT-4o
-# Supported: eastus, eastus2, westus, swedencentral, uksouth, australiaeast
+# Azure region — Azure AI Foundry is available in most regions
+# Supported: eastus, eastus2, westus, westus3, swedencentral, uksouth, australiaeast, and more
 location = "eastus"
 
 # Environment label (used in tags)
@@ -29,12 +29,21 @@ env = "dev"
 # IMPORTANT: Once deployed, do not change this suffix (would recreate all resources)
 suffix = "replace-me"
 
-# Azure OpenAI model settings
-# gpt-4o-mini is the safe default — quota is available on most subscriptions.
-# Switch to gpt-4o only after requesting quota: https://aka.ms/oai/quotaincrease
-openai_model         = "gpt-4o-mini"
-openai_model_version = "2024-07-18"
-openai_capacity      = 1   # 1 = 1 000 tokens/min (minimum). Increase after quota approved.
+# Azure AI Foundry model deployment
+# Foundry (AIServices) quota is available immediately — no approval wait!
+# Step 1: set create_openai_deployment = true
+# Step 2: choose your model (gpt-4o-mini is a great default for hackathons)
+# Step 3: run terraform apply
+#
+# Other model options (change openai_model):
+#   "gpt-4o"                        — more capable OpenAI model
+#   "Meta-Llama-3.1-8B-Instruct"    — Meta open-source (fast + free-ish)
+#   "Phi-4"                         — Microsoft's small but capable model
+#   "Mistral-Small"                 — Mistral's efficient model
+create_openai_deployment = false
+openai_model             = "gpt-4o-mini"
+openai_model_version     = "2024-07-18"
+openai_capacity          = 1   # 1 = 1 000 tokens/min (GlobalStandard scale)
 
 # Azure AI Search SKU
 # "free"  = no cost, but only 1 free Search per subscription

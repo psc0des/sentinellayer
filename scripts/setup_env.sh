@@ -89,7 +89,7 @@ cat > "$ENV_FILE" <<EOF
 # all the credentials needed). Set to true to use local JSON files.
 USE_LOCAL_MOCKS=false
 
-# --- Azure OpenAI ---
+# --- Azure AI Foundry (accessed via OpenAI SDK — same env var names) ---
 AZURE_OPENAI_ENDPOINT=$OPENAI_ENDPOINT
 AZURE_OPENAI_API_KEY=$OPENAI_KEY
 AZURE_OPENAI_DEPLOYMENT=$OPENAI_DEPLOYMENT

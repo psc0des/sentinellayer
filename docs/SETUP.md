@@ -9,7 +9,7 @@
 
 ## Azure Services to Deploy
 
-1. **Azure OpenAI** — Deploy GPT-4o model
+1. **Azure AI Foundry** — Deploy a model (GPT-4o-mini, Llama, Mistral, Phi, etc.)
 2. **Azure AI Search** — Create search service (Basic tier for hackathon)
 3. **Azure Cosmos DB** — Create account with both SQL and Gremlin APIs
 4. **Azure Monitor** — Log Analytics workspace
