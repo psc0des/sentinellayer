@@ -9,14 +9,27 @@
 # Local override mode:
 #   bash scripts/setup_env.sh --include-keys
 #   Also writes raw API keys into .env (convenient for local testing).
+#
+# Non-interactive mode:
+#   bash scripts/setup_env.sh --no-prompt
+#   Skips prompts and uses Azure CLI defaults when available.
 # =============================================================================
 
 set -euo pipefail
 
 INCLUDE_KEYS=false
-if [[ "${1:-}" == "--include-keys" ]]; then
-  INCLUDE_KEYS=true
-fi
+NO_PROMPT=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --include-keys)
+      INCLUDE_KEYS=true
+      ;;
+    --no-prompt)
+      NO_PROMPT=true
+      ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -26,31 +39,39 @@ ENV_FILE="$PROJECT_ROOT/.env"
 echo "Reading Terraform outputs from $TERRAFORM_DIR ..."
 cd "$TERRAFORM_DIR"
 
+if ! command -v terraform >/dev/null 2>&1; then
+  echo "ERROR: terraform command not found in PATH for this shell."
+  echo "Use a shell where terraform is installed, or run from PowerShell."
+  exit 1
+fi
+
 if [ ! -f "terraform.tfstate" ]; then
   echo "ERROR: terraform.tfstate not found."
   echo "Run 'terraform apply' in infrastructure/terraform/ first."
   exit 1
 fi
 
-TF_JSON=$(terraform output -json)
+tf_raw() {
+  terraform output -raw "$1"
+}
 
-tf_value() {
-  echo "$TF_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$1',{}).get('value',''))"
+az_tsv() {
+  az account show --query "$1" -o tsv 2>/dev/null || true
 }
 
 # Non-sensitive outputs
-FOUNDRY_ENDPOINT=$(tf_value foundry_endpoint)
-FOUNDRY_DEPLOYMENT=$(tf_value foundry_deployment)
-SEARCH_ENDPOINT=$(tf_value search_endpoint)
-SEARCH_INDEX=$(tf_value search_index_name)
-COSMOS_ENDPOINT=$(tf_value cosmos_endpoint)
-COSMOS_DATABASE=$(tf_value cosmos_database)
-COSMOS_CONTAINER=$(tf_value cosmos_container_decisions)
-LOG_WORKSPACE_ID=$(tf_value log_analytics_workspace_id)
-KEYVAULT_URL=$(tf_value keyvault_url)
-FOUNDRY_KEY_SECRET_NAME=$(tf_value keyvault_secret_name_foundry_key)
-SEARCH_KEY_SECRET_NAME=$(tf_value keyvault_secret_name_search_key)
-COSMOS_KEY_SECRET_NAME=$(tf_value keyvault_secret_name_cosmos_key)
+FOUNDRY_ENDPOINT=$(tf_raw foundry_endpoint)
+FOUNDRY_DEPLOYMENT=$(tf_raw foundry_deployment)
+SEARCH_ENDPOINT=$(tf_raw search_endpoint)
+SEARCH_INDEX=$(tf_raw search_index_name)
+COSMOS_ENDPOINT=$(tf_raw cosmos_endpoint)
+COSMOS_DATABASE=$(tf_raw cosmos_database)
+COSMOS_CONTAINER=$(tf_raw cosmos_container_decisions)
+LOG_WORKSPACE_ID=$(tf_raw log_analytics_workspace_id)
+KEYVAULT_URL=$(tf_raw keyvault_url)
+FOUNDRY_KEY_SECRET_NAME=$(tf_raw keyvault_secret_name_foundry_key)
+SEARCH_KEY_SECRET_NAME=$(tf_raw keyvault_secret_name_search_key)
+COSMOS_KEY_SECRET_NAME=$(tf_raw keyvault_secret_name_cosmos_key)
 
 # Optional plaintext keys
 FOUNDRY_KEY=""
@@ -62,6 +83,32 @@ if [ "$INCLUDE_KEYS" = true ]; then
   SEARCH_KEY=$(terraform output -raw search_primary_key)
   COSMOS_KEY=$(terraform output -raw cosmos_primary_key)
 fi
+
+# Subscription and tenant defaults from the current Azure CLI account
+DEFAULT_SUBSCRIPTION_ID=$(az_tsv id)
+DEFAULT_TENANT_ID=$(az_tsv tenantId)
+
+# Prompt only when attached to an interactive terminal and no --no-prompt flag
+SUBSCRIPTION_ID="${DEFAULT_SUBSCRIPTION_ID}"
+TENANT_ID="${DEFAULT_TENANT_ID}"
+
+if [ "$NO_PROMPT" = false ] && [ -t 0 ]; then
+  echo ""
+  echo "Enter Azure account identifiers for .env (press Enter to accept defaults)."
+  read -r -p "AZURE_SUBSCRIPTION_ID [${DEFAULT_SUBSCRIPTION_ID:-<your-subscription-id>}]: " INPUT_SUBSCRIPTION_ID
+  read -r -p "AZURE_TENANT_ID [${DEFAULT_TENANT_ID:-<your-tenant-id>}]: " INPUT_TENANT_ID
+
+  if [ -n "${INPUT_SUBSCRIPTION_ID}" ]; then
+    SUBSCRIPTION_ID="${INPUT_SUBSCRIPTION_ID}"
+  fi
+  if [ -n "${INPUT_TENANT_ID}" ]; then
+    TENANT_ID="${INPUT_TENANT_ID}"
+  fi
+fi
+
+# Final fallback placeholders if Azure CLI is unavailable and no input provided
+SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-<your-subscription-id>}"
+TENANT_ID="${TENANT_ID:-<your-tenant-id>}"
 
 cd "$PROJECT_ROOT"
 
@@ -95,9 +142,8 @@ COSMOS_DATABASE=$COSMOS_DATABASE
 COSMOS_CONTAINER_DECISIONS=$COSMOS_CONTAINER
 
 # --- Azure Resource Graph ---
-# Fill these manually (terraform does not manage them)
-AZURE_SUBSCRIPTION_ID=<your-subscription-id>
-AZURE_TENANT_ID=<your-tenant-id>
+AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID
+AZURE_TENANT_ID=$TENANT_ID
 
 # --- Azure Monitor ---
 LOG_ANALYTICS_WORKSPACE_ID=$LOG_WORKSPACE_ID
@@ -115,14 +161,12 @@ EOF
 echo ""
 echo ".env written to $ENV_FILE"
 echo ""
-echo "ACTION REQUIRED:"
-echo "  1) Fill these values in .env:"
-echo "     AZURE_SUBSCRIPTION_ID=<your-subscription-id>"
-echo "     AZURE_TENANT_ID=<your-tenant-id>"
-echo "  2) Ensure your runtime identity can read Key Vault secrets (Get/List)."
+echo "Configured values:"
+echo "  AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID"
+echo "  AZURE_TENANT_ID=$TENANT_ID"
 echo ""
-echo "Find subscription/tenant with:"
-echo "  az account show --query '{subscriptionId:id, tenantId:tenantId}'"
+echo "ACTION REQUIRED:"
+echo "  Ensure your runtime identity can read Key Vault secrets (Get/List)."
 echo ""
 if [ "$INCLUDE_KEYS" = false ]; then
   echo "Secure mode used: keys were NOT written to .env."

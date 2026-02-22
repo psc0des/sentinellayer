@@ -169,6 +169,8 @@ cd ../..
 bash scripts/setup_env.sh
 # For local fallback with plaintext keys in .env:
 # bash scripts/setup_env.sh --include-keys
+# For CI/non-interactive mode:
+# bash scripts/setup_env.sh --no-prompt
 
 # Seed demo data
 python scripts/seed_data.py

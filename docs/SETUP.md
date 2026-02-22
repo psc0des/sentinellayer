@@ -52,6 +52,9 @@ bash scripts/setup_env.sh
 # Optional local fallback (writes plaintext keys into .env)
 # bash scripts/setup_env.sh --include-keys
 
+# Optional CI/non-interactive mode (no prompts)
+# bash scripts/setup_env.sh --no-prompt
+
 # 5. Seed demo data
 python scripts/seed_data.py
 
