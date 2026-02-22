@@ -1,27 +1,7 @@
 # =============================================================================
-# SentinelLayer — Azure Infrastructure
+# SentinelLayer - Azure Infrastructure (Foundry Only)
 # =============================================================================
-# Deploys all Azure services needed for SentinelLayer in a single plan.
-#
-# Resources deployed (in dependency order):
-#   1. Resource Group          — container for all resources
-#   2. Log Analytics Workspace — monitoring, created early so others can link
-#   3. Key Vault               — secret store for API keys
-#   4. Azure AI Search         — incident history vector search
-#   5. Cosmos DB (SQL API)     — governance decision audit trail
-#
-# NOT managed by Terraform:
-#   Microsoft Foundry (GPT-4.1) — deployed manually via the Foundry portal.
-#   See .env.example for the env vars to set after portal deployment.
-#
-# Usage:
-#   cd infrastructure/terraform
-#   cp terraform.tfvars.example terraform.tfvars   # fill in your values
-#   terraform init
-#   terraform plan
-#   terraform apply
-#   cd ../..
-#   bash scripts/setup_env.sh                       # writes .env from outputs
+# This configuration manages Foundry (AIServices) as the only LLM platform.
 # =============================================================================
 
 terraform {
@@ -30,32 +10,19 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.90"
+      version = "~> 4.58"
     }
   }
 }
 
 provider "azurerm" {
-  features {
-    key_vault {
-      # Soft-delete and purge protection — safe defaults for dev
-      purge_soft_delete_on_destroy    = true
-      recover_soft_deleted_key_vaults = true
-    }
-  }
+  features {}
   subscription_id = var.subscription_id
 }
 
-# Read the current caller identity (needed for Key Vault access policy)
 data "azurerm_client_config" "current" {}
 
-# =============================================================================
-# Local values — shared tags and computed names
-# =============================================================================
-
 locals {
-  # All resource names share this suffix so they are globally unique
-  # (Cosmos DB, Key Vault, and Search names must be unique across Azure)
   name_suffix = var.suffix
 
   common_tags = {
@@ -63,6 +30,10 @@ locals {
     environment = var.env
     managed_by  = "terraform"
   }
+
+  default_foundry_name = "sentinel-foundry-${local.name_suffix}"
+  foundry_account_name = var.foundry_account_name != "" ? var.foundry_account_name : local.default_foundry_name
+  foundry_subdomain    = var.foundry_custom_subdomain_name != "" ? var.foundry_custom_subdomain_name : local.foundry_account_name
 }
 
 # =============================================================================
@@ -77,32 +48,28 @@ resource "azurerm_resource_group" "sentinel" {
 
 # =============================================================================
 # 2. Log Analytics Workspace
-# Created first so other resources can reference its ID for diagnostics.
 # =============================================================================
 
 resource "azurerm_log_analytics_workspace" "sentinel" {
   name                = "sentinel-log-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.sentinel.name
   location            = azurerm_resource_group.sentinel.location
-  sku                 = "PerGB2018"   # pay-per-GB, cheapest option
+  sku                 = "PerGB2018"
   retention_in_days   = 30
   tags                = local.common_tags
 }
 
 # =============================================================================
 # 3. Azure Key Vault
-# Stores all API keys / connection secrets so they don't live in .env long-term.
 # =============================================================================
 
 resource "azurerm_key_vault" "sentinel" {
-  # Name must be 3–24 chars, globally unique, alphanumeric + hyphens
   name                = "sentinel-kv-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.sentinel.name
   location            = azurerm_resource_group.sentinel.location
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
-  # Give the deploying identity full secret access (needed for CI/CD later)
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = data.azurerm_client_config.current.object_id
@@ -115,38 +82,75 @@ resource "azurerm_key_vault" "sentinel" {
   tags = local.common_tags
 }
 
-# =============================================================================
-# 4. Microsoft Foundry — GPT-4.1  [NOT MANAGED BY TERRAFORM]
-# =============================================================================
-# The model endpoint is deployed manually through the Microsoft Foundry portal:
-#   1. Go to https://ai.azure.com  →  Build tab  →  Models
-#   2. Click "Deploy a base model" and select GPT-4.1
-#   3. After deployment, copy the endpoint and API key from the portal
-#   4. Paste those values into your .env file:
-#        AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/
-#        AZURE_OPENAI_API_KEY=<key from portal>
-#        AZURE_OPENAI_DEPLOYMENT=gpt-41
-#        AZURE_OPENAI_API_VERSION=2025-01-01-preview
-#
-# Why not manage it with Terraform?
-#   The azurerm provider does not yet fully support the new Foundry resource
-#   type (AIServices) for model deployments. Managing it via the portal is
-#   simpler and avoids provider compatibility issues for the hackathon.
-# =============================================================================
+resource "azurerm_key_vault_access_policy" "managed_identity_readers" {
+  for_each = toset(var.managed_identity_principal_ids)
+
+  key_vault_id = azurerm_key_vault.sentinel.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = each.value
+
+  secret_permissions = ["Get", "List"]
+}
 
 # =============================================================================
-# 4. Azure AI Search
-# NOTE: Only ONE free-tier Search service is allowed per Azure subscription.
-# If you already have one, change sku to "basic" (~$73/month).
+# 4. Foundry (AIServices)
+# =============================================================================
+
+resource "azurerm_ai_services" "foundry" {
+  name                               = local.foundry_account_name
+  custom_subdomain_name              = local.foundry_subdomain
+  resource_group_name                = azurerm_resource_group.sentinel.name
+  location                           = var.foundry_location
+  sku_name                           = "S0"
+  local_authentication_enabled       = true
+  public_network_access              = "Enabled"
+  outbound_network_access_restricted = false
+  tags                               = local.common_tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_cognitive_account_project" "foundry" {
+  count                = var.create_foundry_project ? 1 : 0
+  name                 = var.foundry_project_name
+  location             = var.foundry_location
+  cognitive_account_id = azurerm_ai_services.foundry.id
+  tags                 = local.common_tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_cognitive_deployment" "foundry_primary" {
+  count                = var.create_foundry_deployment ? 1 : 0
+  name                 = var.foundry_deployment_name
+  cognitive_account_id = azurerm_ai_services.foundry.id
+
+  model {
+    format  = "OpenAI"
+    name    = var.foundry_model
+    version = var.foundry_model_version != "" ? var.foundry_model_version : null
+  }
+
+  sku {
+    name     = var.foundry_scale_type
+    capacity = var.foundry_capacity
+  }
+}
+
+# =============================================================================
+# 5. Azure AI Search
 # =============================================================================
 
 resource "azurerm_search_service" "sentinel" {
   name                = "sentinel-search-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.sentinel.name
   location            = azurerm_resource_group.sentinel.location
-  sku                 = var.search_sku   # "free" (default) or "basic"
+  sku                 = var.search_sku
 
-  # Free tier restriction: only 1 replica, 1 partition
   replica_count   = var.search_sku == "free" ? null : 1
   partition_count = var.search_sku == "free" ? null : 1
 
@@ -154,34 +158,28 @@ resource "azurerm_search_service" "sentinel" {
 }
 
 # =============================================================================
-# 5. Cosmos DB (SQL API) — governance decision audit trail
+# 6. Cosmos DB (SQL API)
 # =============================================================================
 
 resource "azurerm_cosmosdb_account" "sentinel" {
   name                = "sentinel-cosmos-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.sentinel.name
-  location            = azurerm_resource_group.sentinel.location
+  location            = var.cosmos_location
   offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"   # SQL API
+  kind                = "GlobalDocumentDB"
 
-  # Session consistency: best balance of performance and consistency for audit logs
   consistency_policy {
     consistency_level = "Session"
   }
 
-  # Single-region for dev — add more geo_locations for production HA
-  # zone_redundant = false: explicitly opt out of Availability Zones.
-  # AZ accounts require reserved capacity that East US is currently out of.
   geo_location {
-    location          = azurerm_resource_group.sentinel.location
+    location          = var.cosmos_location
     failover_priority = 0
     zone_redundant    = false
   }
 
-  # Enable free tier (400 RU/s + 25 GB free) — only 1 per subscription
   free_tier_enabled = var.cosmos_free_tier
-
-  tags = local.common_tags
+  tags              = local.common_tags
 }
 
 resource "azurerm_cosmosdb_sql_database" "sentinellayer" {
@@ -196,12 +194,9 @@ resource "azurerm_cosmosdb_sql_container" "governance_decisions" {
   account_name        = azurerm_cosmosdb_account.sentinel.name
   database_name       = azurerm_cosmosdb_sql_database.sentinellayer.name
 
-  # Partition key — resource_id spreads decisions across partitions evenly
-  # partition_key_paths replaces the deprecated partition_key_path (azurerm v4+)
   partition_key_paths   = ["/resource_id"]
   partition_key_version = 2
 
-  # Automatic indexing of all fields (good for development)
   indexing_policy {
     indexing_mode = "consistent"
 
@@ -209,4 +204,32 @@ resource "azurerm_cosmosdb_sql_container" "governance_decisions" {
       path = "/*"
     }
   }
+}
+
+# =============================================================================
+# 7. Key Vault secrets (service credentials)
+# =============================================================================
+
+resource "azurerm_key_vault_secret" "foundry_primary_key" {
+  name         = var.keyvault_secret_name_foundry_key
+  value        = azurerm_ai_services.foundry.primary_access_key
+  key_vault_id = azurerm_key_vault.sentinel.id
+
+  depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
+}
+
+resource "azurerm_key_vault_secret" "search_primary_key" {
+  name         = var.keyvault_secret_name_search_key
+  value        = azurerm_search_service.sentinel.primary_key
+  key_vault_id = azurerm_key_vault.sentinel.id
+
+  depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
+}
+
+resource "azurerm_key_vault_secret" "cosmos_primary_key" {
+  name         = var.keyvault_secret_name_cosmos_key
+  value        = azurerm_cosmosdb_account.sentinel.primary_key
+  key_vault_id = azurerm_key_vault.sentinel.id
+
+  depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
 }

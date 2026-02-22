@@ -32,6 +32,7 @@ import logging
 from pathlib import Path
 
 from src.config import settings as _default_settings
+from src.infrastructure.secrets import KeyVaultSecretResolver
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +52,25 @@ class AzureSearchClient:
     def __init__(self, cfg=None, incidents_path: Path | None = None) -> None:
         self._cfg = cfg or _default_settings
         self._incidents_path: Path = incidents_path or _DEFAULT_INCIDENTS_PATH
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._api_key = self._secrets.resolve(
+            direct_value=self._cfg.azure_search_api_key,
+            secret_name=getattr(self._cfg, "azure_search_api_key_secret_name", ""),
+            setting_name="AZURE_SEARCH_API_KEY",
+        )
 
         self._is_mock: bool = (
-            self._cfg.use_local_mocks or not self._cfg.azure_search_endpoint
+            self._cfg.use_local_mocks
+            or not self._cfg.azure_search_endpoint
+            or not self._api_key
         )
 
         if self._is_mock:
+            if not self._cfg.use_local_mocks and self._cfg.azure_search_endpoint:
+                logger.warning(
+                    "AzureSearchClient: no API key available from env or Key Vault; "
+                    "falling back to mock mode."
+                )
             logger.info("AzureSearchClient: LOCAL MOCK mode (JSON at %s).", self._incidents_path)
             self._incidents: list[dict] = self._load_local_incidents()
             self._search_client = None
@@ -68,7 +82,7 @@ class AzureSearchClient:
             self._search_client = SearchClient(
                 endpoint=self._cfg.azure_search_endpoint,
                 index_name=self._cfg.azure_search_index,
-                credential=AzureKeyCredential(self._cfg.azure_search_api_key),
+                credential=AzureKeyCredential(self._api_key),
             )
             logger.info(
                 "AzureSearchClient: connected to %s index '%s'",

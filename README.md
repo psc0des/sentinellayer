@@ -137,12 +137,9 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 ### Prerequisites
 
 - Python 3.11+
-- Azure subscription with the following services:
-  - Microsoft Foundry — GPT-4.1 deployed via https://ai.azure.com (manual setup)
-  - Azure AI Search
-  - Cosmos DB (SQL + Gremlin API)
-  - Azure Monitor + Log Analytics
-  - Azure Key Vault
+- Azure subscription (Terraform deploys Foundry, Search, Cosmos DB, Key Vault, and Log Analytics)
+- Azure CLI (`az login` completed)
+- Terraform 1.5+
 - Node.js 18+ (for dashboard)
 
 ### Setup
@@ -160,9 +157,18 @@ source .venv/bin/activate  # Linux/Mac
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your Azure credentials
+# Provision Azure infrastructure (Foundry-only)
+cd infrastructure/terraform
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with subscription_id and unique suffix
+terraform init
+terraform apply -input=false
+cd ../..
+
+# Generate .env from Terraform outputs (Key Vault + Managed Identity mode)
+bash scripts/setup_env.sh
+# For local fallback with plaintext keys in .env:
+# bash scripts/setup_env.sh --include-keys
 
 # Seed demo data
 python scripts/seed_data.py

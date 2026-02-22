@@ -12,17 +12,20 @@ class Settings(BaseSettings):
     # The openai SDK is used for all calls — Foundry exposes a compatible API.
     azure_openai_endpoint: str = ""
     azure_openai_api_key: str = ""
+    azure_openai_api_key_secret_name: str = "foundry-primary-key"
     azure_openai_deployment: str = "gpt-41"
     azure_openai_api_version: str = "2025-01-01-preview"
 
     # --- Azure AI Search ---
     azure_search_endpoint: str = ""
     azure_search_api_key: str = ""
+    azure_search_api_key_secret_name: str = "search-primary-key"
     azure_search_index: str = "incident-history"
 
     # --- Azure Cosmos DB (SQL API — Decisions) ---
     cosmos_endpoint: str = ""
     cosmos_key: str = ""
+    cosmos_key_secret_name: str = "cosmos-primary-key"
     cosmos_database: str = "sentinellayer"
     cosmos_container_decisions: str = "governance-decisions"
 
@@ -40,6 +43,7 @@ class Settings(BaseSettings):
 
     # --- Azure Key Vault ---
     azure_keyvault_url: str = ""
+    azure_managed_identity_client_id: str = ""
 
     # --- SRI™ Thresholds ---
     sri_auto_approve_threshold: int = 25

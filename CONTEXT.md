@@ -66,9 +66,10 @@ Operational Agent proposes action (ProposedAction)
 
 ## Current Development Phase
 - Core logic is complete and tested with LOCAL MOCKS (data/ JSON files).
-- Azure infrastructure is provisioned via Terraform (Search, Cosmos, Key Vault).
-- LLM: GPT-4.1 is deployed manually via Microsoft Foundry portal (https://ai.azure.com).
-  Set USE_LOCAL_MOCKS=false and fill in AZURE_OPENAI_* vars in .env to enable live calls.
+- Azure infrastructure is provisioned via Terraform (Foundry, Search, Cosmos, Key Vault, Log Analytics).
+- LLM runtime is Foundry-only and Terraform-managed (`azurerm_ai_services` + `azurerm_cognitive_deployment`).
+- Real-environment secret flow is Key Vault + `DefaultAzureCredential` (Managed Identity in Azure, `az login` locally).
+  Set `USE_LOCAL_MOCKS=false`, `AZURE_KEYVAULT_URL`, and secret-name vars in `.env` to enable live calls without plaintext keys.
 - All agents still work without any cloud connection (mock mode is the default).
 
 ## Coding Standards
@@ -95,7 +96,7 @@ Use conventional commits:
 - `fix(blast-radius): handle missing dependencies gracefully`
 
 ## What NOT To Do
-- Do NOT call any Azure APIs yet (mock everything locally)
+- Do NOT make tests depend on live Azure APIs (keep tests mock-first and deterministic)
 - Do NOT install new dependencies without checking requirements.txt first
 - Do NOT modify src/core/models.py without asking (it's the shared contract)
 - Do NOT use print() for logging — use Python's logging module

@@ -2,45 +2,42 @@
 # terraform.tfvars.example
 # =============================================================================
 # Copy this file to terraform.tfvars and fill in your real values.
-#
-#   cp terraform.tfvars.example terraform.tfvars
-#
-# terraform.tfvars is in .gitignore — it will NOT be committed to git.
-# NEVER commit real subscription IDs, suffixes, or secrets to git.
+# terraform.tfvars is in .gitignore and must not be committed.
 # =============================================================================
 
-# Your Azure Subscription ID
-# Find it with: az account show --query id -o tsv
+# Azure subscription
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
-# Resource group name (leave as default unless you need a different one)
+# Core resources
 resource_group_name = "sentinel-layer-rg"
+location            = "eastus2"
+env                 = "dev"
+suffix              = "replace-me"
 
-# Azure region for Search, Cosmos, Key Vault, and Log Analytics
-location = "eastus"
-
-# Environment label (used in tags)
-env = "dev"
-
-# Short unique suffix for globally-unique resource names.
-# Choose something unique: your initials + 4 random digits works well.
-# Example: "jd4821" — results in names like "sentinel-kv-jd4821"
-# IMPORTANT: Once deployed, do not change this suffix (would recreate all resources)
-suffix = "replace-me"
-
-# Microsoft Foundry / GPT-4.1
-# NOT managed here — deployed manually via https://ai.azure.com
-# After portal deployment, set these in your .env file:
-#   AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/
-#   AZURE_OPENAI_API_KEY=<key from portal>
-#   AZURE_OPENAI_DEPLOYMENT=gpt-41
-#   AZURE_OPENAI_API_VERSION=2025-01-01-preview
-
-# Azure AI Search SKU
-# "free"  = no cost, but only 1 free Search per subscription
-# "basic" = ~$73/month, no subscription-wide limit
-search_sku = "free"
-
-# Enable Cosmos DB free tier (400 RU/s free)
-# Set to false if your subscription already uses Cosmos DB free tier elsewhere
+# Search and Cosmos
+search_sku       = "free"
 cosmos_free_tier = true
+cosmos_location  = "eastus2"
+
+# Foundry (only LLM platform)
+foundry_location              = "eastus2"
+foundry_account_name          = ""
+foundry_custom_subdomain_name = ""
+
+# Foundry project and deployment
+create_foundry_project    = false
+foundry_project_name      = "sentinel-layer"
+create_foundry_deployment = true
+foundry_model             = "gpt-4.1"
+foundry_model_version     = "2025-04-14"
+foundry_deployment_name   = "gpt-41"
+foundry_scale_type        = "GlobalStandard"
+foundry_capacity          = 1
+
+# Key Vault secret names (runtime reads these via .env)
+keyvault_secret_name_foundry_key = "foundry-primary-key"
+keyvault_secret_name_search_key  = "search-primary-key"
+keyvault_secret_name_cosmos_key  = "cosmos-primary-key"
+
+# Optional: object IDs of managed identities that should read Key Vault secrets
+managed_identity_principal_ids = []

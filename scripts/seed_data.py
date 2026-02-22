@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 
 from src.config import settings  # reads .env automatically via pydantic-settings
+from src.infrastructure.secrets import KeyVaultSecretResolver
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 
@@ -107,7 +108,17 @@ def seed_incidents() -> None:
     from azure.search.documents import SearchClient
     from azure.search.documents.indexes import SearchIndexClient
 
-    credential = AzureKeyCredential(settings.azure_search_api_key)
+    api_key = KeyVaultSecretResolver(settings).resolve(
+        direct_value=settings.azure_search_api_key,
+        secret_name=settings.azure_search_api_key_secret_name,
+        setting_name="AZURE_SEARCH_API_KEY",
+    )
+    if not api_key:
+        print("   Skipping Azure upload - no Azure Search API key in env or Key Vault.")
+        print("   Ensure AZURE_KEYVAULT_URL + secret name are set, or set AZURE_SEARCH_API_KEY.")
+        return
+
+    credential = AzureKeyCredential(api_key)
 
     # Step 1 — create or update the index schema
     index_client = SearchIndexClient(

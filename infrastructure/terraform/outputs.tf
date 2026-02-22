@@ -1,12 +1,5 @@
 # =============================================================================
-# SentinelLayer — Terraform Outputs
-# =============================================================================
-# After `terraform apply`, these values are printed to the terminal.
-# The setup_env.sh script reads these with `terraform output -json`
-# to auto-generate the project .env file.
-#
-# Values marked `sensitive = true` are hidden in terminal output but can
-# still be read by scripts via `terraform output -raw <name>`.
+# SentinelLayer - Terraform Outputs (Foundry Only)
 # =============================================================================
 
 # --- Resource Group ---
@@ -17,20 +10,42 @@ output "resource_group_name" {
 }
 
 output "location" {
-  description = "Azure region where resources were deployed"
+  description = "Azure region where core resources were deployed"
   value       = azurerm_resource_group.sentinel.location
 }
 
-# --- Microsoft Foundry / GPT-4.1 [NOT a Terraform output] ---
-#
-# The Foundry endpoint, API key, and deployment name are NOT output here
-# because the resource is managed manually via the portal (not by Terraform).
-#
-# After deploying GPT-4.1 in the Foundry portal, set these in your .env:
-#   AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/
-#   AZURE_OPENAI_API_KEY=<key from portal>
-#   AZURE_OPENAI_DEPLOYMENT=gpt-41
-#   AZURE_OPENAI_API_VERSION=2025-01-01-preview
+# --- Foundry runtime outputs ---
+
+output "ai_platform" {
+  description = "Active AI platform"
+  value       = "foundry"
+}
+
+output "foundry_endpoint" {
+  description = "Foundry endpoint URL"
+  value       = azurerm_ai_services.foundry.endpoint
+}
+
+output "foundry_primary_key" {
+  description = "Foundry primary API key"
+  value       = azurerm_ai_services.foundry.primary_access_key
+  sensitive   = true
+}
+
+output "foundry_deployment" {
+  description = "Foundry deployment name"
+  value       = var.create_foundry_deployment ? azurerm_cognitive_deployment.foundry_primary[0].name : var.foundry_deployment_name
+}
+
+output "foundry_account_name" {
+  description = "Foundry account name"
+  value       = azurerm_ai_services.foundry.name
+}
+
+output "foundry_project_name" {
+  description = "Foundry project name (empty when not created)"
+  value       = var.create_foundry_project ? azurerm_cognitive_account_project.foundry[0].name : ""
+}
 
 # --- Azure AI Search ---
 
@@ -76,12 +91,12 @@ output "cosmos_container_decisions" {
 # --- Log Analytics ---
 
 output "log_analytics_workspace_id" {
-  description = "Log Analytics workspace ID (for diagnostic settings)"
+  description = "Log Analytics workspace ID"
   value       = azurerm_log_analytics_workspace.sentinel.workspace_id
 }
 
 output "log_analytics_workspace_resource_id" {
-  description = "Full ARM resource ID of the Log Analytics workspace"
+  description = "Log Analytics workspace resource ID"
   value       = azurerm_log_analytics_workspace.sentinel.id
 }
 
@@ -97,34 +112,49 @@ output "keyvault_name" {
   value       = azurerm_key_vault.sentinel.name
 }
 
+output "keyvault_secret_name_foundry_key" {
+  description = "Key Vault secret name for Foundry primary key"
+  value       = azurerm_key_vault_secret.foundry_primary_key.name
+}
+
+output "keyvault_secret_name_search_key" {
+  description = "Key Vault secret name for Azure AI Search primary key"
+  value       = azurerm_key_vault_secret.search_primary_key.name
+}
+
+output "keyvault_secret_name_cosmos_key" {
+  description = "Key Vault secret name for Cosmos DB primary key"
+  value       = azurerm_key_vault_secret.cosmos_primary_key.name
+}
+
 # --- Helpful summary ---
 
 output "next_steps" {
   description = "What to do after terraform apply"
   value       = <<-EOT
 
-    ✓ Infrastructure deployed successfully!
+    Infrastructure deployed successfully (Foundry-only).
 
-    Next steps:
-    1. Run from project root:
-         bash scripts/setup_env.sh
-       This generates .env with Search, Cosmos, and Key Vault connection strings.
+    Generate .env automatically (Managed Identity + Key Vault mode):
+      bash scripts/setup_env.sh
 
-    2. Manually add your Microsoft Foundry credentials to .env:
-         AZURE_OPENAI_ENDPOINT=https://<your-project>.services.ai.azure.com/
-         AZURE_OPENAI_API_KEY=<key from Foundry portal>
-         AZURE_OPENAI_DEPLOYMENT=gpt-41
-         AZURE_OPENAI_API_VERSION=2025-01-01-preview
+    Runtime endpoint values:
+      AZURE_OPENAI_ENDPOINT   <- foundry_endpoint
+      AZURE_OPENAI_DEPLOYMENT <- foundry_deployment
+      AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
-    3. Add your subscription and tenant IDs:
-         AZURE_SUBSCRIPTION_ID=<your-id>
-         AZURE_TENANT_ID=<your-id>
+    Runtime Key Vault secret names:
+      AZURE_OPENAI_API_KEY_SECRET_NAME <- keyvault_secret_name_foundry_key
+      AZURE_SEARCH_API_KEY_SECRET_NAME <- keyvault_secret_name_search_key
+      COSMOS_KEY_SECRET_NAME           <- keyvault_secret_name_cosmos_key
 
-    4. Switch from mock to Azure mode:
-         USE_LOCAL_MOCKS=false   (already set by setup_env.sh)
+    Optional local override (not recommended for real env):
+      AZURE_OPENAI_API_KEY / AZURE_SEARCH_API_KEY / COSMOS_KEY
 
-    5. Upload seed data to Azure AI Search:
-         python scripts/seed_data.py
+    Also set:
+      AZURE_SUBSCRIPTION_ID=<your-id>
+      AZURE_TENANT_ID=<your-id>
+      USE_LOCAL_MOCKS=false
 
   EOT
 }

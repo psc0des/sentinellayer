@@ -26,6 +26,7 @@ import logging
 from pathlib import Path
 
 from src.config import settings as _default_settings
+from src.infrastructure.secrets import KeyVaultSecretResolver
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,25 @@ class CosmosDecisionClient:
     def __init__(self, cfg=None, decisions_dir: Path | None = None) -> None:
         self._cfg = cfg or _default_settings
         self._decisions_dir: Path = decisions_dir or _DEFAULT_DECISIONS_DIR
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = self._secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
 
         self._is_mock: bool = (
-            self._cfg.use_local_mocks or not self._cfg.cosmos_endpoint
+            self._cfg.use_local_mocks
+            or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
         )
 
         if self._is_mock:
+            if not self._cfg.use_local_mocks and self._cfg.cosmos_endpoint:
+                logger.warning(
+                    "CosmosDecisionClient: no key available from env or Key Vault; "
+                    "falling back to mock mode."
+                )
             logger.info("CosmosDecisionClient: LOCAL MOCK mode (JSON files at %s).", self._decisions_dir)
             self._decisions_dir.mkdir(parents=True, exist_ok=True)
             self._container = None
@@ -60,7 +74,7 @@ class CosmosDecisionClient:
 
             client = CosmosClient(
                 url=self._cfg.cosmos_endpoint,
-                credential=self._cfg.cosmos_key,
+                credential=self._cosmos_key,
             )
             db = client.get_database_client(self._cfg.cosmos_database)
             self._container = db.get_container_client(

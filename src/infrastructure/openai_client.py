@@ -35,6 +35,7 @@ Usage::
 import logging
 
 from src.config import settings as _default_settings
+from src.infrastructure.secrets import KeyVaultSecretResolver
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +53,28 @@ class AzureOpenAIClient:
 
     def __init__(self, cfg=None) -> None:
         self._cfg = cfg or _default_settings
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._api_key = self._secrets.resolve(
+            direct_value=self._cfg.azure_openai_api_key,
+            secret_name=getattr(self._cfg, "azure_openai_api_key_secret_name", ""),
+            setting_name="AZURE_OPENAI_API_KEY",
+        )
 
         # Enter mock mode if the flag is set OR credentials are absent.
         # This means: even if USE_LOCAL_MOCKS=false, a missing endpoint
         # gracefully falls back to mock instead of crashing at import time.
         self._is_mock: bool = (
-            self._cfg.use_local_mocks or not self._cfg.azure_openai_endpoint
+            self._cfg.use_local_mocks
+            or not self._cfg.azure_openai_endpoint
+            or not self._api_key
         )
 
         if self._is_mock:
+            if not self._cfg.use_local_mocks and self._cfg.azure_openai_endpoint:
+                logger.warning(
+                    "AzureOpenAIClient: no API key available from env or Key Vault; "
+                    "falling back to mock mode."
+                )
             logger.info("AzureOpenAIClient: LOCAL MOCK mode (no Foundry call).")
             self._client = None
         else:
@@ -69,7 +83,7 @@ class AzureOpenAIClient:
 
             self._client = AzureOpenAI(
                 azure_endpoint=self._cfg.azure_openai_endpoint,
-                api_key=self._cfg.azure_openai_api_key,
+                api_key=self._api_key,
                 api_version=self._cfg.azure_openai_api_version,
             )
             logger.info(

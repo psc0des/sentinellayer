@@ -37,17 +37,22 @@ class _MockSettings:
     use_local_mocks = True
     azure_openai_endpoint = ""
     azure_openai_api_key = ""
+    azure_openai_api_key_secret_name = "foundry-primary-key"
     azure_openai_deployment = "gpt-4o"
     azure_openai_api_version = "2024-12-01-preview"
     azure_search_endpoint = ""
     azure_search_api_key = ""
+    azure_search_api_key_secret_name = "search-primary-key"
     azure_search_index = "incident-history"
     cosmos_endpoint = ""
     cosmos_key = ""
+    cosmos_key_secret_name = "cosmos-primary-key"
     cosmos_database = "sentinellayer"
     cosmos_container_decisions = "governance-decisions"
     azure_subscription_id = ""
     azure_tenant_id = ""
+    azure_keyvault_url = ""
+    azure_managed_identity_client_id = ""
 
 
 class _AzureSettings(_MockSettings):
@@ -58,6 +63,16 @@ class _AzureSettings(_MockSettings):
     """
 
     use_local_mocks = False
+
+
+class _EndpointNoKeySettings(_MockSettings):
+    """Endpoints set, but keys unavailable and no Key Vault configured."""
+
+    use_local_mocks = False
+    azure_openai_endpoint = "https://demo-foundry.cognitiveservices.azure.com/"
+    azure_search_endpoint = "https://demo-search.search.windows.net"
+    cosmos_endpoint = "https://demo-cosmos.documents.azure.com:443/"
+    azure_keyvault_url = ""
 
 
 # ===========================================================================
@@ -111,6 +126,10 @@ class TestAzureOpenAIClient:
         result = client.complete("system", "user", temperature=0.0)
         assert isinstance(result, str)
 
+    def test_is_mock_when_endpoint_exists_but_no_key_anywhere(self):
+        client = AzureOpenAIClient(cfg=_EndpointNoKeySettings())
+        assert client.is_mock is True
+
 
 # ===========================================================================
 # CosmosDecisionClient
@@ -131,6 +150,12 @@ class TestCosmosDecisionClient:
     def test_is_mock_when_endpoint_missing_even_if_flag_false(self, tmp_path):
         client = CosmosDecisionClient(
             cfg=_AzureSettings(), decisions_dir=tmp_path / "decisions"
+        )
+        assert client.is_mock is True
+
+    def test_is_mock_when_endpoint_exists_but_no_key_anywhere(self, tmp_path):
+        client = CosmosDecisionClient(
+            cfg=_EndpointNoKeySettings(), decisions_dir=tmp_path / "decisions"
         )
         assert client.is_mock is True
 
@@ -236,6 +261,9 @@ class TestAzureSearchClient:
 
     def test_is_mock_when_endpoint_missing_even_if_flag_false(self):
         assert AzureSearchClient(cfg=_AzureSettings()).is_mock is True
+
+    def test_is_mock_when_endpoint_exists_but_no_key_anywhere(self):
+        assert AzureSearchClient(cfg=_EndpointNoKeySettings()).is_mock is True
 
     def test_search_returns_list(self):
         results = AzureSearchClient(cfg=_MockSettings()).search_incidents("vm delete")
