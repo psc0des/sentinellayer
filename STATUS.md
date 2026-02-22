@@ -27,7 +27,7 @@
 | Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
 | Secret management | ✅ Complete | Key Vault + `DefaultAzureCredential` |
 | Live Azure wiring | ✅ Complete | All 3 services connected |
-| React dashboard | ✅ Complete | (frontend, separate repo or `ui/`) |
+| React dashboard | ✅ Complete | `dashboard/` (Vite + React, same repo) |
 
 ---
 
