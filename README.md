@@ -144,6 +144,8 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 
 ### Setup
 
+Detailed infra runbook: `infrastructure/deploy.md`
+
 ```bash
 # Clone the repository
 git clone https://github.com/<your-username>/sentinellayer.git

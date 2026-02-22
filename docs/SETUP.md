@@ -1,5 +1,7 @@
 # Setup Guide
 
+Detailed infra runbook: `infrastructure/deploy.md`
+
 ## Prerequisites
 
 - Python 3.11+
