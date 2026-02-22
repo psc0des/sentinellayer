@@ -22,7 +22,7 @@
 | Financial agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
 | Pipeline (parallel execution) | ✅ Complete | `ThreadPoolExecutor` |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
-| MCP server | ✅ Complete | FastAPI + MCP tools |
+| MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
 | Dashboard API | ✅ Complete | FastAPI REST |
 | Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
 | Secret management | ✅ Complete | Key Vault + `DefaultAzureCredential` |
@@ -68,7 +68,7 @@
 - [x] Terraform: `azurerm_ai_services` (Foundry) + `azurerm_cognitive_deployment` (gpt-41)
 - [x] Terraform: Azure AI Search, Cosmos DB, Key Vault, Log Analytics
 - [x] `scripts/setup_env.sh` — auto-populates `.env` from Terraform outputs
-- [x] Learning: `learning/13-azure-infrastructure.md`, `learning/14-azure-foundry.md`
+- [x] Learning: `learning/13-azure-infrastructure.md`, `learning/14-azure-ai-foundry.md`
 
 ### Phase 6 — Secret Management
 - [x] `src/infrastructure/secrets.py` — `KeyVaultSecretResolver` (env → Key Vault → empty)
@@ -135,8 +135,8 @@ pytest tests/ -v
   require a separate `text-embedding-3-small` deployment in Foundry.
 - [ ] `functions/function_app.py` exists but is not wired into the main pipeline.
   Azure Function deployment is not yet configured.
-- [ ] React dashboard (`learning/11-react-dashboard.md`) is documented but the `ui/`
-  directory may need verification.
+- [ ] React dashboard (`learning/11-react-dashboard.md`) is documented; frontend lives
+  in `dashboard/` (not `ui/`).
 - [ ] No CI/CD pipeline — tests run locally only.
 
 ---
