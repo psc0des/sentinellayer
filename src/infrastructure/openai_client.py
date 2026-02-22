@@ -139,6 +139,42 @@ class AzureOpenAIClient:
             logger.warning("AzureOpenAIClient: completion failed (%s) — using fallback.", exc)
             return self._mock_response()
 
+    def analyze(
+        self,
+        action_context: str,
+        agent_role: str = "cloud infrastructure risk assessor",
+    ) -> str:
+        """Request a governance risk analysis from GPT-4.1.
+
+        A convenience wrapper around ``complete()`` with a governance-focused
+        system prompt baked in.  Call this from governance agents instead of
+        ``complete()`` so the system prompt is consistent across all agents.
+
+        Args:
+            action_context: Plain-text description of the action being
+                evaluated — include resource IDs, scores, affected components,
+                and the proposing agent's stated reason.
+            agent_role: Short description of the governance agent calling this
+                method (e.g. "blast radius assessor").  Shapes GPT-4.1's focus.
+
+        Returns:
+            GPT-4.1's risk analysis as a plain string (2-3 sentences).
+            In mock mode returns the standard mock placeholder instantly.
+        """
+        system_prompt = (
+            f"You are SentinelLayer, an AI governance engine acting as a {agent_role}. "
+            "Analyze the cloud infrastructure action described and give a concise expert "
+            "risk assessment in 2-3 sentences. Be specific about the risks, mention any "
+            "compliance or operational concerns, and give one actionable recommendation. "
+            "Do not restate the input numbers."
+        )
+        return self.complete(
+            system_prompt=system_prompt,
+            user_message=action_context,
+            max_tokens=300,
+            temperature=0.1,
+        )
+
     @property
     def is_mock(self) -> bool:
         """True if this client is running in local mock mode."""

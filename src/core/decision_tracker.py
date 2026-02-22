@@ -1,9 +1,15 @@
-"""Decision Lineage Tracker — local JSON audit trail (mock for Cosmos DB).
+"""Decision Lineage Tracker — audit trail backed by Cosmos DB or local JSON.
 
-Records every SRI(tm) governance verdict to a flat-file store under
-``data/decisions/``.  Each decision is written as a single JSON file named
-``{action_id}.json``.  This mimics the Cosmos DB audit trail described in the
-project plan without requiring an Azure connection during development.
+Routes all storage through ``CosmosDecisionClient`` which already handles
+the mock/live split using the same env → Key Vault → mock-fallback pattern
+as every other infrastructure client.
+
+* **Live mode** (USE_LOCAL_MOCKS=false + Cosmos credentials available):
+  Writes and queries the ``governance-decisions`` container in Azure Cosmos DB.
+
+* **Mock mode** (USE_LOCAL_MOCKS=true or credentials missing):
+  Falls back to flat JSON files under ``data/decisions/`` — identical to
+  the original standalone behaviour.
 
 API
 ---
@@ -14,56 +20,54 @@ API
     tracker.get_risk_profile("vm-23")     # aggregated stats for one resource
 """
 
-import json
 import logging
-from datetime import datetime
 from pathlib import Path
 
 from src.core.models import GovernanceVerdict
+from src.infrastructure.cosmos_client import CosmosDecisionClient
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DECISIONS_DIR = (
-    Path(__file__).parent.parent.parent / "data" / "decisions"
-)
-
 
 class DecisionTracker:
-    """Writes and queries governance verdicts as JSON files.
+    """Writes and queries governance verdicts via ``CosmosDecisionClient``.
 
-    Each call to ``record()`` creates one file:
-    ``data/decisions/{action_id}.json``.
-
-    The file contains a flat dict with all fields needed for audit,
-    dashboards, and the MCP query tools.
+    ``CosmosDecisionClient`` owns the storage logic — this class is responsible
+    for converting ``GovernanceVerdict`` Pydantic objects to plain dicts and
+    for the higher-level ``get_risk_profile()`` aggregation.
 
     Args:
-        decisions_dir: Override the storage directory (used in tests).
+        decisions_dir: Override the local JSON directory (used in tests to
+            write to a temp directory instead of ``data/decisions/``).
+            Passed through to ``CosmosDecisionClient`` unchanged.
     """
 
     def __init__(self, decisions_dir: Path | None = None) -> None:
-        self._dir = decisions_dir or _DEFAULT_DECISIONS_DIR
-        self._dir.mkdir(parents=True, exist_ok=True)
-        logger.info("DecisionTracker initialised — storage: %s", self._dir)
+        self._cosmos = CosmosDecisionClient(decisions_dir=decisions_dir)
+        mode = "LIVE (Cosmos DB)" if not self._cosmos.is_mock else "MOCK (local JSON)"
+        logger.info("DecisionTracker initialised — storage: %s", mode)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def record(self, verdict: GovernanceVerdict) -> None:
-        """Persist a governance verdict to disk.
+        """Persist a governance verdict to Cosmos DB (or JSON in mock mode).
 
-        Converts the Pydantic ``GovernanceVerdict`` into a flat dict and
-        writes it to ``{decisions_dir}/{action_id}.json``.
+        Converts the Pydantic ``GovernanceVerdict`` to a flat dict, adds the
+        ``id`` field required by Cosmos DB (set to ``action_id``), then
+        delegates to ``CosmosDecisionClient.upsert()``.
 
         Args:
             verdict: The :class:`~src.core.models.GovernanceVerdict` returned
                 by ``SentinelLayerPipeline.evaluate()``.
         """
         record = self._verdict_to_dict(verdict)
-        path = self._dir / f"{verdict.action_id}.json"
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(record, fh, indent=2)
+        # Cosmos DB requires an "id" field as the document key.
+        # We set it to action_id so Cosmos uses the same identifier as our
+        # local JSON files (backwards-compatible).
+        record["id"] = record["action_id"]
+        self._cosmos.upsert(record)
         logger.info(
             "DecisionTracker: recorded %s -> %s (SRI %.1f)",
             verdict.proposed_action.action_type.value,
@@ -74,26 +78,16 @@ class DecisionTracker:
     def get_recent(self, limit: int = 10) -> list[dict]:
         """Return the most recent ``limit`` decisions, newest first.
 
-        Reads all JSON files in the decisions directory, sorts by the
-        ``timestamp`` field (ISO 8601 string — lexicographic sort works
-        correctly for ISO timestamps), and returns the last ``limit`` records.
-
         Args:
             limit: Maximum number of records to return.
 
         Returns:
             List of dicts, each representing one governance verdict.
         """
-        records = self._load_all()
-        records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-        return records[:limit]
+        return self._cosmos.get_recent(limit)
 
     def get_by_resource(self, resource_id: str, limit: int = 10) -> list[dict]:
         """Return decisions for a specific resource, newest first.
-
-        Matches any decision where the ``resource_id`` field contains
-        ``resource_id`` as a substring (handles both short names like
-        ``"vm-23"`` and full Azure IDs).
 
         Args:
             resource_id: Full or partial Azure resource ID / short name.
@@ -102,13 +96,7 @@ class DecisionTracker:
         Returns:
             Filtered list of dicts, newest first, at most ``limit`` entries.
         """
-        all_records = self._load_all()
-        matched = [
-            r for r in all_records
-            if resource_id in r.get("resource_id", "")
-        ]
-        matched.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-        return matched[:limit]
+        return self._cosmos.get_by_resource(resource_id, limit)
 
     def get_risk_profile(self, resource_id: str) -> dict:
         """Return an aggregated risk summary for a resource.
@@ -177,7 +165,7 @@ class DecisionTracker:
     # ------------------------------------------------------------------
 
     def _verdict_to_dict(self, verdict: GovernanceVerdict) -> dict:
-        """Flatten a GovernanceVerdict into a simple dict for JSON storage."""
+        """Flatten a GovernanceVerdict into a simple dict for storage."""
         action = verdict.proposed_action
         sri = verdict.sentinel_risk_index
 
@@ -207,14 +195,3 @@ class DecisionTracker:
             "verdict_reason": verdict.reason,
             "violations": violations,
         }
-
-    def _load_all(self) -> list[dict]:
-        """Load every JSON file from the decisions directory."""
-        records: list[dict] = []
-        for path in self._dir.glob("*.json"):
-            try:
-                with open(path, encoding="utf-8") as fh:
-                    records.append(json.load(fh))
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.warning("DecisionTracker: skipping %s (%s)", path.name, exc)
-        return records

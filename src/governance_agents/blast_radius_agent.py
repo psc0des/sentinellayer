@@ -38,6 +38,7 @@ import logging
 from pathlib import Path
 
 from src.core.models import ActionType, BlastRadiusResult, ProposedAction
+from src.infrastructure.openai_client import AzureOpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,10 @@ class BlastRadiusAgent:
         # Directed dependency edges from the JSON
         self._edges: list[dict] = data.get("dependency_edges", [])
 
+        # LLM client — augments rule-based reasoning with GPT-4.1 analysis
+        # when USE_LOCAL_MOCKS=false and Foundry credentials are available.
+        self._llm = AzureOpenAIClient()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -157,15 +162,35 @@ class BlastRadiusAgent:
             spofs,
         )
 
+        reasoning = self._build_reasoning(action, resource, score, affected_resources, spofs)
+
+        # Augment rule-based reasoning with GPT-4.1 analysis in live mode
+        if not self._llm.is_mock:
+            criticality = (
+                resource.get("tags", {}).get("criticality", "unknown")
+                if resource else "unknown"
+            )
+            llm_text = self._llm.analyze(
+                action_context=(
+                    f"Action: {action.action_type.value} on '{action.target.resource_id}'\n"
+                    f"Resource criticality: {criticality}\n"
+                    f"Affected resources ({len(affected_resources)}): "
+                    f"{', '.join(affected_resources[:5])}\n"
+                    f"Single points of failure: {', '.join(spofs) if spofs else 'none'}\n"
+                    f"SRI:Infrastructure score: {score:.1f}/100\n"
+                    f"Agent reason: {action.reason}"
+                ),
+                agent_role="blast radius and infrastructure dependency risk assessor",
+            )
+            reasoning = reasoning + "\n\nGPT-4.1 Analysis: " + llm_text
+
         return BlastRadiusResult(
             sri_infrastructure=score,
             affected_resources=affected_resources,
             affected_services=affected_services,
             single_points_of_failure=spofs,
             availability_zones_impacted=zones,
-            reasoning=self._build_reasoning(
-                action, resource, score, affected_resources, spofs
-            ),
+            reasoning=reasoning,
         )
 
     # ------------------------------------------------------------------

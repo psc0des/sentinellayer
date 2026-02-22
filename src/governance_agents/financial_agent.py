@@ -57,6 +57,7 @@ import logging
 from pathlib import Path
 
 from src.core.models import ActionType, FinancialResult, ProposedAction
+from src.infrastructure.openai_client import AzureOpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,9 @@ class FinancialImpactAgent:
             r["name"]: r for r in data.get("resources", [])
         }
 
+        # LLM client — enriches rule-based reasoning with GPT-4.1 in live mode
+        self._llm = AzureOpenAIClient()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -168,14 +172,36 @@ class FinancialImpactAgent:
             score,
         )
 
+        reasoning = self._build_reasoning(action, monthly_change, cost_uncertain, over_opt, score)
+
+        # Augment rule-based reasoning with GPT-4.1 analysis in live mode
+        if not self._llm.is_mock:
+            direction = (
+                "savings" if monthly_change < 0
+                else "cost increase" if monthly_change > 0
+                else "no cost change"
+            )
+            llm_text = self._llm.analyze(
+                action_context=(
+                    f"Action: {action.action_type.value} on '{action.target.resource_id}'\n"
+                    f"Monthly cost impact: ${abs(monthly_change):,.2f} {direction}"
+                    f"{'(estimated)' if cost_uncertain else '(exact)'}\n"
+                    f"90-day total: ${monthly_change * 3:,.2f} | "
+                    f"Annualised: ${monthly_change * 12:,.2f}\n"
+                    f"Over-optimisation risk: {'YES — ' + over_opt['reason'] if over_opt else 'none'}\n"
+                    f"SRI:Cost score: {score:.1f}/100\n"
+                    f"Agent reason: {action.reason}"
+                ),
+                agent_role="financial impact and cost risk assessor",
+            )
+            reasoning = reasoning + "\n\nGPT-4.1 Analysis: " + llm_text
+
         return FinancialResult(
             sri_cost=score,
             immediate_monthly_change=monthly_change,
             projection_90_day=projection,
             over_optimization_risk=over_opt,
-            reasoning=self._build_reasoning(
-                action, monthly_change, cost_uncertain, over_opt, score
-            ),
+            reasoning=reasoning,
         )
 
     # ------------------------------------------------------------------

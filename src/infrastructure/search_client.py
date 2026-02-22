@@ -145,6 +145,120 @@ class AzureSearchClient:
 
         return hits
 
+    def index_incidents(self, incidents_path: Path | None = None) -> int:
+        """Create or update the Azure AI Search index and upload all incidents.
+
+        This is the programmatic equivalent of running ``python scripts/seed_data.py``.
+        Safe to call multiple times — ``create_or_update_index`` is idempotent and
+        ``upload_documents`` overwrites existing documents with the same key.
+
+        In mock mode, logs a message and returns 0 without touching Azure.
+
+        Args:
+            incidents_path: Override the incidents JSON path.  Defaults to
+                ``data/seed_incidents.json``.
+
+        Returns:
+            Number of documents successfully indexed (0 in mock mode).
+        """
+        if self._is_mock:
+            logger.info(
+                "AzureSearchClient(mock): skipping index_incidents — "
+                "no Azure Search connection."
+            )
+            return 0
+
+        # Lazy imports — only needed in live mode
+        from azure.core.credentials import AzureKeyCredential  # type: ignore[import]
+        from azure.search.documents.indexes import SearchIndexClient  # type: ignore[import]
+        from azure.search.documents.indexes.models import (  # type: ignore[import]
+            SearchableField,
+            SearchFieldDataType,
+            SearchIndex,
+            SimpleField,
+        )
+
+        path = incidents_path or self._incidents_path
+        with open(path, encoding="utf-8") as fh:
+            incidents: list[dict] = json.load(fh)
+
+        credential = AzureKeyCredential(self._api_key)
+
+        # Step 1 — create or update the index schema
+        index_client = SearchIndexClient(
+            endpoint=self._cfg.azure_search_endpoint,
+            credential=credential,
+        )
+        fields = [
+            SimpleField(
+                name="incident_id",
+                type=SearchFieldDataType.String,
+                key=True,
+            ),
+            SearchableField(name="description",  type=SearchFieldDataType.String),
+            SearchableField(
+                name="action_taken",
+                type=SearchFieldDataType.String,
+                filterable=True,
+            ),
+            SearchableField(name="outcome", type=SearchFieldDataType.String),
+            SearchableField(name="lesson",  type=SearchFieldDataType.String),
+            SimpleField(
+                name="resource_type",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True,
+            ),
+            SimpleField(
+                name="service",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True,
+            ),
+            SimpleField(
+                name="severity",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True,
+            ),
+            SimpleField(
+                name="date",
+                type=SearchFieldDataType.String,
+                sortable=True,
+            ),
+            # Tags — list of strings in JSON → Collection(Edm.String) in Azure Search
+            SearchableField(
+                name="tags",
+                type=SearchFieldDataType.String,
+                collection=True,
+            ),
+        ]
+        index = SearchIndex(name=self._cfg.azure_search_index, fields=fields)
+        index_client.create_or_update_index(index)
+        logger.info(
+            "AzureSearchClient: created/updated index '%s'",
+            self._cfg.azure_search_index,
+        )
+
+        # Step 2 — upload documents (upsert — safe to run repeatedly)
+        results = self._search_client.upload_documents(documents=incidents)
+        succeeded = sum(1 for r in results if r.succeeded)
+        failed_keys = [r.key for r in results if not r.succeeded]
+
+        if failed_keys:
+            logger.warning(
+                "AzureSearchClient: %d document(s) failed to index: %s",
+                len(failed_keys),
+                failed_keys,
+            )
+        logger.info(
+            "AzureSearchClient: indexed %d/%d incidents into '%s'",
+            succeeded,
+            len(incidents),
+            self._cfg.azure_search_index,
+        )
+        return succeeded
+
     @property
     def is_mock(self) -> bool:
         """True if this client is running in local mock mode."""
