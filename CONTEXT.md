@@ -22,11 +22,12 @@ src/
 │   └── models.py                # ALL Pydantic data models (READ THIS FIRST)
 ├── mcp_server/
 │   └── server.py                # Exposes governance tools via MCP
-├── infrastructure/              # Azure service clients (mock for now)
-│   ├── resource_graph.py
-│   ├── cosmos_client.py
-│   ├── search_client.py
-│   └── openai_client.py
+├── infrastructure/              # Azure service clients (live + mock fallback)
+│   ├── resource_graph.py        # Azure Resource Graph (mock: seed_resources.json)
+│   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
+│   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
+│   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
+│   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── api/
 │   └── dashboard_api.py         # FastAPI REST endpoints
 └── config.py                    # Environment config with SRI thresholds
@@ -65,19 +66,24 @@ Operational Agent proposes action (ProposedAction)
 5. `data/seed_resources.json` — Mock Azure resource topology with dependencies.
 
 ## Current Development Phase
-- Core logic is complete and tested with LOCAL MOCKS (data/ JSON files).
-- Azure infrastructure is provisioned via Terraform (Foundry, Search, Cosmos, Key Vault, Log Analytics).
-- LLM runtime is Foundry-only and Terraform-managed (`azurerm_ai_services` + `azurerm_cognitive_deployment`).
-- Real-environment secret flow is Key Vault + `DefaultAzureCredential` (Managed Identity in Azure, `az login` locally).
-  Set `USE_LOCAL_MOCKS=false`, `AZURE_KEYVAULT_URL`, and secret-name vars in `.env` to enable live calls without plaintext keys.
-- All agents still work without any cloud connection (mock mode is the default).
+> For detailed progress tracking see **STATUS.md** at the project root.
+
+- All four governance agents are complete and unit-tested.
+- Azure infrastructure is live: Foundry (GPT-4.1), AI Search, Cosmos DB, Key Vault (Terraform-managed).
+- Live secret flow: Key Vault + `DefaultAzureCredential`.  Run `az login` locally; Managed Identity in Azure.
+- `USE_LOCAL_MOCKS=false` is set in `.env` — live Azure services are the default.
+- All infrastructure clients follow the env → Key Vault → mock-fallback ladder (`secrets.py`).
+- GPT-4.1 enriches reasoning in blast_radius, historical, and financial agents (live mode only).
+- `DecisionTracker` delegates to `CosmosDecisionClient` — decisions persist to Cosmos DB in live mode.
+- `HistoricalPatternAgent` uses `AzureSearchClient` (BM25) in live mode; keyword matching in mock mode.
+- Mock mode still works with zero cloud connection — every client falls back gracefully.
 
 ## Coding Standards
 - Python 3.11+
 - Use type hints everywhere
 - Use Pydantic models from src/core/models.py for all inputs/outputs
-- Use async/await pattern for agent methods
-- Every agent must have an `async def evaluate(self, action: ProposedAction)` method
+- Governance agents use **synchronous** `evaluate()` (called from ThreadPoolExecutor in pipeline)
+- Every governance agent must have a `def evaluate(self, action: ProposedAction)` method
 - Return the appropriate Pydantic result model (e.g., PolicyResult, BlastRadiusResult)
 - Keep code clean with docstrings
 - Follow existing patterns in models.py

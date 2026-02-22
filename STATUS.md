@@ -1,0 +1,190 @@
+# SentinelLayer — Implementation Status
+
+> **Read this first** if you are an AI assistant (Claude, Codex, Gemini, etc.)
+> picking up this project. It tells you exactly what is done, what is live,
+> and what comes next. Architecture and coding standards are in `CONTEXT.md`.
+
+**Last updated:** 2026-02-22
+**Active branch:** `main`
+**Demo verdict:** All 3 scenarios pass on live Azure (DENIED / APPROVED / ESCALATED)
+
+---
+
+## Quick State Summary
+
+| Layer | Status | Backend |
+|-------|--------|---------|
+| Core models (`models.py`) | ✅ Complete | — |
+| Governance engine (SRI scoring) | ✅ Complete | — |
+| Policy agent | ✅ Complete + tested | `data/policies.json` |
+| Blast radius agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
+| Historical agent | ✅ Complete + live search | Azure AI Search (BM25) + GPT-4.1 |
+| Financial agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
+| Pipeline (parallel execution) | ✅ Complete | `ThreadPoolExecutor` |
+| Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
+| MCP server | ✅ Complete | FastAPI + MCP tools |
+| Dashboard API | ✅ Complete | FastAPI REST |
+| Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
+| Secret management | ✅ Complete | Key Vault + `DefaultAzureCredential` |
+| Live Azure wiring | ✅ Complete | All 3 services connected |
+| React dashboard | ✅ Complete | (frontend, separate repo or `ui/`) |
+
+---
+
+## Completed Phases (Chronological)
+
+### Phase 1 — Core Domain Models
+- [x] `src/core/models.py` — all Pydantic models: `ProposedAction`, `GovernanceVerdict`,
+  `SentinelRiskIndex`, `BlastRadiusResult`, `PolicyResult`, `HistoricalResult`,
+  `FinancialResult`, `SimilarIncident`
+- [x] `src/config.py` — SRI thresholds + dimension weights via `pydantic-settings`
+- [x] Learning: `learning/01-policy-agent.md`, `learning/02-governance-engine.md`
+
+### Phase 2 — Governance Agents
+- [x] `src/governance_agents/policy_agent.py` — 6 policies, critical-violation override
+- [x] `src/governance_agents/blast_radius_agent.py` — resource dependency graph traversal
+- [x] `src/governance_agents/historical_agent.py` — incident similarity scoring
+- [x] `src/governance_agents/financial_agent.py` — cost delta + over-optimisation detection
+- [x] Full unit test suite in `tests/`
+- [x] Learning: `learning/03-blast-radius.md` through `learning/05-financial-agent.md`
+
+### Phase 3 — Pipeline + Operational Agents
+- [x] `src/core/pipeline.py` — `ThreadPoolExecutor` parallel evaluation
+- [x] `src/core/decision_tracker.py` — audit trail
+- [x] `src/operational_agents/monitoring_agent.py` — anomaly detection + action proposals
+- [x] `src/operational_agents/cost_agent.py` — idle resource detection + savings proposals
+- [x] `demo.py` — 3-scenario end-to-end demo
+- [x] Learning: `learning/07-operational-agents.md`, `learning/08-pipeline.md`
+
+### Phase 4 — MCP Server + Dashboard API
+- [x] `src/mcp_server/server.py` — MCP tools: `evaluate_action`, `get_recent_decisions`,
+  `get_resource_risk_profile`
+- [x] `src/api/dashboard_api.py` — FastAPI REST: `/evaluate`, `/decisions`, `/health`
+- [x] `src/core/interception.py` — MCP action interception layer
+- [x] Learning: `learning/09-mcp-server.md`, `learning/10-dashboard-api.md`,
+  `learning/12-interception.md`
+
+### Phase 5 — Azure Infrastructure (Terraform)
+- [x] Terraform: `azurerm_ai_services` (Foundry) + `azurerm_cognitive_deployment` (gpt-41)
+- [x] Terraform: Azure AI Search, Cosmos DB, Key Vault, Log Analytics
+- [x] `scripts/setup_env.sh` — auto-populates `.env` from Terraform outputs
+- [x] Learning: `learning/13-azure-infrastructure.md`, `learning/14-azure-foundry.md`
+
+### Phase 6 — Secret Management
+- [x] `src/infrastructure/secrets.py` — `KeyVaultSecretResolver` (env → Key Vault → empty)
+- [x] All infrastructure clients updated: env override → Key Vault → mock fallback
+- [x] `.env` uses secret-name vars (`AZURE_OPENAI_API_KEY_SECRET_NAME=foundry-primary-key`)
+  not plaintext keys
+- [x] Learning: `learning/15-keyvault-managed-identity.md`
+
+### Phase 7 — Live Azure Service Wiring  ← LATEST
+- [x] `src/infrastructure/openai_client.py` — added `analyze()` governance wrapper
+- [x] `src/infrastructure/search_client.py` — added `index_incidents()` (idempotent seeding)
+- [x] `src/core/decision_tracker.py` — delegates to `CosmosDecisionClient` (Cosmos DB live)
+- [x] `blast_radius_agent.py` + `financial_agent.py` — GPT-4.1 enriches `reasoning` field
+- [x] `historical_agent.py` — routes to Azure AI Search in live mode (BM25 full-text)
+- [x] `scripts/seed_data.py` — 7/7 incidents indexed to `incident-history` Azure AI Search index
+- [x] `demo.py` verified on live Azure: DENIED(77.0) / APPROVED(14.1) / ESCALATED(54.0)
+- [x] Commit: `d9c467e` — `feat(azure): wire live Azure services with Key Vault secret resolution`
+- [x] Learning: `learning/15-azure-integration.md`
+
+---
+
+## Current Configuration
+
+```
+USE_LOCAL_MOCKS=false                   ← live Azure is the default
+AZURE_OPENAI_ENDPOINT=https://sentinel-foundry-psc0des.cognitiveservices.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-41
+AZURE_SEARCH_ENDPOINT=https://sentinel-search-psc0des.search.windows.net
+AZURE_SEARCH_INDEX=incident-history     ← seeded with 7 incidents
+COSMOS_ENDPOINT=https://sentinel-cosmos-psc0des.documents.azure.com:443/
+COSMOS_DATABASE=sentinellayer
+COSMOS_CONTAINER_DECISIONS=governance-decisions
+AZURE_KEYVAULT_URL=https://sentinel-kv-psc0des.vault.azure.net/
+```
+
+API keys are **not** in `.env` — fetched at runtime from Key Vault.
+Run `az login` locally before starting any live-mode service.
+
+---
+
+## How to Run
+
+```bash
+# One-time: seed incidents into Azure AI Search
+python scripts/seed_data.py
+
+# End-to-end governance demo (3 scenarios)
+python demo.py
+
+# FastAPI dashboard
+uvicorn src.api.dashboard_api:app --reload
+
+# Unit tests (mock mode — no Azure needed)
+pytest tests/ -v
+```
+
+---
+
+## Known Issues / Tech Debt
+
+- [ ] `learning/` numbering is inconsistent — files 03, 04, 15 have duplicates from
+  mid-sprint renames. Does not affect functionality.
+- [ ] Azure AI Search uses BM25 full-text; vector embeddings (semantic ranking) would
+  require a separate `text-embedding-3-small` deployment in Foundry.
+- [ ] `functions/function_app.py` exists but is not wired into the main pipeline.
+  Azure Function deployment is not yet configured.
+- [ ] React dashboard (`learning/11-react-dashboard.md`) is documented but the `ui/`
+  directory may need verification.
+- [ ] No CI/CD pipeline — tests run locally only.
+
+---
+
+## What's Next (Suggested)
+
+These are ideas, not commitments. Pick up from here:
+
+- [ ] **Vector search** — deploy `text-embedding-3-small` in Foundry, add vector field
+  to `incident-history` index, generate embeddings on seed + query
+- [ ] **Azure Function deployment** — wire `functions/function_app.py` for serverless
+  governance endpoint
+- [ ] **CI/CD** — GitHub Actions: run `pytest tests/ -v` on PR, deploy to Azure on merge
+- [ ] **More policies** — add `data/policies.json` entries for cost caps, region
+  restrictions, tag compliance
+- [ ] **More seed incidents** — expand `data/seed_incidents.json` beyond 7 entries
+- [ ] **Streaming LLM responses** — stream GPT-4.1 tokens to the dashboard in real time
+
+---
+
+## Secret Names in Key Vault
+
+| Secret Name | Used By |
+|-------------|---------|
+| `foundry-primary-key` | `AzureOpenAIClient` |
+| `search-primary-key` | `AzureSearchClient` |
+| `cosmos-primary-key` | `CosmosDecisionClient` |
+
+---
+
+## File Ownership Map
+
+| File | What it does | Last changed |
+|------|-------------|-------------|
+| `src/core/models.py` | All Pydantic data models — shared contract | Phase 1 |
+| `src/core/pipeline.py` | Parallel agent orchestration | Phase 3 |
+| `src/core/governance_engine.py` | SRI composite + verdict logic | Phase 2 |
+| `src/core/decision_tracker.py` | Verdict → Cosmos DB / JSON | Phase 7 |
+| `src/governance_agents/blast_radius_agent.py` | SRI:Infrastructure + GPT-4.1 | Phase 7 |
+| `src/governance_agents/policy_agent.py` | SRI:Policy, 6 policies | Phase 2 |
+| `src/governance_agents/historical_agent.py` | SRI:Historical, Azure Search | Phase 7 |
+| `src/governance_agents/financial_agent.py` | SRI:Cost + GPT-4.1 | Phase 7 |
+| `src/infrastructure/openai_client.py` | GPT-4.1 via Foundry | Phase 7 |
+| `src/infrastructure/cosmos_client.py` | Cosmos DB read/write | Phase 6 |
+| `src/infrastructure/search_client.py` | Azure AI Search + index seeding | Phase 7 |
+| `src/infrastructure/secrets.py` | Key Vault secret resolution | Phase 6 |
+| `src/config.py` | All env vars + SRI thresholds | Phase 1 |
+| `data/policies.json` | 6 governance policies | Phase 2 |
+| `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
+| `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
+| `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
