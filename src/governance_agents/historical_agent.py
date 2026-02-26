@@ -2,6 +2,18 @@
 
 Matches a proposed action against past incident history.
 
+Microsoft Agent Framework integration (Phase 8)
+------------------------------------------------
+In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
+Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
+
+The LLM agent calls our deterministic ``evaluate_historical_rules`` tool,
+which searches Azure AI Search (BM25) or local JSON for past incidents
+and scores similarity.  The LLM then synthesises a narrative explaining
+what history tells us about the safety of this action.
+
+In mock mode the framework is skipped — only deterministic evaluation runs.
+
 Backend selection
 -----------------
 * **Live mode** (USE_LOCAL_MOCKS=false + Azure Search credentials available):
@@ -44,17 +56,18 @@ Score formula
 Capped at 100.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 
+from src.config import settings as _default_settings
 from src.core.models import (
     ActionType,
     HistoricalResult,
     ProposedAction,
     SimilarIncident,
 )
-from src.infrastructure.openai_client import AzureOpenAIClient
 from src.infrastructure.search_client import AzureSearchClient
 
 logger = logging.getLogger(__name__)
@@ -98,6 +111,21 @@ _W_TAGS: float = 0.10
 # Each incident beyond the first contributes this fraction of its weighted score
 _SECONDARY_WEIGHT: float = 0.20
 
+# System instructions for the framework agent (live mode only).
+_AGENT_INSTRUCTIONS = """\
+You are SentinelLayer's Historical Pattern Analyst — a specialist in
+incident forensics and historical risk pattern recognition.
+
+Your job:
+1. Call the `evaluate_historical_rules` tool with the action JSON.
+2. Receive the deterministic incident similarity report.
+3. Write a concise 2-3 sentence narrative explaining what historical precedents
+   exist for this type of action and what they imply about risk.
+   Reference the most relevant incident by ID.  Do NOT restate raw numbers.
+
+Always call the tool first before providing any analysis.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -110,14 +138,11 @@ class HistoricalPatternAgent:
     **Live mode**: delegates similarity search to Azure AI Search (BM25 full-text
     search on the ``incident-history`` index).  Results ranked by Azure Search
     are normalised to a [0, 0.8] similarity band so the SRI scoring formula
-    stays consistent with mock mode.
+    stays consistent with mock mode.  A Microsoft Agent Framework agent then
+    calls the evaluation tool and synthesises reasoning via GPT-4.1.
 
     **Mock mode**: loads incidents from a local JSON file and uses a four-
     dimensional keyword similarity algorithm (identical to original behaviour).
-
-    In both modes GPT-4.1 is optionally called (when Foundry credentials are
-    available) to augment the rule-based ``reasoning`` string with an expert
-    LLM analysis.
 
     Usage::
 
@@ -126,19 +151,25 @@ class HistoricalPatternAgent:
         print(result.sri_historical, result.most_relevant_incident)
     """
 
-    def __init__(self, incidents_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        incidents_path: str | Path | None = None,
+        cfg=None,
+    ) -> None:
         # Always load the local JSON for mock-mode fallback.
-        # In live mode this data is not used — Azure Search takes over.
         path = Path(incidents_path) if incidents_path else _DEFAULT_INCIDENTS_PATH
         with open(path, encoding="utf-8") as fh:
             self._incidents: list[dict] = json.load(fh)
 
         # Azure AI Search client — live mode queries the cloud index.
-        # Falls back to mock automatically if credentials are unavailable.
         self._search = AzureSearchClient()
 
-        # LLM client — enriches reasoning with GPT-4.1 analysis in live mode.
-        self._llm = AzureOpenAIClient()
+        self._cfg = cfg or _default_settings
+
+        self._use_framework: bool = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_openai_endpoint)
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -147,8 +178,8 @@ class HistoricalPatternAgent:
     def evaluate(self, action: ProposedAction) -> HistoricalResult:
         """Match the proposed action against the incident history.
 
-        Routes to Azure AI Search in live mode or local keyword matching in
-        mock mode, then applies the same SRI scoring formula in both paths.
+        Routes to the Microsoft Agent Framework agent in live mode, or to the
+        deterministic rule-based engine in mock mode.
 
         Args:
             action: The proposed infrastructure action to evaluate.
@@ -162,11 +193,96 @@ class HistoricalPatternAgent:
             * ``recommended_procedure`` — lesson from the best match
             * ``reasoning`` — explanation (enriched by GPT-4.1 in live mode)
         """
+        if not self._use_framework:
+            return self._evaluate_rules(action)
+
+        try:
+            return asyncio.run(self._evaluate_with_framework(action))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "HistoricalPatternAgent: framework call failed (%s) — falling back to rules.",
+                exc,
+            )
+            return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Microsoft Agent Framework path (live mode)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_with_framework(self, action: ProposedAction) -> HistoricalResult:
+        """Run the framework agent with GPT-4.1 driving the tool call."""
+        from openai import AsyncAzureOpenAI
+        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        import agent_framework as af
+        from agent_framework.openai import OpenAIResponsesClient
+
+        credential = AzureCliCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        azure_openai = AsyncAzureOpenAI(
+            azure_endpoint=self._cfg.azure_openai_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+        )
+        client = OpenAIResponsesClient(
+            async_client=azure_openai,
+            model_id=self._cfg.azure_openai_deployment,
+        )
+
+        result_holder: list[HistoricalResult] = []
+
+        @af.tool(
+            name="evaluate_historical_rules",
+            description=(
+                "Search the incident history for similar past events and compute "
+                "the SRI:Historical score. Returns a JSON object with sri_historical, "
+                "similar_incidents, most_relevant_incident, recommended_procedure, "
+                "and reasoning."
+            ),
+        )
+        def evaluate_historical_rules(action_json: str) -> str:
+            """Match the action against historical incident records."""
+            try:
+                a = ProposedAction.model_validate_json(action_json)
+            except Exception:
+                a = action
+            r = self._evaluate_rules(a)
+            result_holder.append(r)
+            return r.model_dump_json()
+
+        agent = client.as_agent(
+            name="historical-pattern-analyst",
+            instructions=_AGENT_INSTRUCTIONS,
+            tools=[evaluate_historical_rules],
+        )
+
+        response = await agent.run(
+            f"Evaluate the historical risk for this proposed action.\n"
+            f"Action JSON: {action.model_dump_json()}"
+        )
+
+        if result_holder:
+            base = result_holder[-1]
+            enriched_reasoning = (
+                base.reasoning
+                + "\n\nAgent Framework Analysis (GPT-4.1): "
+                + response.text
+            )
+            return HistoricalResult(
+                **{**base.model_dump(), "reasoning": enriched_reasoning}
+            )
+
+        return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Deterministic rule-based evaluation
+    # ------------------------------------------------------------------
+
+    def _evaluate_rules(self, action: ProposedAction) -> HistoricalResult:
+        """Run the full deterministic historical pattern analysis."""
         if not self._search.is_mock:
             # ── Live mode: delegate to Azure AI Search ──────────────────────
-            # Build a rich query string combining action type, resource type,
-            # resource name, and the agent's stated reason so BM25 can rank
-            # on the most discriminating terms.
             resource_name = action.target.resource_id.split("/")[-1]
             query = (
                 f"{action.action_type.value} {action.target.resource_type} "
@@ -214,23 +330,6 @@ class HistoricalPatternAgent:
 
         reasoning = self._build_reasoning(action, similar_incidents, sri)
 
-        # Augment rule-based reasoning with GPT-4.1 analysis in live mode
-        if not self._llm.is_mock:
-            best = most_relevant
-            llm_text = self._llm.analyze(
-                action_context=(
-                    f"Action: {action.action_type.value} on '{action.target.resource_type}'\n"
-                    f"Similar historical incidents found: {len(similar_incidents)}\n"
-                    f"Most relevant: {best.incident_id if best else 'none'} "
-                    f"(severity: {best.severity if best else 'N/A'}, "
-                    f"similarity: {best.similarity_score if best else 0:.0%})\n"
-                    f"SRI:Historical score: {sri:.1f}/100\n"
-                    f"Agent reason: {action.reason}"
-                ),
-                agent_role="historical incident pattern analyst",
-            )
-            reasoning = reasoning + "\n\nGPT-4.1 Analysis: " + llm_text
-
         return HistoricalResult(
             sri_historical=sri,
             similar_incidents=similar_incidents,
@@ -250,12 +349,6 @@ class HistoricalPatternAgent:
         We normalise it so the top result maps to 0.8 and others scale down
         proportionally.  A floor of ``_SIMILARITY_THRESHOLD`` (0.30) is applied
         so low-quality Azure Search matches are still filtered out.
-
-        Args:
-            hits: Raw result dicts from ``AzureSearchClient.search_incidents()``.
-
-        Returns:
-            List of ``SimilarIncident`` objects, in relevance order.
         """
         if not hits:
             return []
@@ -265,7 +358,6 @@ class HistoricalPatternAgent:
 
         incidents: list[SimilarIncident] = []
         for hit, raw_score in zip(hits, raw_scores):
-            # Map BM25 score to [0, 0.8] — preserving relative ranking.
             similarity = round(min((raw_score / max_score) * 0.8, 0.8), 2)
             if similarity >= _SIMILARITY_THRESHOLD:
                 incidents.append(self._to_similar_incident(hit, similarity))

@@ -3,6 +3,18 @@
 This is an operational agent (the governed subject). It proposes
 infrastructure actions that SentinelLayer evaluates before execution.
 
+Microsoft Agent Framework integration (Phase 8)
+------------------------------------------------
+In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
+Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
+
+The LLM agent calls our deterministic ``scan_anomalies`` tool,
+which applies SRE heuristics to the resource topology and returns
+structured remediation proposals.  The LLM then synthesises a concise
+SRE incident-analysis narrative for the operator.
+
+In mock mode the framework is skipped — only deterministic scanning runs.
+
 The agent scans a resource topology (loaded from ``data/seed_resources.json``)
 and applies SRE heuristics to detect structural anomalies:
 
@@ -21,10 +33,12 @@ Detection rules
    standby replica or additional node pool.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 
+from src.config import settings as _default_settings
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
 
 logger = logging.getLogger(__name__)
@@ -42,6 +56,21 @@ _DEFAULT_RESOURCES_PATH = (
 # Critical resources costing more than this per month are flagged as high-cost SPOFs.
 _CRITICAL_COST_THRESHOLD: float = 500.0
 
+# System instructions for the framework agent (live mode only).
+_AGENT_INSTRUCTIONS = """\
+You are SentinelLayer's SRE Monitoring Agent — a specialist in cloud
+infrastructure reliability, anomaly detection, and root cause analysis.
+
+Your job:
+1. Call the `scan_anomalies` tool to analyse the resource topology.
+2. Receive the list of anomaly-based remediation proposals from the deterministic scan.
+3. Write a concise 2-3 sentence SRE summary explaining what anomalies were detected
+   and the reliability risks they represent.
+   Highlight the most critical finding (e.g., unowned critical resource, circular dep).
+
+Always call the tool first before providing any commentary.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -55,6 +84,9 @@ class MonitoringAgent:
     Azure Monitor + Resource Graph), applies SRE heuristics, and returns
     a list of remediation :class:`~src.core.models.ProposedAction` objects.
 
+    In live mode the Microsoft Agent Framework drives GPT-4.1 to call the
+    deterministic tool and synthesise an SRE narrative.
+
     Usage::
 
         agent = MonitoringAgent()
@@ -63,7 +95,11 @@ class MonitoringAgent:
             print(p.action_type.value, p.target.resource_id, p.reason)
     """
 
-    def __init__(self, resources_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        resources_path: str | Path | None = None,
+        cfg=None,
+    ) -> None:
         path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
         with open(path, encoding="utf-8") as fh:
             data: dict = json.load(fh)
@@ -75,6 +111,13 @@ class MonitoringAgent:
         # Directed dependency edges from the JSON
         self._edges: list[dict] = data.get("dependency_edges", [])
 
+        self._cfg = cfg or _default_settings
+
+        self._use_framework: bool = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_openai_endpoint)
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -82,13 +125,86 @@ class MonitoringAgent:
     def scan(self) -> list[ProposedAction]:
         """Detect anomalies across the resource topology.
 
-        Runs all three detection rules in sequence and aggregates results.
+        Routes to the Microsoft Agent Framework agent in live mode, or to the
+        deterministic rule-based scanner in mock mode.
 
         Returns:
             A list of :class:`~src.core.models.ProposedAction` objects,
             one per anomaly detected. Returns an empty list when the
             topology appears healthy.
         """
+        if not self._use_framework:
+            return self._scan_rules()
+
+        try:
+            return asyncio.run(self._scan_with_framework())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "MonitoringAgent: framework call failed (%s) — falling back to rules.", exc
+            )
+            return self._scan_rules()
+
+    # ------------------------------------------------------------------
+    # Microsoft Agent Framework path (live mode)
+    # ------------------------------------------------------------------
+
+    async def _scan_with_framework(self) -> list[ProposedAction]:
+        """Run the framework agent with GPT-4.1 driving the tool call."""
+        from openai import AsyncAzureOpenAI
+        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        import agent_framework as af
+        from agent_framework.openai import OpenAIResponsesClient
+
+        credential = AzureCliCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        azure_openai = AsyncAzureOpenAI(
+            azure_endpoint=self._cfg.azure_openai_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+        )
+        client = OpenAIResponsesClient(
+            async_client=azure_openai,
+            model_id=self._cfg.azure_openai_deployment,
+        )
+
+        proposals_holder: list[list[ProposedAction]] = []
+
+        @af.tool(
+            name="scan_anomalies",
+            description=(
+                "Scan the infrastructure resource topology for structural anomalies "
+                "using SRE heuristics. Detects unowned critical resources, circular "
+                "dependencies, and high-cost single points of failure. Returns a JSON "
+                "array of ProposedAction objects representing remediation recommendations."
+            ),
+        )
+        def scan_anomalies() -> str:
+            """Detect reliability anomalies and generate remediation proposals."""
+            proposals = self._scan_rules()
+            proposals_holder.append(proposals)
+            return json.dumps([p.model_dump() for p in proposals], default=str)
+
+        agent = client.as_agent(
+            name="sre-monitoring-agent",
+            instructions=_AGENT_INSTRUCTIONS,
+            tools=[scan_anomalies],
+        )
+
+        await agent.run(
+            "Scan the infrastructure for reliability anomalies and "
+            "provide an SRE incident analysis summary."
+        )
+
+        return proposals_holder[-1] if proposals_holder else self._scan_rules()
+
+    # ------------------------------------------------------------------
+    # Deterministic rule-based scan
+    # ------------------------------------------------------------------
+
+    def _scan_rules(self) -> list[ProposedAction]:
+        """Run all three detection rules in sequence and aggregate results."""
         proposals: list[ProposedAction] = []
         proposals.extend(self._detect_untagged_critical_resources())
         proposals.extend(self._detect_circular_dependencies())

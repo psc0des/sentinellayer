@@ -4,6 +4,17 @@ Estimates the financial impact of a proposed action and detects
 over-optimisation risk — cases where short-term cost savings would
 trigger expensive recovery events that outweigh the savings.
 
+Microsoft Agent Framework integration (Phase 8)
+------------------------------------------------
+In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
+Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
+
+The LLM agent calls our deterministic ``evaluate_financial_rules`` tool,
+which computes the cost delta, over-optimisation risk, and SRI:Cost score.
+The LLM then synthesises an expert financial risk narrative.
+
+In mock mode the framework is skipped — only deterministic evaluation runs.
+
 Cost change is determined from these sources in priority order
 --------------------------------------------------------------
 1. ``action.projected_savings_monthly`` — explicit figure from the proposing
@@ -52,12 +63,13 @@ Action multipliers
 * MODIFY_NSG      : 0.3   (no cost change expected)
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 
+from src.config import settings as _default_settings
 from src.core.models import ActionType, FinancialResult, ProposedAction
-from src.infrastructure.openai_client import AzureOpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +116,21 @@ _RECOVERY_COST_PER_SERVICE: float = 10_000.0
 # Minimum number of dependents required to trigger over-optimisation detection
 _OVER_OPT_THRESHOLD: int = 1
 
+# System instructions for the framework agent (live mode only).
+_AGENT_INSTRUCTIONS = """\
+You are SentinelLayer's Financial Impact Assessor — a specialist in cloud
+cost analysis, FinOps, and financial risk assessment for infrastructure changes.
+
+Your job:
+1. Call the `evaluate_financial_rules` tool with the action JSON.
+2. Receive the deterministic financial impact analysis.
+3. Write a concise 2-3 sentence narrative explaining the financial risk.
+   Highlight any over-optimisation risk, cost uncertainty, or annualised impact.
+   Do NOT restate raw numbers; interpret what they mean for the business.
+
+Always call the tool first before providing any analysis.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -117,6 +144,9 @@ class FinancialImpactAgent:
     Management), then computes an SRI:Cost score (0–100), a monthly cost delta,
     a 90-day projection, and optionally an over-optimisation risk assessment.
 
+    In live mode the Microsoft Agent Framework drives GPT-4.1 to call the
+    deterministic tool and synthesise a financial risk narrative.
+
     Usage::
 
         agent = FinancialImpactAgent()
@@ -124,7 +154,11 @@ class FinancialImpactAgent:
         print(result.sri_cost, result.immediate_monthly_change)
     """
 
-    def __init__(self, resources_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        resources_path: str | Path | None = None,
+        cfg=None,
+    ) -> None:
         path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
         with open(path, encoding="utf-8") as fh:
             data: dict = json.load(fh)
@@ -134,8 +168,12 @@ class FinancialImpactAgent:
             r["name"]: r for r in data.get("resources", [])
         }
 
-        # LLM client — enriches rule-based reasoning with GPT-4.1 in live mode
-        self._llm = AzureOpenAIClient()
+        self._cfg = cfg or _default_settings
+
+        self._use_framework: bool = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_openai_endpoint)
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -143,6 +181,9 @@ class FinancialImpactAgent:
 
     def evaluate(self, action: ProposedAction) -> FinancialResult:
         """Evaluate the financial impact of a proposed infrastructure action.
+
+        Routes to the Microsoft Agent Framework agent in live mode, or to the
+        deterministic rule-based engine in mock mode.
 
         Args:
             action: The proposed action from an operational agent.
@@ -158,6 +199,93 @@ class FinancialImpactAgent:
               else None
             * ``reasoning`` — human-readable explanation
         """
+        if not self._use_framework:
+            return self._evaluate_rules(action)
+
+        try:
+            return asyncio.run(self._evaluate_with_framework(action))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "FinancialImpactAgent: framework call failed (%s) — falling back to rules.", exc
+            )
+            return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Microsoft Agent Framework path (live mode)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_with_framework(self, action: ProposedAction) -> FinancialResult:
+        """Run the framework agent with GPT-4.1 driving the tool call."""
+        from openai import AsyncAzureOpenAI
+        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        import agent_framework as af
+        from agent_framework.openai import OpenAIResponsesClient
+
+        credential = AzureCliCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        azure_openai = AsyncAzureOpenAI(
+            azure_endpoint=self._cfg.azure_openai_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+        )
+        client = OpenAIResponsesClient(
+            async_client=azure_openai,
+            model_id=self._cfg.azure_openai_deployment,
+        )
+
+        result_holder: list[FinancialResult] = []
+
+        @af.tool(
+            name="evaluate_financial_rules",
+            description=(
+                "Compute the financial impact of a proposed action using deterministic "
+                "rule-based analysis. Returns a JSON object with sri_cost, "
+                "immediate_monthly_change, projection_90_day, over_optimization_risk, "
+                "and reasoning."
+            ),
+        )
+        def evaluate_financial_rules(action_json: str) -> str:
+            """Calculate financial impact and over-optimisation risk."""
+            try:
+                a = ProposedAction.model_validate_json(action_json)
+            except Exception:
+                a = action
+            r = self._evaluate_rules(a)
+            result_holder.append(r)
+            return r.model_dump_json()
+
+        agent = client.as_agent(
+            name="financial-impact-assessor",
+            instructions=_AGENT_INSTRUCTIONS,
+            tools=[evaluate_financial_rules],
+        )
+
+        response = await agent.run(
+            f"Evaluate the financial risk for this proposed action.\n"
+            f"Action JSON: {action.model_dump_json()}"
+        )
+
+        if result_holder:
+            base = result_holder[-1]
+            enriched_reasoning = (
+                base.reasoning
+                + "\n\nAgent Framework Analysis (GPT-4.1): "
+                + response.text
+            )
+            return FinancialResult(
+                **{**base.model_dump(), "reasoning": enriched_reasoning}
+            )
+
+        return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Deterministic rule-based evaluation
+    # ------------------------------------------------------------------
+
+    def _evaluate_rules(self, action: ProposedAction) -> FinancialResult:
+        """Run the full deterministic financial impact analysis."""
         resource = self._find_resource(action.target.resource_id)
         monthly_change, cost_uncertain = self._estimate_cost_change(action, resource)
         over_opt = self._detect_over_optimisation(action, resource, monthly_change)
@@ -173,28 +301,6 @@ class FinancialImpactAgent:
         )
 
         reasoning = self._build_reasoning(action, monthly_change, cost_uncertain, over_opt, score)
-
-        # Augment rule-based reasoning with GPT-4.1 analysis in live mode
-        if not self._llm.is_mock:
-            direction = (
-                "savings" if monthly_change < 0
-                else "cost increase" if monthly_change > 0
-                else "no cost change"
-            )
-            llm_text = self._llm.analyze(
-                action_context=(
-                    f"Action: {action.action_type.value} on '{action.target.resource_id}'\n"
-                    f"Monthly cost impact: ${abs(monthly_change):,.2f} {direction}"
-                    f"{'(estimated)' if cost_uncertain else '(exact)'}\n"
-                    f"90-day total: ${monthly_change * 3:,.2f} | "
-                    f"Annualised: ${monthly_change * 12:,.2f}\n"
-                    f"Over-optimisation risk: {'YES — ' + over_opt['reason'] if over_opt else 'none'}\n"
-                    f"SRI:Cost score: {score:.1f}/100\n"
-                    f"Agent reason: {action.reason}"
-                ),
-                agent_role="financial impact and cost risk assessor",
-            )
-            reasoning = reasoning + "\n\nGPT-4.1 Analysis: " + llm_text
 
         return FinancialResult(
             sri_cost=score,

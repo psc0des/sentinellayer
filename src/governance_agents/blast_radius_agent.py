@@ -11,6 +11,20 @@ The agent identifies:
   the blast radius
 * **Availability zones impacted** — Azure regions that would be affected
 
+Microsoft Agent Framework integration (Phase 8)
+------------------------------------------------
+In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
+Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
+
+The LLM agent receives the proposed action and calls our deterministic
+``evaluate_blast_radius_rules`` tool, which runs the full rule-based
+scoring logic.  The LLM then synthesises an expert narrative reasoning
+paragraph from the tool output.
+
+In mock mode (USE_LOCAL_MOCKS=true, or missing endpoint), the framework
+is skipped entirely and only the deterministic rule-based path runs.
+This preserves fully-offline behaviour for development and CI.
+
 Score semantics (SRI:Infrastructure)
 --------------------------------------
 * 0–25   — minimal blast radius (auto-approve band)
@@ -33,12 +47,13 @@ Score components
 All component scores accumulate and are capped at 100.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
 
+from src.config import settings as _default_settings
 from src.core.models import ActionType, BlastRadiusResult, ProposedAction
-from src.infrastructure.openai_client import AzureOpenAIClient
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +93,21 @@ _MAX_SERVICE_SCORE: float = 20.0
 
 _EXTRA_SPOF_SCORE: float = 10.0
 
+# System instructions for the framework agent (live mode only).
+_AGENT_INSTRUCTIONS = """\
+You are SentinelLayer's Blast Radius Evaluator — a specialist in cloud
+infrastructure dependency analysis and risk assessment.
+
+Your job:
+1. Call the `evaluate_blast_radius_rules` tool with the action JSON provided.
+2. Receive the deterministic risk score and affected-resource analysis.
+3. Write a concise, expert 2-3 sentence narrative that explains the blast radius
+   risk in plain English, highlighting the most important SPOFs or downstream
+   impacts.  Do NOT restate raw numbers; interpret them.
+
+Always call the tool first before providing any analysis.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -97,6 +127,9 @@ class BlastRadiusAgent:
     4. Detects single points of failure (``criticality: critical`` resources).
     5. Computes an SRI:Infrastructure score (0–100).
 
+    In live mode the Microsoft Agent Framework drives GPT-4.1 to call the
+    deterministic tool and synthesise expert reasoning.
+
     Usage::
 
         agent = BlastRadiusAgent()
@@ -104,7 +137,11 @@ class BlastRadiusAgent:
         print(result.sri_infrastructure, result.single_points_of_failure)
     """
 
-    def __init__(self, resources_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        resources_path: str | Path | None = None,
+        cfg=None,
+    ) -> None:
         path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
         with open(path, encoding="utf-8") as fh:
             data: dict = json.load(fh)
@@ -116,9 +153,13 @@ class BlastRadiusAgent:
         # Directed dependency edges from the JSON
         self._edges: list[dict] = data.get("dependency_edges", [])
 
-        # LLM client — augments rule-based reasoning with GPT-4.1 analysis
-        # when USE_LOCAL_MOCKS=false and Foundry credentials are available.
-        self._llm = AzureOpenAIClient()
+        self._cfg = cfg or _default_settings
+
+        # Is the framework (live LLM) enabled?
+        self._use_framework: bool = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_openai_endpoint)
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -126,6 +167,9 @@ class BlastRadiusAgent:
 
     def evaluate(self, action: ProposedAction) -> BlastRadiusResult:
         """Evaluate the blast radius of a proposed infrastructure action.
+
+        Routes to the Microsoft Agent Framework agent in live mode, or to the
+        deterministic rule-based engine in mock mode.
 
         Args:
             action: The proposed action from an operational agent.
@@ -140,6 +184,100 @@ class BlastRadiusAgent:
             * ``availability_zones_impacted`` — Azure regions affected
             * ``reasoning`` — human-readable explanation of the score
         """
+        if not self._use_framework:
+            return self._evaluate_rules(action)
+
+        try:
+            # asyncio.run() is safe here — ThreadPoolExecutor worker threads
+            # do not have an event loop, so this creates a fresh one per call.
+            return asyncio.run(self._evaluate_with_framework(action))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "BlastRadiusAgent: framework call failed (%s) — falling back to rules.", exc
+            )
+            return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Microsoft Agent Framework path (live mode)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_with_framework(self, action: ProposedAction) -> BlastRadiusResult:
+        """Run the framework agent with GPT-4.1 driving the tool call."""
+        from openai import AsyncAzureOpenAI
+        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        import agent_framework as af
+        from agent_framework.openai import OpenAIResponsesClient
+
+        # ── Credentials: AzureCliCredential (az login) ──────────────────
+        credential = AzureCliCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        azure_openai = AsyncAzureOpenAI(
+            azure_endpoint=self._cfg.azure_openai_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+        )
+        client = OpenAIResponsesClient(
+            async_client=azure_openai,
+            model_id=self._cfg.azure_openai_deployment,
+        )
+
+        # ── Tool: deterministic rule-based evaluation ───────────────────
+        result_holder: list[BlastRadiusResult] = []
+
+        @af.tool(
+            name="evaluate_blast_radius_rules",
+            description=(
+                "Run the deterministic blast radius evaluation. "
+                "Returns a JSON object with sri_infrastructure score, "
+                "affected_resources, affected_services, single_points_of_failure, "
+                "availability_zones_impacted, and reasoning."
+            ),
+        )
+        def evaluate_blast_radius_rules(action_json: str) -> str:
+            """Evaluate infrastructure blast radius using rule-based scoring."""
+            try:
+                a = ProposedAction.model_validate_json(action_json)
+            except Exception:
+                a = action  # fallback to the outer action if JSON parse fails
+            r = self._evaluate_rules(a)
+            result_holder.append(r)
+            return r.model_dump_json()
+
+        # ── Agent: LLM orchestrates tool call + synthesises reasoning ───
+        agent = client.as_agent(
+            name="blast-radius-evaluator",
+            instructions=_AGENT_INSTRUCTIONS,
+            tools=[evaluate_blast_radius_rules],
+        )
+
+        response = await agent.run(
+            f"Evaluate the blast radius risk for this proposed action.\n"
+            f"Action JSON: {action.model_dump_json()}"
+        )
+
+        if result_holder:
+            base = result_holder[-1]
+            # Enrich the rule-based reasoning with the LLM's synthesis
+            enriched_reasoning = (
+                base.reasoning
+                + "\n\nAgent Framework Analysis (GPT-4.1): "
+                + response.text
+            )
+            return BlastRadiusResult(
+                **{**base.model_dump(), "reasoning": enriched_reasoning}
+            )
+
+        # Tool was never called — return plain rule-based result
+        return self._evaluate_rules(action)
+
+    # ------------------------------------------------------------------
+    # Deterministic rule-based evaluation (used in both modes)
+    # ------------------------------------------------------------------
+
+    def _evaluate_rules(self, action: ProposedAction) -> BlastRadiusResult:
+        """Run the full deterministic blast radius analysis."""
         resource = self._find_resource(action.target.resource_id)
         affected_resources = self._get_affected_resources(resource)
         affected_services = self._get_affected_services(resource)
@@ -163,26 +301,6 @@ class BlastRadiusAgent:
         )
 
         reasoning = self._build_reasoning(action, resource, score, affected_resources, spofs)
-
-        # Augment rule-based reasoning with GPT-4.1 analysis in live mode
-        if not self._llm.is_mock:
-            criticality = (
-                resource.get("tags", {}).get("criticality", "unknown")
-                if resource else "unknown"
-            )
-            llm_text = self._llm.analyze(
-                action_context=(
-                    f"Action: {action.action_type.value} on '{action.target.resource_id}'\n"
-                    f"Resource criticality: {criticality}\n"
-                    f"Affected resources ({len(affected_resources)}): "
-                    f"{', '.join(affected_resources[:5])}\n"
-                    f"Single points of failure: {', '.join(spofs) if spofs else 'none'}\n"
-                    f"SRI:Infrastructure score: {score:.1f}/100\n"
-                    f"Agent reason: {action.reason}"
-                ),
-                agent_role="blast radius and infrastructure dependency risk assessor",
-            )
-            reasoning = reasoning + "\n\nGPT-4.1 Analysis: " + llm_text
 
         return BlastRadiusResult(
             sri_infrastructure=score,

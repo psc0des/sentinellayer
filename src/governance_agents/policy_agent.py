@@ -3,10 +3,17 @@
 Validates proposed actions against organizational governance policies,
 security baselines, and change window restrictions.
 
-All evaluation is deterministic — no LLM call required.  The agent loads
-policies from ``data/policies.json``, checks each condition against the
-proposed action and optional resource metadata, and computes an SRI:Policy
-score (0–100) that reflects the aggregate severity of any violations found.
+Microsoft Agent Framework integration (Phase 8)
+------------------------------------------------
+In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
+Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
+
+The LLM agent calls our deterministic ``evaluate_policy_rules`` tool,
+which checks all 6 governance policies and returns structured violation
+data.  The LLM synthesises a plain-English compliance summary.
+
+In mock mode the framework is skipped — only deterministic evaluation runs.
+This means the agent works fully offline in tests and development.
 
 Score semantics
 ---------------
@@ -24,11 +31,13 @@ Severity → score contribution
 Scores accumulate and are capped at 100.
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from src.config import settings as _default_settings
 from src.core.models import (
     ActionType,
     PolicyResult,
@@ -36,6 +45,10 @@ from src.core.models import (
     PolicyViolation,
     ProposedAction,
 )
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -60,6 +73,22 @@ _DAY_MAP: dict[str, int] = {
     "Sunday": 6,
 }
 
+# System instructions for the framework agent (live mode only).
+_AGENT_INSTRUCTIONS = """\
+You are SentinelLayer's Policy Compliance Evaluator — a specialist in cloud
+governance, regulatory compliance, and change management policy enforcement.
+
+Your job:
+1. Call the `evaluate_policy_rules` tool with the action JSON and any resource
+   metadata provided.
+2. Receive the deterministic policy violation report.
+3. Write a concise 2-3 sentence compliance summary in plain English.
+   Highlight which policies were violated and the compliance risk they represent.
+   Do NOT restate raw scores; interpret the compliance implications.
+
+Always call the tool first before providing any analysis.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -68,6 +97,9 @@ _DAY_MAP: dict[str, int] = {
 
 class PolicyComplianceAgent:
     """Evaluates proposed actions against organisational governance policies.
+
+    In live mode the Microsoft Agent Framework drives GPT-4.1 to call the
+    deterministic tool and synthesise a compliance narrative.
 
     Usage::
 
@@ -79,10 +111,21 @@ class PolicyComplianceAgent:
         print(result.sri_policy, result.violations)
     """
 
-    def __init__(self, policies_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        policies_path: str | Path | None = None,
+        cfg=None,
+    ) -> None:
         path = Path(policies_path) if policies_path else _DEFAULT_POLICIES_PATH
         with open(path, encoding="utf-8") as fh:
             self._policies: list[dict] = json.load(fh)
+
+        self._cfg = cfg or _default_settings
+
+        self._use_framework: bool = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_openai_endpoint)
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -95,6 +138,9 @@ class PolicyComplianceAgent:
         now: datetime | None = None,
     ) -> PolicyResult:
         """Evaluate *action* against all loaded governance policies.
+
+        Routes to the Microsoft Agent Framework agent in live mode, or to the
+        deterministic rule-based engine in mock mode.
 
         Args:
             action: The proposed infrastructure action to validate.
@@ -112,6 +158,110 @@ class PolicyComplianceAgent:
             * ``total_policies_checked`` / ``policies_passed``
             * ``reasoning`` — human-readable summary
         """
+        if not self._use_framework:
+            return self._evaluate_rules(action, resource_metadata, now)
+
+        try:
+            return asyncio.run(
+                self._evaluate_with_framework(action, resource_metadata, now)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PolicyComplianceAgent: framework call failed (%s) — falling back to rules.", exc
+            )
+            return self._evaluate_rules(action, resource_metadata, now)
+
+    # ------------------------------------------------------------------
+    # Microsoft Agent Framework path (live mode)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_with_framework(
+        self,
+        action: ProposedAction,
+        resource_metadata: dict | None,
+        now: datetime | None,
+    ) -> PolicyResult:
+        """Run the framework agent with GPT-4.1 driving the tool call."""
+        from openai import AsyncAzureOpenAI
+        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        import agent_framework as af
+        from agent_framework.openai import OpenAIResponsesClient
+
+        credential = AzureCliCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        azure_openai = AsyncAzureOpenAI(
+            azure_endpoint=self._cfg.azure_openai_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+        )
+        client = OpenAIResponsesClient(
+            async_client=azure_openai,
+            model_id=self._cfg.azure_openai_deployment,
+        )
+
+        result_holder: list[PolicyResult] = []
+
+        @af.tool(
+            name="evaluate_policy_rules",
+            description=(
+                "Run the deterministic policy compliance evaluation against all "
+                "governance policies. Returns a JSON object with sri_policy score, "
+                "violations list, total_policies_checked, policies_passed, and reasoning."
+            ),
+        )
+        def evaluate_policy_rules(action_json: str, metadata_json: str = "{}") -> str:
+            """Check all governance policies against the proposed action."""
+            try:
+                a = ProposedAction.model_validate_json(action_json)
+            except Exception:
+                a = action
+            try:
+                meta = json.loads(metadata_json) if metadata_json else resource_metadata
+            except Exception:
+                meta = resource_metadata
+            r = self._evaluate_rules(a, meta, now)
+            result_holder.append(r)
+            return r.model_dump_json()
+
+        agent = client.as_agent(
+            name="policy-compliance-evaluator",
+            instructions=_AGENT_INSTRUCTIONS,
+            tools=[evaluate_policy_rules],
+        )
+
+        meta_str = json.dumps(resource_metadata or {})
+        response = await agent.run(
+            f"Evaluate policy compliance for this proposed action.\n"
+            f"Action JSON: {action.model_dump_json()}\n"
+            f"Resource metadata: {meta_str}"
+        )
+
+        if result_holder:
+            base = result_holder[-1]
+            enriched_reasoning = (
+                base.reasoning
+                + "\n\nAgent Framework Analysis (GPT-4.1): "
+                + response.text
+            )
+            return PolicyResult(
+                **{**base.model_dump(), "reasoning": enriched_reasoning}
+            )
+
+        return self._evaluate_rules(action, resource_metadata, now)
+
+    # ------------------------------------------------------------------
+    # Deterministic rule-based evaluation
+    # ------------------------------------------------------------------
+
+    def _evaluate_rules(
+        self,
+        action: ProposedAction,
+        resource_metadata: dict | None = None,
+        now: datetime | None = None,
+    ) -> PolicyResult:
+        """Run all governance policy checks deterministically."""
         metadata = resource_metadata or {}
         tags: dict[str, str] = metadata.get("tags", {})
         environment: str = metadata.get("environment") or self._infer_environment(action)
@@ -218,7 +368,6 @@ class PolicyComplianceAgent:
 
             if s_day > e_day:
                 # Weekend wrap-around (e.g. Fri=4 → Mon=0)
-                # Days strictly between: wd > s_day (Sat/Sun) — or — wd < e_day (none for Mon=0)
                 if wd > s_day or wd < e_day:
                     return True
                 if wd == s_day and t_min >= s_min:

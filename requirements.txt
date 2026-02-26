@@ -11,6 +11,9 @@ azure-functions>=1.18.0
 azure-monitor-query>=1.2.0
 azure-keyvault-secrets>=4.7.0
 
+# --- Microsoft Agent Framework ---
+agent-framework-core>=1.0.0rc2
+
 # --- AI / LLM ---
 openai>=1.12.0
 
