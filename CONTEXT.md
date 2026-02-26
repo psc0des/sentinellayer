@@ -9,7 +9,8 @@ SentinelLayer is an AI Action Governance & Simulation Engine for the Microsoft A
 src/
 ├── operational_agents/     # Agents that PROPOSE actions (the governed)
 │   ├── monitoring_agent.py # SRE monitoring + anomaly detection
-│   └── cost_agent.py       # Cost optimization proposals
+│   ├── cost_agent.py       # Cost optimization proposals
+│   └── deploy_agent.py     # Infrastructure deployment + config proposals (Phase 8)
 ├── governance_agents/      # Agents that EVALUATE actions (the governors)
 │   ├── blast_radius_agent.py    # SRI:Infrastructure (0-100)
 │   ├── policy_agent.py          # SRI:Policy (0-100)
@@ -68,15 +69,24 @@ Operational Agent proposes action (ProposedAction)
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-- All four governance agents are complete and unit-tested.
-- Azure infrastructure is live: Foundry (GPT-4.1), AI Search, Cosmos DB, Key Vault (Terraform-managed).
-- Live secret flow: Key Vault + `DefaultAzureCredential`.  Run `az login` locally; Managed Identity in Azure.
+**Phase 8 — Microsoft Agent Framework SDK (current)**
+
+- All 4 governance agents + all 3 operational agents rebuilt on `agent-framework-core`.
+- Each agent defines its rule-based logic as an `@af.tool`; GPT-4.1 (the "brain") calls the tool
+  and synthesises a human-readable reasoning narrative.
+- Auth: `AzureCliCredential` + `get_bearer_token_provider` → `AsyncAzureOpenAI` (no API key in code).
+  Responses API requires `api_version="2025-03-01-preview"`.
+- `_use_framework = not use_local_mocks and bool(azure_openai_endpoint)` — mock mode skips the
+  entire async/framework path; `except Exception` fallback also handles live-mode failures.
+- New `src/operational_agents/deploy_agent.py`: proposes NSG rule updates, lifecycle tag additions,
+  and observability resource creation.
+- `pipeline.py` now exposes `scan_operational_agents()` which runs all 3 operational agents.
 - `USE_LOCAL_MOCKS=false` is set in `.env` — live Azure services are the default.
-- All infrastructure clients follow the env → Key Vault → mock-fallback ladder (`secrets.py`).
-- GPT-4.1 enriches reasoning in blast_radius, historical, and financial agents (live mode only).
 - `DecisionTracker` delegates to `CosmosDecisionClient` — decisions persist to Cosmos DB in live mode.
 - `HistoricalPatternAgent` uses `AzureSearchClient` (BM25) in live mode; keyword matching in mock mode.
 - Mock mode still works with zero cloud connection — every client falls back gracefully.
+- 361/388 tests pass; 27 pre-existing failures (CosmosDB `_dir` attribute, dashboard API) unrelated
+  to Phase 8.
 
 ## Coding Standards
 - Python 3.11+
