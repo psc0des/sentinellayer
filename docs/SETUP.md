@@ -60,8 +60,9 @@ bash scripts/setup_env.sh
 # 5. Seed demo data
 python scripts/seed_data.py
 
-# 6. Run tests
+# 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
+# Expected: all pass or xfail — 0 unexpected failures
 
 # 7. Start SentinelLayer
 python -m src.mcp_server.server
