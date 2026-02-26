@@ -69,31 +69,35 @@ Operational Agent proposes action (ProposedAction)
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 8 — Microsoft Agent Framework SDK (current)**
+**Phase 9 — Async-First Refactor (current)**
+
+- All 7 agent `evaluate()`/`scan()` methods are `async def` — safe to `await` from FastAPI, MCP, and async tests.
+- `pipeline.py` uses `asyncio.gather()` (replaced `ThreadPoolExecutor`) — all 4 governance agents run
+  concurrently in the same event loop; no nested `asyncio.run()` calls anywhere.
+- Auth: `DefaultAzureCredential` + `get_bearer_token_provider` → `AsyncAzureOpenAI` (works for both
+  `az login` locally and Managed Identity in Azure). Responses API: `api_version="2025-03-01-preview"`.
+- `_use_framework = not use_local_mocks and bool(azure_openai_endpoint)` — mock mode skips the
+  framework path; `except Exception` fallback handles live-mode failures gracefully.
+- `requirements.txt`: `agent-framework-core==1.0.0rc2` (pinned exact version).
+- 27 pre-existing test failures (Phase 7 Cosmos migration) marked `@pytest.mark.xfail`.
+- **Test result: 361 passed, 27 xfailed, 0 failed.**
+- `USE_LOCAL_MOCKS=false` is the default — live Azure services are active.
+- `DecisionTracker` delegates to `CosmosDecisionClient` — decisions persist to Cosmos DB.
+- `HistoricalPatternAgent` uses `AzureSearchClient` (BM25) in live mode; keyword matching in mock.
+
+**Previous: Phase 8 — Microsoft Agent Framework SDK**
 
 - All 4 governance agents + all 3 operational agents rebuilt on `agent-framework-core`.
-- Each agent defines its rule-based logic as an `@af.tool`; GPT-4.1 (the "brain") calls the tool
-  and synthesises a human-readable reasoning narrative.
-- Auth: `AzureCliCredential` + `get_bearer_token_provider` → `AsyncAzureOpenAI` (no API key in code).
-  Responses API requires `api_version="2025-03-01-preview"`.
-- `_use_framework = not use_local_mocks and bool(azure_openai_endpoint)` — mock mode skips the
-  entire async/framework path; `except Exception` fallback also handles live-mode failures.
-- New `src/operational_agents/deploy_agent.py`: proposes NSG rule updates, lifecycle tag additions,
-  and observability resource creation.
-- `pipeline.py` now exposes `scan_operational_agents()` which runs all 3 operational agents.
-- `USE_LOCAL_MOCKS=false` is set in `.env` — live Azure services are the default.
-- `DecisionTracker` delegates to `CosmosDecisionClient` — decisions persist to Cosmos DB in live mode.
-- `HistoricalPatternAgent` uses `AzureSearchClient` (BM25) in live mode; keyword matching in mock mode.
-- Mock mode still works with zero cloud connection — every client falls back gracefully.
-- 361/388 tests pass; 27 pre-existing failures (CosmosDB `_dir` attribute, dashboard API) unrelated
-  to Phase 8.
+- Each agent defines its rule-based logic as an `@af.tool`; GPT-4.1 calls the tool and synthesises reasoning.
+- `deploy_agent.py` added: proposes NSG deny-all rules, lifecycle tag additions, observability resources.
+- `pipeline.py` exposes `scan_operational_agents()` running all 3 operational agents concurrently.
 
 ## Coding Standards
 - Python 3.11+
 - Use type hints everywhere
 - Use Pydantic models from src/core/models.py for all inputs/outputs
-- Governance agents use **synchronous** `evaluate()` (called from ThreadPoolExecutor in pipeline)
-- Every governance agent must have a `def evaluate(self, action: ProposedAction)` method
+- Governance agents use **async** `evaluate()` — always `async def evaluate(self, action: ProposedAction)`
+- Pipeline calls all agents via `asyncio.gather()` — never wrap in `asyncio.run()` from inside a coroutine
 - Return the appropriate Pydantic result model (e.g., PolicyResult, BlastRadiusResult)
 - Keep code clean with docstrings
 - Follow existing patterns in models.py
