@@ -33,7 +33,6 @@ Resources above ``_HIGH_COST_THRESHOLD`` ($500) get MEDIUM urgency so they
 rise to the top of the human review queue.
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -143,7 +142,7 @@ class CostOptimizationAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    def scan(self) -> list[ProposedAction]:
+    async def scan(self) -> list[ProposedAction]:
         """Scan all resources and return cost-optimisation proposals.
 
         Routes to the Microsoft Agent Framework agent in live mode, or to the
@@ -158,7 +157,7 @@ class CostOptimizationAgent:
             return self._scan_rules()
 
         try:
-            return asyncio.run(self._scan_with_framework())
+            return await self._scan_with_framework()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "CostOptimizationAgent: framework call failed (%s) — falling back to rules.", exc
@@ -172,11 +171,11 @@ class CostOptimizationAgent:
     async def _scan_with_framework(self) -> list[ProposedAction]:
         """Run the framework agent with GPT-4.1 driving the tool call."""
         from openai import AsyncAzureOpenAI
-        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
 
-        credential = AzureCliCredential()
+        credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )

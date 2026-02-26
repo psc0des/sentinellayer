@@ -59,9 +59,9 @@ ThreadPoolExecutor pattern is correct to establish now — the code structure
 will not change when we swap in real Azure clients.
 """
 
+import asyncio
 import json
 import logging
-from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from src.core.governance_engine import GovernanceDecisionEngine
@@ -136,17 +136,20 @@ class SentinelLayerPipeline:
     # Public API — Governance
     # ------------------------------------------------------------------
 
-    def evaluate(self, action: ProposedAction) -> GovernanceVerdict:
+    async def evaluate(self, action: ProposedAction) -> GovernanceVerdict:
         """Run the full governance pipeline for a single proposed action.
+
+        Async-first: safe to call from FastAPI endpoints, MCP tools, and any
+        async context.  Uses ``asyncio.gather()`` to run all four governance
+        agents concurrently — equivalent parallelism to the former
+        ``ThreadPoolExecutor`` pattern but without nested event-loop issues.
 
         Steps:
         1. Looks up the target resource in the local topology graph to extract
            its tags and environment (needed by the Policy agent).
-        2. Submits all four governance agents to a ``ThreadPoolExecutor``.
-           All four submissions happen **before** any result is collected,
-           so the agents run concurrently.
-        3. Each agent internally uses the Microsoft Agent Framework in live
-           mode, or deterministic rule-based logic in mock mode.
+        2. Concurrently awaits all four governance agents via ``asyncio.gather()``.
+        3. Each agent uses the Microsoft Agent Framework in live mode, or
+           deterministic rule-based logic in mock mode.
         4. Passes the four agent results to ``GovernanceDecisionEngine``.
         5. Returns the final ``GovernanceVerdict``.
 
@@ -170,32 +173,24 @@ class SentinelLayerPipeline:
         )
 
         # ------------------------------------------------------------------
-        # Parallel agent evaluation (Microsoft Agent Framework in live mode)
+        # Concurrent agent evaluation via asyncio.gather()
         # ------------------------------------------------------------------
-        # ThreadPoolExecutor creates a pool of 4 worker threads.
-        # executor.submit() schedules a function call and returns a Future
-        # immediately — it does NOT wait for the call to finish.
-        # All four submits happen in quick succession, then we collect results.
-        #
-        # In live mode each agent uses asyncio.run() internally to drive the
-        # framework agent — this is safe from ThreadPoolExecutor threads
-        # because they do not have a pre-existing event loop.
+        # asyncio.gather() runs all four coroutines concurrently inside the
+        # same event loop.  No nested asyncio.run() calls are needed — each
+        # agent's evaluate() is a native coroutine that simply awaits the
+        # framework call (or returns the rule-based result immediately).
         # ------------------------------------------------------------------
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            fut_blast: Future = executor.submit(self._blast.evaluate, action)
-            fut_policy: Future = executor.submit(
-                self._policy.evaluate, action, resource_metadata
-            )
-            fut_historical: Future = executor.submit(self._historical.evaluate, action)
-            fut_financial: Future = executor.submit(self._financial.evaluate, action)
-
-            # .result() blocks the current thread until that future completes.
-            # Because all four were submitted before any .result() is called,
-            # the agents execute in parallel while we wait here.
-            blast_result = fut_blast.result()
-            policy_result = fut_policy.result()
-            historical_result = fut_historical.result()
-            financial_result = fut_financial.result()
+        (
+            blast_result,
+            policy_result,
+            historical_result,
+            financial_result,
+        ) = await asyncio.gather(
+            self._blast.evaluate(action),
+            self._policy.evaluate(action, resource_metadata),
+            self._historical.evaluate(action),
+            self._financial.evaluate(action),
+        )
 
         # ------------------------------------------------------------------
         # Composite scoring + verdict
@@ -222,7 +217,7 @@ class SentinelLayerPipeline:
     # Public API — Operational agent orchestration
     # ------------------------------------------------------------------
 
-    def scan_operational_agents(self) -> list[ProposedAction]:
+    async def scan_operational_agents(self) -> list[ProposedAction]:
         """Run all three operational agents and return their combined proposals.
 
         This method orchestrates the three operational agents using the
@@ -239,15 +234,17 @@ class SentinelLayerPipeline:
         Returns:
             Combined list of proposals from all three operational agents.
         """
-        proposals: list[ProposedAction] = []
+        cost_proposals, monitoring_proposals, deploy_proposals = await asyncio.gather(
+            self._cost.scan(),
+            self._monitoring.scan(),
+            self._deploy.scan(),
+        )
 
-        cost_proposals = self._cost.scan()
-        monitoring_proposals = self._monitoring.scan()
-        deploy_proposals = self._deploy.scan()
-
-        proposals.extend(cost_proposals)
-        proposals.extend(monitoring_proposals)
-        proposals.extend(deploy_proposals)
+        proposals: list[ProposedAction] = [
+            *cost_proposals,
+            *monitoring_proposals,
+            *deploy_proposals,
+        ]
 
         logger.info(
             "Pipeline: operational scan — cost=%d monitoring=%d deploy=%d total=%d",

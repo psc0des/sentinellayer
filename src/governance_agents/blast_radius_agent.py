@@ -47,7 +47,6 @@ Score components
 All component scores accumulate and are capped at 100.
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -165,11 +164,12 @@ class BlastRadiusAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    def evaluate(self, action: ProposedAction) -> BlastRadiusResult:
+    async def evaluate(self, action: ProposedAction) -> BlastRadiusResult:
         """Evaluate the blast radius of a proposed infrastructure action.
 
-        Routes to the Microsoft Agent Framework agent in live mode, or to the
-        deterministic rule-based engine in mock mode.
+        Async-first: safe to call from FastAPI, MCP, asyncio.gather(), or any
+        async context.  Routes to the Microsoft Agent Framework agent in live
+        mode, or to the deterministic rule-based engine in mock mode.
 
         Args:
             action: The proposed action from an operational agent.
@@ -188,9 +188,7 @@ class BlastRadiusAgent:
             return self._evaluate_rules(action)
 
         try:
-            # asyncio.run() is safe here — ThreadPoolExecutor worker threads
-            # do not have an event loop, so this creates a fresh one per call.
-            return asyncio.run(self._evaluate_with_framework(action))
+            return await self._evaluate_with_framework(action)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "BlastRadiusAgent: framework call failed (%s) — falling back to rules.", exc
@@ -204,12 +202,12 @@ class BlastRadiusAgent:
     async def _evaluate_with_framework(self, action: ProposedAction) -> BlastRadiusResult:
         """Run the framework agent with GPT-4.1 driving the tool call."""
         from openai import AsyncAzureOpenAI
-        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
 
-        # ── Credentials: AzureCliCredential (az login) ──────────────────
-        credential = AzureCliCredential()
+        # ── Credentials: DefaultAzureCredential (az login locally, MI in Azure) ─
+        credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )

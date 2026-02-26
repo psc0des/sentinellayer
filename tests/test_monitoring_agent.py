@@ -41,7 +41,8 @@ class TestMonitoringAgent:
 
     @pytest.fixture(scope="class")
     def proposals(self, agent):
-        return agent.scan()
+        import asyncio
+        return asyncio.run(agent.scan())
 
     # ------------------------------------------------------------------
     # Return type and basic structure
@@ -85,13 +86,13 @@ class TestMonitoringAgent:
         target_ids = _target_ids(update_proposals)
         assert any("aks-prod" in t for t in target_ids)
 
-    def test_missing_owner_proposals_have_medium_urgency(self, proposals):
+    async def test_missing_owner_proposals_have_medium_urgency(self, proposals):
         """Unowned critical resources get MEDIUM urgency."""
         update_proposals = _proposals_for_action(proposals, ActionType.UPDATE_CONFIG)
         for p in update_proposals:
             assert p.urgency == Urgency.MEDIUM
 
-    def test_non_critical_resources_not_flagged_for_missing_owner(self):
+    async def test_non_critical_resources_not_flagged_for_missing_owner(self):
         """Resources that are not critical should not trigger rule 1."""
         data = {
             "resources": [
@@ -112,11 +113,11 @@ class TestMonitoringAgent:
 
         agent = MonitoringAgent(resources_path=tmp_path)
         update_proposals = _proposals_for_action(
-            agent.scan(), ActionType.UPDATE_CONFIG
+            await agent.scan(), ActionType.UPDATE_CONFIG
         )
         assert len(update_proposals) == 0
 
-    def test_critical_resource_with_owner_not_flagged(self):
+    async def test_critical_resource_with_owner_not_flagged(self):
         """A critical resource that already has an owner tag should be skipped."""
         data = {
             "resources": [
@@ -137,7 +138,7 @@ class TestMonitoringAgent:
 
         agent = MonitoringAgent(resources_path=tmp_path)
         update_proposals = _proposals_for_action(
-            agent.scan(), ActionType.UPDATE_CONFIG
+            await agent.scan(), ActionType.UPDATE_CONFIG
         )
         assert len(update_proposals) == 0
 
@@ -174,7 +175,7 @@ class TestMonitoringAgent:
         for p in restart_proposals:
             assert p.urgency == Urgency.HIGH
 
-    def test_circular_dependency_reason_mentions_both_services(self, proposals):
+    async def test_circular_dependency_reason_mentions_both_services(self, proposals):
         """Reason should name both nodes in the cycle."""
         restart_proposals = _proposals_for_action(proposals, ActionType.RESTART_SERVICE)
         assert len(restart_proposals) == 1
@@ -182,7 +183,7 @@ class TestMonitoringAgent:
         assert "payment-api" in reason
         assert "notification-service" in reason
 
-    def test_no_circular_dep_in_clean_topology(self):
+    async def test_no_circular_dep_in_clean_topology(self):
         """A topology with no circular edges should produce no RESTART proposals."""
         data = {
             "resources": [],
@@ -199,11 +200,11 @@ class TestMonitoringAgent:
 
         agent = MonitoringAgent(resources_path=tmp_path)
         restart_proposals = _proposals_for_action(
-            agent.scan(), ActionType.RESTART_SERVICE
+            await agent.scan(), ActionType.RESTART_SERVICE
         )
         assert len(restart_proposals) == 0
 
-    def test_multiple_circular_pairs_each_produce_one_proposal(self):
+    async def test_multiple_circular_pairs_each_produce_one_proposal(self):
         """Two independent circular pairs should produce two RESTART proposals."""
         data = {
             "resources": [],
@@ -222,7 +223,7 @@ class TestMonitoringAgent:
 
         agent = MonitoringAgent(resources_path=tmp_path)
         restart_proposals = _proposals_for_action(
-            agent.scan(), ActionType.RESTART_SERVICE
+            await agent.scan(), ActionType.RESTART_SERVICE
         )
         assert len(restart_proposals) == 2
 
@@ -252,7 +253,7 @@ class TestMonitoringAgent:
             for svc in ["payment-api", "notification-service", "order-processing"]
         )
 
-    def test_cheap_critical_resource_not_flagged_as_spof(self):
+    async def test_cheap_critical_resource_not_flagged_as_spof(self):
         """A critical resource below the cost threshold is skipped by rule 3."""
         data = {
             "resources": [
@@ -275,11 +276,11 @@ class TestMonitoringAgent:
 
         agent = MonitoringAgent(resources_path=tmp_path)
         scale_up_proposals = _proposals_for_action(
-            agent.scan(), ActionType.SCALE_UP
+            await agent.scan(), ActionType.SCALE_UP
         )
         assert len(scale_up_proposals) == 0
 
-    def test_critical_with_no_dependents_not_flagged_as_spof(self):
+    async def test_critical_with_no_dependents_not_flagged_as_spof(self):
         """A critical resource with zero dependents is not a blast-radius SPOF."""
         data = {
             "resources": [
@@ -302,7 +303,7 @@ class TestMonitoringAgent:
 
         agent = MonitoringAgent(resources_path=tmp_path)
         scale_up_proposals = _proposals_for_action(
-            agent.scan(), ActionType.SCALE_UP
+            await agent.scan(), ActionType.SCALE_UP
         )
         assert len(scale_up_proposals) == 0
 
@@ -310,7 +311,7 @@ class TestMonitoringAgent:
     # Reason strings
     # ------------------------------------------------------------------
 
-    def test_all_proposals_have_non_empty_reason(self, proposals):
+    async def test_all_proposals_have_non_empty_reason(self, proposals):
         """Every proposal must have a non-empty reason string."""
         for p in proposals:
             assert len(p.reason) > 20
@@ -319,7 +320,7 @@ class TestMonitoringAgent:
     # Custom resources path
     # ------------------------------------------------------------------
 
-    def test_empty_topology_returns_no_proposals(self):
+    async def test_empty_topology_returns_no_proposals(self):
         """An empty resource file produces no proposals."""
         minimal = {"resources": [], "dependency_edges": []}
         with tempfile.NamedTemporaryFile(
@@ -329,4 +330,4 @@ class TestMonitoringAgent:
             tmp_path = f.name
 
         agent = MonitoringAgent(resources_path=tmp_path)
-        assert agent.scan() == []
+        assert await agent.scan() == []

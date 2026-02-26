@@ -63,7 +63,6 @@ Action multipliers
 * MODIFY_NSG      : 0.3   (no cost change expected)
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -179,7 +178,7 @@ class FinancialImpactAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    def evaluate(self, action: ProposedAction) -> FinancialResult:
+    async def evaluate(self, action: ProposedAction) -> FinancialResult:
         """Evaluate the financial impact of a proposed infrastructure action.
 
         Routes to the Microsoft Agent Framework agent in live mode, or to the
@@ -203,7 +202,7 @@ class FinancialImpactAgent:
             return self._evaluate_rules(action)
 
         try:
-            return asyncio.run(self._evaluate_with_framework(action))
+            return await self._evaluate_with_framework(action)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "FinancialImpactAgent: framework call failed (%s) — falling back to rules.", exc
@@ -217,11 +216,11 @@ class FinancialImpactAgent:
     async def _evaluate_with_framework(self, action: ProposedAction) -> FinancialResult:
         """Run the framework agent with GPT-4.1 driving the tool call."""
         from openai import AsyncAzureOpenAI
-        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
 
-        credential = AzureCliCredential()
+        credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )

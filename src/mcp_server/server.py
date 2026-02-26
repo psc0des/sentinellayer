@@ -92,7 +92,7 @@ def _get_tracker() -> DecisionTracker:
 
 
 @mcp.tool()
-def sentinel_evaluate_action(
+async def sentinel_evaluate_action(
     resource_id: str,
     resource_type: str,
     action_type: str,
@@ -153,7 +153,7 @@ def sentinel_evaluate_action(
     except ValueError as exc:
         return {"error": f"Invalid parameter: {exc}"}
 
-    verdict = _get_pipeline().evaluate(action)
+    verdict = await _get_pipeline().evaluate(action)
     _get_tracker().record(verdict)
 
     sri = verdict.sentinel_risk_index

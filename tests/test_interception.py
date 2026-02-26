@@ -15,7 +15,7 @@ Why mock instead of using real objects?
 """
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -95,7 +95,7 @@ def _make_interceptor(
         verdict = _make_verdict(action)
 
     mock_pipeline = MagicMock()
-    mock_pipeline.evaluate.return_value = verdict
+    mock_pipeline.evaluate = AsyncMock(return_value=verdict)
 
     mock_tracker = MagicMock()
 
@@ -133,63 +133,63 @@ class TestActionInterceptorConstruction:
 class TestIntercept:
     """Tests for ActionInterceptor.intercept(action) -> GovernanceVerdict."""
 
-    def test_returns_governance_verdict(self):
+    async def test_returns_governance_verdict(self):
         """intercept() must always return a GovernanceVerdict object."""
         interceptor, _, _, action, _ = _make_interceptor()
-        result = interceptor.intercept(action)
+        result = await interceptor.intercept(action)
         assert isinstance(result, GovernanceVerdict)
 
-    def test_calls_pipeline_evaluate_exactly_once(self):
+    async def test_calls_pipeline_evaluate_exactly_once(self):
         """intercept() must hand the action to the pipeline exactly once."""
         interceptor, mock_pipeline, _, action, _ = _make_interceptor()
-        interceptor.intercept(action)
+        await interceptor.intercept(action)
         mock_pipeline.evaluate.assert_called_once_with(action)
 
-    def test_calls_tracker_record_exactly_once(self):
+    async def test_calls_tracker_record_exactly_once(self):
         """intercept() must record the verdict in the audit trail."""
         interceptor, _, mock_tracker, action, verdict = _make_interceptor()
-        interceptor.intercept(action)
+        await interceptor.intercept(action)
         mock_tracker.record.assert_called_once_with(verdict)
 
-    def test_returns_the_verdict_from_the_pipeline(self):
+    async def test_returns_the_verdict_from_the_pipeline(self):
         """The verdict returned by intercept() is the one the pipeline produced."""
         interceptor, _, _, action, expected_verdict = _make_interceptor()
-        result = interceptor.intercept(action)
+        result = await interceptor.intercept(action)
         assert result.action_id == expected_verdict.action_id
 
-    def test_decision_matches_mock_verdict(self):
+    async def test_decision_matches_mock_verdict(self):
         """The decision in the returned verdict matches what the mock returned."""
         interceptor, _, _, action, _ = _make_interceptor()
-        result = interceptor.intercept(action)
+        result = await interceptor.intercept(action)
         assert result.decision == SRIVerdict.APPROVED
 
-    def test_denied_verdict_is_passed_through(self):
+    async def test_denied_verdict_is_passed_through(self):
         """intercept() does not modify the verdict — DENIED stays DENIED."""
         action = _make_action()
         denied_verdict = _make_verdict(action, decision=SRIVerdict.DENIED, composite=85.0)
         interceptor, _, _, _, _ = _make_interceptor(action=action, verdict=denied_verdict)
-        result = interceptor.intercept(action)
+        result = await interceptor.intercept(action)
         assert result.decision == SRIVerdict.DENIED
 
-    def test_escalated_verdict_is_passed_through(self):
+    async def test_escalated_verdict_is_passed_through(self):
         """intercept() does not modify the verdict — ESCALATED stays ESCALATED."""
         action = _make_action()
         escalated_verdict = _make_verdict(action, decision=SRIVerdict.ESCALATED, composite=40.0)
         interceptor, _, _, _, _ = _make_interceptor(action=action, verdict=escalated_verdict)
-        result = interceptor.intercept(action)
+        result = await interceptor.intercept(action)
         assert result.decision == SRIVerdict.ESCALATED
 
-    def test_tracker_record_called_before_return(self):
+    async def test_tracker_record_called_before_return(self):
         """Tracking must happen during intercept(), not after the caller gets the verdict."""
         interceptor, _, mock_tracker, action, _ = _make_interceptor()
-        interceptor.intercept(action)
+        await interceptor.intercept(action)
         # If record was called, the mock remembers it
         assert mock_tracker.record.called
 
-    def test_pipeline_receives_same_action_object(self):
+    async def test_pipeline_receives_same_action_object(self):
         """The exact action passed to intercept() is forwarded to the pipeline."""
         interceptor, mock_pipeline, _, action, _ = _make_interceptor()
-        interceptor.intercept(action)
+        await interceptor.intercept(action)
         call_args = mock_pipeline.evaluate.call_args
         # call_args[0][0] is the first positional argument
         assert call_args[0][0] is action
@@ -216,188 +216,188 @@ class TestInterceptFromDict:
 
     # --- Result shape ---
 
-    def test_valid_dict_returns_a_dict(self):
+    async def test_valid_dict_returns_a_dict(self):
         """Happy-path: valid input returns a plain dict."""
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert isinstance(result, dict)
 
-    def test_result_contains_action_id(self):
+    async def test_result_contains_action_id(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "action_id" in result
         assert isinstance(result["action_id"], str)
 
-    def test_result_contains_decision(self):
+    async def test_result_contains_decision(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "decision" in result
         assert result["decision"] in ("approved", "escalated", "denied")
 
-    def test_result_decision_is_string_not_enum(self):
+    async def test_result_decision_is_string_not_enum(self):
         """MCP callers expect a plain string, not a Python Enum object."""
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert isinstance(result["decision"], str)
 
-    def test_result_contains_reason(self):
+    async def test_result_contains_reason(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "reason" in result
         assert len(result["reason"]) > 0
 
-    def test_result_contains_sri_composite(self):
+    async def test_result_contains_sri_composite(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "sri_composite" in result
         assert isinstance(result["sri_composite"], float)
 
-    def test_result_contains_sri_breakdown(self):
+    async def test_result_contains_sri_breakdown(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "sri_breakdown" in result
         assert isinstance(result["sri_breakdown"], dict)
 
-    def test_sri_breakdown_has_four_dimensions(self):
+    async def test_sri_breakdown_has_four_dimensions(self):
         """The breakdown must have exactly the four SRI dimension keys."""
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         breakdown = result["sri_breakdown"]
         assert "infrastructure" in breakdown
         assert "policy" in breakdown
         assert "historical" in breakdown
         assert "cost" in breakdown
 
-    def test_result_contains_thresholds(self):
+    async def test_result_contains_thresholds(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "thresholds" in result
         assert "auto_approve" in result["thresholds"]
         assert "human_review" in result["thresholds"]
 
-    def test_result_contains_timestamp_as_string(self):
+    async def test_result_contains_timestamp_as_string(self):
         """Timestamps must be ISO strings, not datetime objects, for JSON safety."""
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "timestamp" in result
         assert isinstance(result["timestamp"], str)
 
-    def test_result_contains_resource_id(self):
+    async def test_result_contains_resource_id(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "resource_id" in result
 
-    def test_result_contains_agent_id(self):
+    async def test_result_contains_agent_id(self):
         interceptor, _, _, _, _ = _make_interceptor()
-        result = interceptor.intercept_from_dict(self._valid_data())
+        result = await interceptor.intercept_from_dict(self._valid_data())
         assert "agent_id" in result
 
     # --- Pipeline is still called ---
 
-    def test_still_calls_pipeline_evaluate(self):
+    async def test_still_calls_pipeline_evaluate(self):
         """intercept_from_dict must delegate to the pipeline, not bypass it."""
         interceptor, mock_pipeline, _, _, _ = _make_interceptor()
-        interceptor.intercept_from_dict(self._valid_data())
+        await interceptor.intercept_from_dict(self._valid_data())
         mock_pipeline.evaluate.assert_called_once()
 
-    def test_still_calls_tracker_record(self):
+    async def test_still_calls_tracker_record(self):
         """intercept_from_dict must record the verdict in the audit trail."""
         interceptor, _, mock_tracker, _, _ = _make_interceptor()
-        interceptor.intercept_from_dict(self._valid_data())
+        await interceptor.intercept_from_dict(self._valid_data())
         mock_tracker.record.assert_called_once()
 
     # --- Optional fields ---
 
-    def test_accepts_optional_urgency(self):
+    async def test_accepts_optional_urgency(self):
         """urgency is optional; when provided, it must be accepted."""
         interceptor, _, _, _, _ = _make_interceptor()
         data = {**self._valid_data(), "urgency": "high"}
-        result = interceptor.intercept_from_dict(data)
+        result = await interceptor.intercept_from_dict(data)
         assert isinstance(result, dict)
 
-    def test_defaults_urgency_to_medium(self):
+    async def test_defaults_urgency_to_medium(self):
         """When urgency is omitted, the method should not raise."""
         interceptor, mock_pipeline, _, _, _ = _make_interceptor()
         data = self._valid_data()  # no 'urgency' key
-        interceptor.intercept_from_dict(data)
+        await interceptor.intercept_from_dict(data)
         call_action: ProposedAction = mock_pipeline.evaluate.call_args[0][0]
         assert call_action.urgency == Urgency.MEDIUM
 
-    def test_accepts_optional_current_monthly_cost(self):
+    async def test_accepts_optional_current_monthly_cost(self):
         interceptor, _, _, _, _ = _make_interceptor()
         data = {**self._valid_data(), "current_monthly_cost": 847.0}
-        result = interceptor.intercept_from_dict(data)
+        result = await interceptor.intercept_from_dict(data)
         assert isinstance(result, dict)
 
-    def test_accepts_optional_sku_fields(self):
+    async def test_accepts_optional_sku_fields(self):
         interceptor, _, _, _, _ = _make_interceptor()
         data = {
             **self._valid_data(),
             "current_sku": "Standard_D4s_v3",
             "proposed_sku": "Standard_D2s_v3",
         }
-        result = interceptor.intercept_from_dict(data)
+        result = await interceptor.intercept_from_dict(data)
         assert isinstance(result, dict)
 
     # --- Error cases ---
 
-    def test_missing_resource_id_raises_value_error(self):
+    async def test_missing_resource_id_raises_value_error(self):
         """Missing required field must raise ValueError, not KeyError."""
         interceptor, _, _, _, _ = _make_interceptor()
         data = self._valid_data()
         del data["resource_id"]
         with pytest.raises(ValueError):
-            interceptor.intercept_from_dict(data)
+            await interceptor.intercept_from_dict(data)
 
-    def test_missing_resource_type_raises_value_error(self):
+    async def test_missing_resource_type_raises_value_error(self):
         interceptor, _, _, _, _ = _make_interceptor()
         data = self._valid_data()
         del data["resource_type"]
         with pytest.raises(ValueError):
-            interceptor.intercept_from_dict(data)
+            await interceptor.intercept_from_dict(data)
 
-    def test_missing_agent_id_raises_value_error(self):
+    async def test_missing_agent_id_raises_value_error(self):
         interceptor, _, _, _, _ = _make_interceptor()
         data = self._valid_data()
         del data["agent_id"]
         with pytest.raises(ValueError):
-            interceptor.intercept_from_dict(data)
+            await interceptor.intercept_from_dict(data)
 
-    def test_missing_reason_raises_value_error(self):
+    async def test_missing_reason_raises_value_error(self):
         interceptor, _, _, _, _ = _make_interceptor()
         data = self._valid_data()
         del data["reason"]
         with pytest.raises(ValueError):
-            interceptor.intercept_from_dict(data)
+            await interceptor.intercept_from_dict(data)
 
-    def test_invalid_action_type_raises_value_error(self):
+    async def test_invalid_action_type_raises_value_error(self):
         """An action_type not in the ActionType enum must raise ValueError."""
         interceptor, _, _, _, _ = _make_interceptor()
         data = {**self._valid_data(), "action_type": "fly_to_moon"}
         with pytest.raises(ValueError):
-            interceptor.intercept_from_dict(data)
+            await interceptor.intercept_from_dict(data)
 
-    def test_invalid_urgency_raises_value_error(self):
+    async def test_invalid_urgency_raises_value_error(self):
         """An urgency value not in the Urgency enum must raise ValueError."""
         interceptor, _, _, _, _ = _make_interceptor()
         data = {**self._valid_data(), "urgency": "super-hyper-critical"}
         with pytest.raises(ValueError):
-            interceptor.intercept_from_dict(data)
+            await interceptor.intercept_from_dict(data)
 
-    def test_all_valid_action_types_accepted(self):
+    async def test_all_valid_action_types_accepted(self):
         """Every legal ActionType string must be accepted without error."""
         interceptor, _, _, _, _ = _make_interceptor()
         for action_type in ActionType:
             data = {**self._valid_data(), "action_type": action_type.value}
-            result = interceptor.intercept_from_dict(data)
+            result = await interceptor.intercept_from_dict(data)
             assert isinstance(result, dict), f"Failed for action_type={action_type.value}"
 
-    def test_all_valid_urgency_levels_accepted(self):
+    async def test_all_valid_urgency_levels_accepted(self):
         """Every legal Urgency string must be accepted without error."""
         interceptor, _, _, _, _ = _make_interceptor()
         for urgency in Urgency:
             data = {**self._valid_data(), "urgency": urgency.value}
-            result = interceptor.intercept_from_dict(data)
+            result = await interceptor.intercept_from_dict(data)
             assert isinstance(result, dict), f"Failed for urgency={urgency.value}"
 
 
@@ -449,7 +449,7 @@ class TestGetInterceptorSingleton:
 class TestBuildActionFromDict:
     """The action construction helper is tested indirectly through intercept_from_dict."""
 
-    def test_action_type_is_set_correctly(self):
+    async def test_action_type_is_set_correctly(self):
         """The constructed action must have the action_type from the dict."""
         interceptor, mock_pipeline, _, _, _ = _make_interceptor()
         data = {
@@ -459,11 +459,11 @@ class TestBuildActionFromDict:
             "agent_id": "cost-agent",
             "reason": "idle",
         }
-        interceptor.intercept_from_dict(data)
+        await interceptor.intercept_from_dict(data)
         built_action: ProposedAction = mock_pipeline.evaluate.call_args[0][0]
         assert built_action.action_type == ActionType.DELETE_RESOURCE
 
-    def test_agent_id_is_set_correctly(self):
+    async def test_agent_id_is_set_correctly(self):
         interceptor, mock_pipeline, _, _, _ = _make_interceptor()
         data = {
             "resource_id": "vm-test",
@@ -472,11 +472,11 @@ class TestBuildActionFromDict:
             "agent_id": "my-special-agent",
             "reason": "scaling up",
         }
-        interceptor.intercept_from_dict(data)
+        await interceptor.intercept_from_dict(data)
         built_action: ProposedAction = mock_pipeline.evaluate.call_args[0][0]
         assert built_action.agent_id == "my-special-agent"
 
-    def test_resource_id_is_set_correctly(self):
+    async def test_resource_id_is_set_correctly(self):
         interceptor, mock_pipeline, _, _, _ = _make_interceptor()
         data = {
             "resource_id": "nsg-east",
@@ -485,11 +485,11 @@ class TestBuildActionFromDict:
             "agent_id": "sec-agent",
             "reason": "tighten rules",
         }
-        interceptor.intercept_from_dict(data)
+        await interceptor.intercept_from_dict(data)
         built_action: ProposedAction = mock_pipeline.evaluate.call_args[0][0]
         assert built_action.target.resource_id == "nsg-east"
 
-    def test_optional_cost_is_passed_through(self):
+    async def test_optional_cost_is_passed_through(self):
         interceptor, mock_pipeline, _, _, _ = _make_interceptor()
         data = {
             "resource_id": "vm-test",
@@ -499,6 +499,6 @@ class TestBuildActionFromDict:
             "reason": "reduce spend",
             "current_monthly_cost": 512.50,
         }
-        interceptor.intercept_from_dict(data)
+        await interceptor.intercept_from_dict(data)
         built_action: ProposedAction = mock_pipeline.evaluate.call_args[0][0]
         assert built_action.target.current_monthly_cost == 512.50

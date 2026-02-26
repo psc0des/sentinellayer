@@ -56,7 +56,6 @@ Score formula
 Capped at 100.
 """
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -175,7 +174,7 @@ class HistoricalPatternAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    def evaluate(self, action: ProposedAction) -> HistoricalResult:
+    async def evaluate(self, action: ProposedAction) -> HistoricalResult:
         """Match the proposed action against the incident history.
 
         Routes to the Microsoft Agent Framework agent in live mode, or to the
@@ -197,7 +196,7 @@ class HistoricalPatternAgent:
             return self._evaluate_rules(action)
 
         try:
-            return asyncio.run(self._evaluate_with_framework(action))
+            return await self._evaluate_with_framework(action)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "HistoricalPatternAgent: framework call failed (%s) — falling back to rules.",
@@ -212,11 +211,11 @@ class HistoricalPatternAgent:
     async def _evaluate_with_framework(self, action: ProposedAction) -> HistoricalResult:
         """Run the framework agent with GPT-4.1 driving the tool call."""
         from openai import AsyncAzureOpenAI
-        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
 
-        credential = AzureCliCredential()
+        credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )

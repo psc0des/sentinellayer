@@ -31,7 +31,6 @@ Severity → score contribution
 Scores accumulate and are capped at 100.
 """
 
-import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,7 +130,7 @@ class PolicyComplianceAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    def evaluate(
+    async def evaluate(
         self,
         action: ProposedAction,
         resource_metadata: dict | None = None,
@@ -162,9 +161,7 @@ class PolicyComplianceAgent:
             return self._evaluate_rules(action, resource_metadata, now)
 
         try:
-            return asyncio.run(
-                self._evaluate_with_framework(action, resource_metadata, now)
-            )
+            return await self._evaluate_with_framework(action, resource_metadata, now)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "PolicyComplianceAgent: framework call failed (%s) — falling back to rules.", exc
@@ -183,11 +180,11 @@ class PolicyComplianceAgent:
     ) -> PolicyResult:
         """Run the framework agent with GPT-4.1 driving the tool call."""
         from openai import AsyncAzureOpenAI
-        from azure.identity import AzureCliCredential, get_bearer_token_provider
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
 
-        credential = AzureCliCredential()
+        credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(
             credential, "https://cognitiveservices.azure.com/.default"
         )

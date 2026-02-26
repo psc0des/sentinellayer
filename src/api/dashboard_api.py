@@ -64,7 +64,7 @@ def _get_tracker() -> DecisionTracker:
 
 
 @app.get("/api/evaluations")
-def list_evaluations(
+async def list_evaluations(
     limit: int = Query(default=20, ge=1, le=100, description="Max records to return"),
     resource_id: str | None = Query(
         default=None, description="Filter by resource ID substring"
@@ -90,7 +90,7 @@ def list_evaluations(
 
 
 @app.get("/api/evaluations/{evaluation_id}")
-def get_evaluation(evaluation_id: str) -> dict:
+async def get_evaluation(evaluation_id: str) -> dict:
     """Return the full stored record for one evaluation.
 
     Path parameter:
@@ -113,7 +113,7 @@ def get_evaluation(evaluation_id: str) -> dict:
 
 
 @app.get("/api/metrics")
-def get_metrics() -> dict:
+async def get_metrics() -> dict:
     """Return aggregate statistics across all governance evaluations.
 
     Includes:
@@ -217,7 +217,7 @@ def get_metrics() -> dict:
 
 
 @app.get("/api/resources/{resource_id}/risk")
-def get_resource_risk(resource_id: str) -> dict:
+async def get_resource_risk(resource_id: str) -> dict:
     """Return the aggregated risk profile for a specific resource.
 
     Path parameter:

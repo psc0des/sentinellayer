@@ -111,7 +111,7 @@ class ActionInterceptor:
     # Public API — Python entry point
     # ------------------------------------------------------------------
 
-    def intercept(self, action: ProposedAction) -> GovernanceVerdict:
+    async def intercept(self, action: ProposedAction) -> GovernanceVerdict:
         """Route a ProposedAction through the full governance pipeline.
 
         This is the main method.  Call it whenever an operational agent
@@ -143,7 +143,7 @@ class ActionInterceptor:
         )
 
         # Step 2 — run the four governance agents in parallel
-        verdict: GovernanceVerdict = self._pipeline.evaluate(action)
+        verdict: GovernanceVerdict = await self._pipeline.evaluate(action)
 
         # Step 3 — write the verdict to the audit trail
         self._tracker.record(verdict)
@@ -161,7 +161,7 @@ class ActionInterceptor:
     # Public API — MCP / dict entry point
     # ------------------------------------------------------------------
 
-    def intercept_from_dict(self, data: dict) -> dict:
+    async def intercept_from_dict(self, data: dict) -> dict:
         """MCP-compatible entry point — accepts a plain dict, returns a plain dict.
 
         MCP tools receive their arguments as JSON objects (which Python
@@ -206,7 +206,7 @@ class ActionInterceptor:
             raise ValueError(f"Invalid action data: {exc}") from exc
 
         # --- Step 2: run the full pipeline (same as intercept()) ---
-        verdict = self.intercept(action)
+        verdict = await self.intercept(action)
 
         # --- Step 3: return a flat, JSON-safe dict ---
         return self._format_verdict(verdict)

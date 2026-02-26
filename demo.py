@@ -19,6 +19,7 @@ Run from the project root:
     python demo.py
 """
 
+import asyncio
 import logging
 
 # Suppress noisy library INFO logs so the demo output is clean.
@@ -101,7 +102,7 @@ def _print_verdict(
 # ---------------------------------------------------------------------------
 
 
-def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
+async def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
     """Cost agent deletes idle disaster-recovery VM. Expect: DENIED."""
     action = ProposedAction(
         agent_id="cost-optimization-agent",
@@ -121,7 +122,7 @@ def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> Non
         urgency=Urgency.HIGH,
         projected_savings_monthly=847.0,
     )
-    verdict = pipeline.evaluate(action)
+    verdict = await pipeline.evaluate(action)
     tracker.record(verdict)
     _print_verdict(
         1,
@@ -131,7 +132,7 @@ def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> Non
     )
 
 
-def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
+async def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
     """SRE agent scales web tier D4 to D8 for traffic event. Expect: APPROVED."""
     action = ProposedAction(
         agent_id="monitoring-agent",
@@ -152,7 +153,7 @@ def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> Non
         ),
         urgency=Urgency.MEDIUM,
     )
-    verdict = pipeline.evaluate(action)
+    verdict = await pipeline.evaluate(action)
     tracker.record(verdict)
     _print_verdict(
         2,
@@ -162,7 +163,7 @@ def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> Non
     )
 
 
-def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
+async def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
     """Deploy agent opens port 8080 on nsg-east. Expect: ESCALATED."""
     action = ProposedAction(
         agent_id="deploy-agent",
@@ -180,7 +181,7 @@ def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> Non
         ),
         urgency=Urgency.MEDIUM,
     )
-    verdict = pipeline.evaluate(action)
+    verdict = await pipeline.evaluate(action)
     tracker.record(verdict)
     _print_verdict(
         3,
@@ -195,7 +196,7 @@ def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> Non
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+async def main() -> None:
     print()
     print(_header())
     print("       SentinelLayer -- AI Action Governance Demo")
@@ -215,9 +216,9 @@ def main() -> None:
     print("  Pipeline ready.")
     print()
 
-    scenario_1(pipeline, tracker)
-    scenario_2(pipeline, tracker)
-    scenario_3(pipeline, tracker)
+    await scenario_1(pipeline, tracker)
+    await scenario_2(pipeline, tracker)
+    await scenario_3(pipeline, tracker)
 
     print(f"\n{_bar()}")
     print("  Demo complete -- 3 scenarios evaluated.")
@@ -226,4 +227,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
