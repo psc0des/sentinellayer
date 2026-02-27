@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import settings as _default_settings
+from src.infrastructure.secrets import KeyVaultSecretResolver
 
 logger = logging.getLogger(__name__)
 
@@ -59,38 +60,44 @@ class AgentRegistry:
         self._cfg = cfg or _default_settings
         self._agents_dir: Path = agents_dir or _DEFAULT_AGENTS_DIR
 
-        # Determine whether to use local JSON mock or Cosmos DB
+        # Resolve Cosmos key first — same pattern as CosmosDecisionClient
+        _secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = _secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
+
+        # Determine whether to use local JSON mock or Cosmos DB.
+        # Mirrors CosmosDecisionClient: fall back to mock if key is missing.
         self._is_mock: bool = (
             self._cfg.use_local_mocks
             or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
         )
 
         if self._is_mock:
+            if not self._cfg.use_local_mocks and self._cfg.cosmos_endpoint and not self._cosmos_key:
+                logger.warning(
+                    "AgentRegistry: no COSMOS_KEY available — falling back to mock mode."
+                )
             self._agents_dir.mkdir(parents=True, exist_ok=True)
             logger.info(
                 "AgentRegistry: LOCAL MOCK mode (JSON files at %s)", self._agents_dir
             )
         else:
-            # Live Cosmos DB — reuse the same credentials pattern as CosmosDecisionClient
+            # Live Cosmos DB
             try:
                 from azure.cosmos import CosmosClient  # type: ignore[import]
-                from src.infrastructure.secrets import KeyVaultSecretResolver
 
-                secrets = KeyVaultSecretResolver(self._cfg)
-                cosmos_key = secrets.resolve(
-                    direct_value=self._cfg.cosmos_key,
-                    secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
-                    setting_name="COSMOS_KEY",
-                )
                 client = CosmosClient(
-                    url=self._cfg.cosmos_endpoint, credential=cosmos_key
+                    url=self._cfg.cosmos_endpoint, credential=self._cosmos_key
                 )
                 db = client.get_database_client(self._cfg.cosmos_database)
                 self._container = db.get_container_client("governance-agents")
                 logger.info(
                     "AgentRegistry: connected to Cosmos DB container 'governance-agents'"
                 )
-                self._is_mock = False
             except Exception as exc:
                 logger.warning(
                     "AgentRegistry: Cosmos DB unavailable (%s) — falling back to mock.",

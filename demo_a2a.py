@@ -34,8 +34,6 @@ from typing import Any
 
 import uvicorn
 
-# Use local mocks in the demo so no Azure credentials are needed
-os.environ.setdefault("USE_LOCAL_MOCKS", "true")
 os.environ.setdefault("A2A_SERVER_URL", "http://127.0.0.1:8765")
 
 from src.a2a.agent_registry import AgentRegistry
