@@ -230,7 +230,7 @@ class CostAgentA2AClient:
         from src.a2a.agent_registry import AgentRegistry
 
         registry = AgentRegistry()
-        registry.register_agent(self.AGENT_NAME, agent_card_url="")
+        registry.register_agent(self.AGENT_NAME, agent_card_url=self._server_url)
 
         proposals: list[ProposedAction] = await self._cost_agent.scan()
         logger.info("[%s] scanned %d proposals", self.AGENT_NAME, len(proposals))
@@ -282,7 +282,7 @@ class MonitoringAgentA2AClient:
         from src.a2a.agent_registry import AgentRegistry
 
         registry = AgentRegistry()
-        registry.register_agent(self.AGENT_NAME, agent_card_url="")
+        registry.register_agent(self.AGENT_NAME, agent_card_url=self._server_url)
 
         proposals: list[ProposedAction] = await self._monitoring_agent.scan()
         logger.info("[%s] scanned %d proposals", self.AGENT_NAME, len(proposals))
@@ -335,7 +335,7 @@ class DeployAgentA2AClient:
         from src.a2a.agent_registry import AgentRegistry
 
         registry = AgentRegistry()
-        registry.register_agent(self.AGENT_NAME, agent_card_url="")
+        registry.register_agent(self.AGENT_NAME, agent_card_url=self._server_url)
 
         proposals: list[ProposedAction] = await self._deploy_agent.scan()
         logger.info("[%s] scanned %d proposals", self.AGENT_NAME, len(proposals))

@@ -36,6 +36,7 @@ from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill, Part, TextPart
 from a2a.utils import new_agent_text_message
 
+from src.core.decision_tracker import DecisionTracker
 from src.core.models import GovernanceVerdict, ProposedAction
 from src.core.pipeline import SentinelLayerPipeline
 
@@ -138,6 +139,12 @@ class SentinelAgentExecutor(AgentExecutor):
 
         # ── Run the full governance pipeline (async, all 4 agents in parallel) ─
         verdict: GovernanceVerdict = await self._pipeline.evaluate(action)
+
+        # ── Write to audit trail so A2A decisions appear in /api/evaluations ─
+        try:
+            DecisionTracker().record(verdict)
+        except Exception as exc:
+            logger.warning("A2A: failed to record verdict to audit trail — %s", exc)
 
         sri = verdict.sentinel_risk_index.sri_composite
         decision = verdict.decision.value.upper()

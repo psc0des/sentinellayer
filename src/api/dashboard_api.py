@@ -296,7 +296,7 @@ async def get_agent_history(
 
     # Filter the audit trail for decisions from this agent
     tracker = _get_tracker()
-    all_records = tracker.get_recent(limit=200)
+    all_records = tracker.get_recent(limit=1000)
     agent_records = [
         r
         for r in all_records

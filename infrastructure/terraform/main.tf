@@ -206,6 +206,24 @@ resource "azurerm_cosmosdb_sql_container" "governance_decisions" {
   }
 }
 
+resource "azurerm_cosmosdb_sql_container" "governance_agents" {
+  name                = "governance-agents"
+  resource_group_name = azurerm_resource_group.sentinel.name
+  account_name        = azurerm_cosmosdb_account.sentinel.name
+  database_name       = azurerm_cosmosdb_sql_database.sentinellayer.name
+
+  partition_key_paths   = ["/agent_name"]
+  partition_key_version = 2
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+  }
+}
+
 # =============================================================================
 # 7. Key Vault secrets (service credentials)
 # =============================================================================
