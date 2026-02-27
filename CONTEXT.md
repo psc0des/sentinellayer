@@ -38,6 +38,89 @@ src/
 └── config.py                    # Environment config with SRI thresholds
 ```
 
+## How to Call SentinelLayer
+
+SentinelLayer can be called in three ways. All three paths converge at the same
+governance pipeline — same SRI™ scoring, same verdict, same audit trail.
+
+### 1. A2A (HTTP) — Enterprise / Multi-Service Pattern
+
+**Who uses it:** External AI agents running as separate services (microservices, Kubernetes pods, cloud-deployed agents).
+
+**How it works:** The external agent downloads SentinelLayer's Agent Card from
+`/.well-known/agent-card.json`, then sends a `ProposedAction` as an A2A task over HTTP.
+SentinelLayer streams SSE progress updates and returns a `GovernanceVerdict` artifact.
+
+**Entry point:** `src/a2a/sentinel_a2a_server.py`
+**Start:** `uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000`
+**Demo:** `python demo_a2a.py`
+
+```python
+# The external agent side (discovery + call)
+resolver = A2ACardResolver(http_client, "http://sentinel:8000")
+agent_card = await resolver.get_agent_card()
+client = A2AClient(httpx_client=http_client, agent_card=agent_card)
+async for event in client.send_message_streaming(request):
+    ...  # receive progress + GovernanceVerdict
+```
+
+### 2. MCP (stdio) — Developer / IDE Pattern
+
+**Who uses it:** AI tools like Claude Desktop, GitHub Copilot, or any MCP-compatible
+agent running on the same machine as SentinelLayer.
+
+**How it works:** The MCP host (e.g. Claude Desktop) launches SentinelLayer as a child
+process over stdio and calls `sentinel_evaluate_action` as a structured tool. No network
+required — communication is via stdin/stdout pipes.
+
+**Entry point:** `src/mcp_server/server.py`
+**Start:** `python -m src.mcp_server.server`
+
+```json
+// The MCP tool call (Claude Desktop sends this automatically)
+{
+  "tool": "sentinel_evaluate_action",
+  "arguments": {
+    "resource_id": "vm-23",
+    "action_type": "delete_resource",
+    "agent_id": "cost-optimization-agent",
+    "reason": "VM idle for 30 days"
+  }
+}
+```
+
+### 3. Direct Python — Local / Test Pattern
+
+**Who uses it:** Code inside the same codebase — `demo.py`, all unit tests,
+and any Python script that imports SentinelLayer directly.
+
+**How it works:** Instantiate the pipeline or interceptor and `await` it directly.
+No network, no process boundary, minimal overhead.
+
+**Entry point:** `src/core/pipeline.py` or `src/core/interception.py`
+**Demo:** `python demo.py`
+
+```python
+from src.core.pipeline import SentinelLayerPipeline
+
+pipeline = SentinelLayerPipeline()
+verdict = await pipeline.evaluate(action)  # same verdict as A2A or MCP
+print(verdict.decision.value)              # "approved" | "escalated" | "denied"
+```
+
+### Comparison
+
+| | A2A (HTTP) | MCP (stdio) | Direct Python |
+|---|---|---|---|
+| **Transport** | HTTP + SSE | stdin/stdout pipes | In-process function call |
+| **Discovery** | Agent Card at `/.well-known/agent-card.json` | MCP host config | Python import |
+| **Used by** | External agents (separate services) | Claude Desktop, Copilot, MCP hosts | demo.py, tests, same-codebase callers |
+| **Pattern** | Enterprise / microservices | Developer / IDE | Local development / testing |
+| **Streaming** | Yes — SSE progress updates | No | No |
+| **Example** | `demo_a2a.py` | Claude Desktop | `demo.py` + `tests/` |
+
+---
+
 ## Key Concepts
 
 ### Sentinel Risk Index (SRI™)

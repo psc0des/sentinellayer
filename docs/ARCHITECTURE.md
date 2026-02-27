@@ -40,6 +40,45 @@ GovernanceVerdict returned to caller
 
 ---
 
+## Three Ways to Call SentinelLayer
+
+All three paths converge at `SentinelLayerPipeline.evaluate()` — same SRI™ scoring,
+same verdict, same Cosmos DB audit trail.
+
+### 1. A2A (HTTP) — Enterprise / Multi-Service Pattern
+External AI agents running as separate services (microservices, Kubernetes pods).
+They discover SentinelLayer via the Agent Card, send `ProposedAction` tasks over HTTP,
+and receive streaming `GovernanceVerdict` results via SSE.
+
+- **Entry point:** `src/a2a/sentinel_a2a_server.py`
+- **Start:** `uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000`
+- **Demo:** `python demo_a2a.py`
+
+### 2. MCP (stdio) — Developer / IDE Pattern
+AI tools on the same machine (Claude Desktop, GitHub Copilot, any MCP host) call
+`sentinel_evaluate_action` as a structured MCP tool. Communication is via stdin/stdout
+pipes — no network, no port, no deployment required.
+
+- **Entry point:** `src/mcp_server/server.py`
+- **Start:** `python -m src.mcp_server.server`
+
+### 3. Direct Python — Local / Test Pattern
+Code in the same codebase calls the pipeline directly. No network, no process
+boundary — minimal overhead. Used by `demo.py` and all unit tests.
+
+- **Entry point:** `src/core/pipeline.py`
+- **Demo:** `python demo.py`
+
+| | A2A (HTTP) | MCP (stdio) | Direct Python |
+|---|---|---|---|
+| **Transport** | HTTP + SSE | stdin/stdout pipes | In-process call |
+| **Discovery** | Agent Card `/.well-known/agent-card.json` | MCP host config | Python import |
+| **Used by** | External agents (separate services) | Claude Desktop, Copilot | demo.py, tests |
+| **Pattern** | Enterprise / microservices | Developer / IDE | Local / testing |
+| **Streaming** | Yes — SSE progress updates | No | No |
+
+---
+
 ## Key Design Decisions
 
 1. **Async-first** — all agent `evaluate()` / `scan()` methods are `async def`. The pipeline uses
