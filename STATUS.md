@@ -177,6 +177,17 @@
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 - [x] Learning: `learning/19-dashboard-a2a.md`
 
+### SSE Event Unwrapping Fix (commit 72d5204)
+- [x] `src/a2a/operational_a2a_clients.py` — `A2AClient.send_message_streaming()`
+  yields `SendStreamingMessageResponse` objects, not raw events. The actual
+  `TaskStatusUpdateEvent` / `TaskArtifactUpdateEvent` is at `.root.result`.
+  Previous code checked `isinstance(event.root, TaskArtifactUpdateEvent)` which
+  was always False → `verdict_json` never set → `send_action_to_sentinel` always
+  returned `None` → `data/agents/` stayed empty → dashboard showed
+  "No A2A agents connected yet". Fix: added `result = getattr(root, "result", root)`
+  and switched isinstance checks to use `result`.
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+
 ### Phase 9 — Async-First Refactor
 - [x] **Issue 1 — async-first**: all 7 agent `evaluate()`/`scan()` methods → `async def`;
   `asyncio.run()` removed everywhere; callers use `await`
@@ -307,7 +318,7 @@ These are ideas, not commitments. Pick up from here:
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
 | `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write | Phase 10 bugfixes |
-| `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=` (not `http_client=`) | Runtime fixes |
+| `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats | Phase 10 |
 | `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints; uses `get_recent()` not `_load_all()` | Runtime fixes |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |

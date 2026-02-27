@@ -171,7 +171,11 @@ Operational Agent proposes action (ProposedAction)
   using `A2ACardResolver(httpx_client=..., base_url=...)` + `A2AClient` with
   `httpx.AsyncClient`. `agent_card_url=self._server_url` (was `""` — now a
   real URL). `httpx_client=` keyword is required by a2a-sdk==0.3.24 (was
-  incorrectly `http_client=`).
+  incorrectly `http_client=`). SSE event unwrapping: `A2AClient` yields
+  `SendStreamingMessageResponse`; the actual event is at `.root.result` —
+  code now uses `result = getattr(root, "result", root)` before isinstance
+  checks (was checking `.root` directly, so TaskArtifactUpdateEvent was
+  never reached and verdict_json was always None).
 - `src/a2a/agent_registry.py` — Tracks connected agents with governance stats
   (approval/denial/escalation counts). JSON mock in `data/agents/`, Cosmos DB
   container `governance-agents` (partition key `/name`) in live mode.
