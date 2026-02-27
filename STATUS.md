@@ -177,6 +177,20 @@
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 - [x] Learning: `learning/19-dashboard-a2a.md`
 
+### TaskUpdater Async Await Fix (commit 5094313)
+- [x] `src/a2a/sentinel_a2a_server.py` — Added `await` to all five `TaskUpdater`
+  calls in `SentinelAgentExecutor.execute()`. `submit()`, `start_work()`,
+  `add_artifact()`, and `complete()` are all `async def` in the a2a-sdk. Calling
+  them without `await` creates coroutine objects that Python silently discards
+  (no error raised). The artifact was never enqueued → client stream received no
+  `TaskArtifactUpdateEvent` → `verdict_json` stayed `None` → `send_action_to_sentinel`
+  returned `None` → `_update_registry()` never called → dashboard showed
+  "No A2A agents connected yet" even after all previous fixes.
+- [x] `tests/test_a2a.py` — Updated 3 `TestSentinelAgentExecutor` tests from
+  `updater_instance = MagicMock()` to `AsyncMock()`. `MagicMock` objects cannot be
+  `await`ed; `AsyncMock` supports both sync calls and `await` automatically.
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (20/20 A2A tests pass)
+
 ### AgentRegistry Cosmos Key + Demo Mock Fix (commit 3534d0e)
 - [x] `src/a2a/agent_registry.py` — `cosmos_key` now resolved before the `_is_mock`
   check, adding `or not self._cosmos_key` to the condition (mirrors `CosmosDecisionClient`
@@ -332,7 +346,7 @@ These are ideas, not commitments. Pick up from here:
 | `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
-| `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write | Phase 10 bugfixes |
+| `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write; all TaskUpdater calls awaited | TaskUpdater fix |
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints; uses `get_recent()` not `_load_all()` | Runtime fixes |

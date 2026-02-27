@@ -166,6 +166,10 @@ Operational Agent proposes action (ProposedAction)
   the existing governance pipeline, streaming SSE progress via `TaskUpdater`.
   `DecisionTracker().record(verdict)` called after every A2A evaluation so
   decisions appear in `/api/evaluations`, `/api/metrics`, and Cosmos DB.
+  **All `TaskUpdater` calls are `async def` and must be awaited**: `submit()`,
+  `start_work()`, `add_artifact()`, and `complete()` — calling without `await`
+  silently drops them (coroutine created but never executed), so the artifact
+  is never enqueued and the client stream receives no verdict.
 - `src/a2a/operational_a2a_clients.py` — Three A2A client wrappers
   (`CostAgentA2AClient`, `MonitoringAgentA2AClient`, `DeployAgentA2AClient`)
   using `A2ACardResolver(httpx_client=..., base_url=...)` + `A2AClient` with
