@@ -67,33 +67,40 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 ## Architecture
 
 ```mermaid
-flowchart TD
-    OPS["🤖 Operational Agents\nSRE · Cost · Deploy"] --> A2A["A2A (HTTP)\nport 8000 · SSE"]
-    OPS --> MCP["MCP (stdio)\nClaude Desktop · IDEs"]
-    OPS --> PY["Direct Python\npipeline.py · demo"]
+flowchart LR
+    OPS["Operational Agents<br/>SRE | Cost | Deploy"]
+    A2A["A2A HTTP Server<br/>port 8000 / SSE"]
+    MCP["MCP stdio Server<br/>Claude Desktop / IDEs"]
+    PY["Direct Python Entry<br/>demo.py"]
 
-    A2A --> CORE
-    MCP --> CORE
-    PY --> CORE
+    OPS --> A2A
+    OPS --> MCP
+    OPS --> PY
 
-    subgraph CORE["🛡️ SentinelLayer Core"]
+    subgraph CORE["SentinelLayer Core"]
         direction TB
-        EVAL["SentinelLayerPipeline.evaluate()"]
-        EVAL --> AGENTS
-        subgraph AGENTS["SRI™ Governance Agents (asyncio.gather)"]
+        PIPE["SentinelLayerPipeline.evaluate()"]
+
+        subgraph GOV["SRI Governance Agents (async)"]
             direction LR
-            BR["Blast Radius\nSRI:Infra\nweight: 0.30"]
-            POL["Policy & Compliance\nSRI:Policy\nweight: 0.25"]
-            HIST["Historical Pattern\nSRI:Historical\nweight: 0.25"]
-            FIN["Financial Impact\nSRI:Cost\nweight: 0.20"]
+            BR["Blast Radius<br/>weight 0.30"]
+            POL["Policy Compliance<br/>weight 0.25"]
+            HIST["Historical Pattern<br/>weight 0.25"]
+            FIN["Financial Impact<br/>weight 0.20"]
         end
-        AGENTS --> ENGINE["Governance Decision Engine\n≤25 ✅ APPROVED · 26–60 ⚠️ ESCALATED · >60 ❌ DENIED"]
-        ENGINE --> TRACKER["Decision Lineage Tracker\nImmutable audit trail · UUID per action"]
+
+        PIPE --> GOV
+        GOV --> ENGINE["Governance Decision Engine<br/>approved <= 25 | escalated 26-60 | denied > 60"]
+        ENGINE --> TRACKER["Decision Tracker<br/>immutable audit trail"]
     end
 
-    TRACKER --> DASH["📊 React Dashboard\nVite + FastAPI"]
-    TRACKER --> COSMOS["🗄️ Azure Cosmos DB\ngovernance-decisions\ngovernance-agents"]
-    TRACKER --> AZURE["☁️ Azure Services\nAI Foundry · AI Search · Key Vault"]
+    A2A --> PIPE
+    MCP --> PIPE
+    PY --> PIPE
+
+    TRACKER --> COSMOS["Azure Cosmos DB<br/>governance-decisions"]
+    TRACKER --> AZURE["Azure Services<br/>Foundry + AI Search + Key Vault"]
+    TRACKER --> DASH["Dashboard API + React UI"]
 ```
 
 ---
