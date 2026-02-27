@@ -4,9 +4,9 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-02-26 (Phase 9)
+**Last updated:** 2026-02-27 (Phase 10)
 **Active branch:** `main`
-**Demo verdict:** All 3 scenarios pass on live Azure (DENIED / APPROVED / ESCALATED)
+**Demo verdict:** All 3 A2A scenarios pass in mock mode (DENIED / APPROVED / ESCALATED)
 
 ---
 
@@ -25,11 +25,14 @@
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
-| Dashboard API | ✅ Complete | FastAPI REST |
+| Dashboard API | ✅ Complete | FastAPI REST (+ A2A agent endpoints) |
 | Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
 | Secret management | ✅ Complete | Key Vault + `DefaultAzureCredential` |
 | Live Azure wiring | ✅ Complete | All 3 services connected |
 | React dashboard | ✅ Complete | `dashboard/` (Vite + React, same repo) |
+| A2A Protocol server | ✅ Complete | `agent-framework-a2a` + `a2a-sdk` |
+| A2A operational clients | ✅ Complete | `A2ACardResolver` + `A2AClient` + `httpx` |
+| A2A agent registry | ✅ Complete | JSON (mock) / Cosmos DB (live) |
 
 ---
 
@@ -111,7 +114,28 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 9 — Async-First Refactor  ← LATEST
+### Phase 10 — A2A Protocol  ← LATEST
+- [x] `src/a2a/sentinel_a2a_server.py` — `SentinelAgentExecutor(AgentExecutor)` routes
+  tasks through the governance pipeline; streams progress via `TaskUpdater.new_agent_message()`;
+  returns `GovernanceVerdict` as A2A artifact. Agent Card at `/.well-known/agent-card.json`
+  with 3 skills: `evaluate_action`, `query_decision_history`, `get_resource_risk_profile`.
+- [x] `src/a2a/operational_a2a_clients.py` — `CostAgentA2AClient`, `MonitoringAgentA2AClient`,
+  `DeployAgentA2AClient` — each wraps the corresponding operational agent, uses
+  `A2ACardResolver` for discovery, `A2AClient.send_message_streaming()` for SSE transport,
+  `httpx.AsyncClient` for async HTTP.
+- [x] `src/a2a/agent_registry.py` — `AgentRegistry` persists agent stats to
+  `data/agents/` (mock) or Cosmos DB container `governance-agents` (live).
+  Methods: `register_agent()`, `get_connected_agents()`, `get_agent_stats()`, `update_agent_stats()`.
+- [x] `src/api/dashboard_api.py` — added `GET /api/agents` and `GET /api/agents/{name}/history`.
+- [x] `demo_a2a.py` — A2A end-to-end demo: server in background thread, 3 scenarios
+  (DENIED / APPROVED / ESCALATED), agent registry summary.
+- [x] `requirements.txt` — pinned `agent-framework-a2a==1.0.0b260225`, `a2a-sdk==0.3.24`,
+  `httpx==0.28.1`.
+- [x] `tests/test_a2a.py` — 20 tests: Agent Card, registry CRUD, executor (mock pipeline),
+  dashboard API endpoints.
+- [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+
+### Phase 9 — Async-First Refactor
 - [x] **Issue 1 — async-first**: all 7 agent `evaluate()`/`scan()` methods → `async def`;
   `asyncio.run()` removed everywhere; callers use `await`
 - [x] `src/core/pipeline.py` — `ThreadPoolExecutor` replaced with `asyncio.gather()`

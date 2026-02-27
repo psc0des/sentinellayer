@@ -23,6 +23,10 @@ src/
 │   └── models.py                # ALL Pydantic data models (READ THIS FIRST)
 ├── mcp_server/
 │   └── server.py                # Exposes governance tools via MCP
+├── a2a/                         # A2A Protocol layer (Phase 10)
+│   ├── sentinel_a2a_server.py   # SentinelLayer as A2A server (AgentExecutor + AgentCard)
+│   ├── operational_a2a_clients.py  # Operational agent A2A client wrappers
+│   └── agent_registry.py        # Tracks connected A2A agents with stats
 ├── infrastructure/              # Azure service clients (live + mock fallback)
 │   ├── resource_graph.py        # Azure Resource Graph (mock: seed_resources.json)
 │   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
@@ -30,7 +34,7 @@ src/
 │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints
+│   └── dashboard_api.py         # FastAPI REST endpoints (+ /api/agents Phase 10)
 └── config.py                    # Environment config with SRI thresholds
 ```
 
@@ -69,7 +73,26 @@ Operational Agent proposes action (ProposedAction)
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 9 — Async-First Refactor (current)**
+**Phase 10 — A2A Protocol (current)**
+
+- `src/a2a/sentinel_a2a_server.py` — SentinelLayer exposed as an A2A-compliant
+  server using `agent-framework-a2a` + `a2a-sdk`. Agent Card at
+  `/.well-known/agent-card.json`. `SentinelAgentExecutor` routes tasks through
+  the existing governance pipeline, streaming SSE progress via `TaskUpdater`.
+- `src/a2a/operational_a2a_clients.py` — Three A2A client wrappers
+  (`CostAgentA2AClient`, `MonitoringAgentA2AClient`, `DeployAgentA2AClient`)
+  using `A2ACardResolver` + `A2AClient` with `httpx.AsyncClient`.
+- `src/a2a/agent_registry.py` — Tracks connected agents with governance stats
+  (approval/denial/escalation counts). JSON mock in `data/agents/`, Cosmos DB
+  in live mode.
+- `src/api/dashboard_api.py` — New endpoints: `GET /api/agents`,
+  `GET /api/agents/{name}/history`.
+- `demo_a2a.py` — End-to-end A2A demo: server in background thread, 3
+  scenarios (DENIED / APPROVED / ESCALATED), agent registry summary.
+- **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+- MCP and direct Python pipeline continue to work unchanged.
+
+**Previous: Phase 9 — Async-First Refactor**
 
 - All 7 agent `evaluate()`/`scan()` methods are `async def` — safe to `await` from FastAPI, MCP, and async tests.
 - `pipeline.py` uses `asyncio.gather()` (replaced `ThreadPoolExecutor`) — all 4 governance agents run
@@ -85,7 +108,7 @@ Operational Agent proposes action (ProposedAction)
 - `DecisionTracker` delegates to `CosmosDecisionClient` — decisions persist to Cosmos DB.
 - `HistoricalPatternAgent` uses `AzureSearchClient` (BM25) in live mode; keyword matching in mock.
 
-**Previous: Phase 8 — Microsoft Agent Framework SDK**
+**Previous: Phase 8 — Microsoft Agent Framework SDK (via Phase 9)**
 
 - All 4 governance agents + all 3 operational agents rebuilt on `agent-framework-core`.
 - Each agent defines its rule-based logic as an `@af.tool`; GPT-4.1 calls the tool and synthesises reasoning.

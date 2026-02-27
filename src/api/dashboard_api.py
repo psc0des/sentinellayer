@@ -6,6 +6,8 @@ GET /api/evaluations              Recent governance decisions (newest-first).
 GET /api/evaluations/{id}         Full detail for one evaluation.
 GET /api/metrics                  Aggregate stats across all evaluations.
 GET /api/resources/{id}/risk      Risk profile for one resource.
+GET /api/agents                   List all connected A2A agents with stats.
+GET /api/agents/{name}/history    Recent action history for one A2A agent.
 
 Run
 ---
@@ -18,6 +20,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.a2a.agent_registry import AgentRegistry
 from src.config import settings
 from src.core.decision_tracker import DecisionTracker
 
@@ -48,6 +51,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 _tracker: DecisionTracker | None = None
+_registry: AgentRegistry | None = None
 
 
 def _get_tracker() -> DecisionTracker:
@@ -56,6 +60,14 @@ def _get_tracker() -> DecisionTracker:
     if _tracker is None:
         _tracker = DecisionTracker()
     return _tracker
+
+
+def _get_registry() -> AgentRegistry:
+    """Return the module-level agent registry singleton, creating it if needed."""
+    global _registry
+    if _registry is None:
+        _registry = AgentRegistry()
+    return _registry
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +245,69 @@ async def get_resource_risk(resource_id: str) -> dict:
             detail=f"No evaluations found for resource '{resource_id}'.",
         )
     return profile
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 5 — list connected A2A agents
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/agents")
+async def list_agents() -> dict:
+    """Return all A2A agents registered with SentinelLayer.
+
+    Each entry includes counters for approved, denied, and escalated
+    proposals so the dashboard can show per-agent governance stats.
+
+    Returns a list of agent entries sorted by most-recently-seen first.
+    """
+    registry = _get_registry()
+    agents = registry.get_connected_agents()
+    return {"count": len(agents), "agents": agents}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 6 — per-agent action history
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/agents/{agent_name}/history")
+async def get_agent_history(
+    agent_name: str,
+    limit: int = Query(default=10, ge=1, le=100, description="Max records to return"),
+) -> dict:
+    """Return the recent governance decision history for one A2A agent.
+
+    Path parameter:
+    - **agent_name**: the agent identifier (e.g. ``cost-optimization-agent``).
+
+    Uses ``DecisionTracker.get_recent()`` filtered to decisions where
+    ``agent_id`` matches the given name.
+
+    Returns 404 if the agent is not registered.
+    """
+    registry = _get_registry()
+    agent = registry.get_agent_stats(agent_name)
+    if agent is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{agent_name}' is not registered.",
+        )
+
+    # Filter the audit trail for decisions from this agent
+    tracker = _get_tracker()
+    all_records = tracker.get_recent(limit=200)
+    agent_records = [
+        r
+        for r in all_records
+        if r.get("agent_id") == agent_name or r.get("proposed_action", {}).get("agent_id") == agent_name
+    ]
+
+    return {
+        "agent": agent,
+        "history_count": len(agent_records[:limit]),
+        "history": agent_records[:limit],
+    }
 
 
 # ---------------------------------------------------------------------------
