@@ -212,7 +212,7 @@ resource "azurerm_cosmosdb_sql_container" "governance_agents" {
   account_name        = azurerm_cosmosdb_account.sentinel.name
   database_name       = azurerm_cosmosdb_sql_database.sentinellayer.name
 
-  partition_key_paths   = ["/agent_name"]
+  partition_key_paths   = ["/name"]
   partition_key_version = 2
 
   indexing_policy {

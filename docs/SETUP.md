@@ -18,7 +18,7 @@ Terraform in `infrastructure/terraform/` deploys:
 2. Azure AI Foundry account (`azurerm_ai_services`)
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1`)
 4. Azure AI Search
-5. Azure Cosmos DB (SQL API) — two containers: `governance-decisions` (partition `/resource_id`) and `governance-agents` (partition `/agent_name`)
+5. Azure Cosmos DB (SQL API) — two containers: `governance-decisions` (partition `/resource_id`) and `governance-agents` (partition `/name`)
 6. Azure Key Vault
 7. Azure Log Analytics
 

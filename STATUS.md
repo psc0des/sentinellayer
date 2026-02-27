@@ -139,13 +139,21 @@
 - [x] `src/a2a/sentinel_a2a_server.py` — `DecisionTracker().record(verdict)` added after
   `pipeline.evaluate()`; A2A verdicts now written to Cosmos DB audit trail (were silently dropped).
 - [x] `infrastructure/terraform/main.tf` — `azurerm_cosmosdb_sql_container "governance_agents"`
-  added with `partition_key_paths = ["/agent_name"]`; container now exists in Terraform.
+  added with `partition_key_paths = ["/name"]`; container now exists in Terraform.
 - [x] `src/a2a/operational_a2a_clients.py` — `agent_card_url=self._server_url` in all 3 clients
   (was `""` — empty string stored in registry).
 - [x] `src/api/dashboard_api.py` — `get_recent(limit=1000)` raised from 200; prevents
   silent record truncation before agent-name filtering.
 - [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
 - [x] Learning: `learning/20-a2a-bugfixes.md`
+
+### Partition Key Mismatch Fix (commit TBD)
+- [x] `infrastructure/terraform/main.tf` — `governance-agents` container partition key
+  corrected from `/agent_name` (field that never existed in documents) to `/name`
+  (matches the `"name"` field in every registry document and the `partition_key=name`
+  value passed by `_load_entry`). Option (b) chosen — zero Python changes required.
+- [x] `CONTEXT.md`, `STATUS.md`, `docs/SETUP.md` — docs updated to `/name`
+- [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
 
 ### Phase 9 — Async-First Refactor
 - [x] **Issue 1 — async-first**: all 7 agent `evaluate()`/`scan()` methods → `async def`;

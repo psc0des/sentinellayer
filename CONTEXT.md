@@ -172,7 +172,7 @@ Operational Agent proposes action (ProposedAction)
   `agent_card_url=self._server_url` (was `""` — now a real URL).
 - `src/a2a/agent_registry.py` — Tracks connected agents with governance stats
   (approval/denial/escalation counts). JSON mock in `data/agents/`, Cosmos DB
-  container `governance-agents` (partition key `/agent_name`) in live mode.
+  container `governance-agents` (partition key `/name`) in live mode.
 - `src/api/dashboard_api.py` — New endpoints: `GET /api/agents`,
   `GET /api/agents/{name}/history`. Agent history pre-fetch raised to
   `limit=1000` (was 200, which silently truncated high-volume agents).
