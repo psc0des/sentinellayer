@@ -110,7 +110,7 @@ async def get_evaluation(evaluation_id: str) -> dict:
 
     Returns 404 if the ID is not found in the local audit trail.
     """
-    for record in _get_tracker()._load_all():
+    for record in _get_tracker().get_recent(limit=10_000):
         if record.get("action_id") == evaluation_id:
             return record
     raise HTTPException(
@@ -136,7 +136,7 @@ async def get_metrics() -> dict:
     - Top 5 most-violated policies
     - Top 5 most-evaluated resources
     """
-    records = _get_tracker()._load_all()
+    records = _get_tracker().get_recent(limit=10_000)
 
     if not records:
         return {
