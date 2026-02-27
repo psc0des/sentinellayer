@@ -78,6 +78,43 @@ python demo.py        # direct Python pipeline demo (3 scenarios)
 python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
 ```
 
+## Optional: Deploy Mini Production Environment
+
+`infrastructure/terraform-prod/` creates 5 real Azure resources that SentinelLayer governs
+in live demos — turning mock IDs into actual Azure resource IDs on the dashboard.
+
+```bash
+cd infrastructure/terraform-prod
+cp terraform.tfvars.example terraform.tfvars
+# Fill in: subscription_id, suffix (e.g. "abc1234"), vm_admin_password, alert_email
+terraform init
+terraform apply
+
+# After apply — paste real IDs into data/seed_resources.json:
+terraform output seed_resources_ids
+
+# Before each demo — start the VMs (auto-shutdown stops them at 22:00 UTC):
+az vm start --resource-group sentinel-prod-rg --name vm-dr-01
+az vm start --resource-group sentinel-prod-rg --name vm-web-01
+
+# After demo — destroy to avoid charges (~$0.35/day while VMs run):
+terraform destroy
+```
+
+Resources created and their governance roles:
+
+| Resource | Demo Scenario | Expected Verdict |
+|---|---|---|
+| `vm-dr-01` (B1s) | Cost agent proposes DELETE (idle DR VM) | DENIED — `disaster-recovery=true` policy |
+| `vm-web-01` (B1s) | SRE agent proposes SCALE UP (CPU >80%) | APPROVED — safe action |
+| `payment-api-prod` (App Service F1) | Critical dependency of vm-web-01 | Raises blast radius score |
+| `nsg-east-prod` (NSG) | Deploy agent proposes open port 8080 | ESCALATED — affects all governed workloads |
+| `sentinelprod{suffix}` (Storage) | Shared dependency of all three above | Deletion → high blast radius |
+
+See `infrastructure/terraform-prod/README.md` for full detail including cost estimates.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

@@ -135,6 +135,8 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 ## Azure Services (live mode)
 
+### Governance Infrastructure (`infrastructure/terraform/`)
+
 | Service | Used by | Config var |
 |---|---|---|
 | Azure OpenAI / GPT-4.1 | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` |
@@ -144,6 +146,19 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files
 and in-memory logic — no cloud connection needed.
+
+### Governed Resources (`infrastructure/terraform-prod/`)
+
+The resources that SentinelLayer **governs** in live demos. These are the targets of operational
+agent actions — not the governance system itself.
+
+| Resource | Type | Governance Scenario |
+|---|---|---|
+| `vm-dr-01` | Linux VM B1s | DENIED — `disaster-recovery=true` policy |
+| `vm-web-01` | Linux VM B1s | APPROVED — safe CPU-triggered scale-up |
+| `payment-api-prod` | App Service F1 | Critical dependency (raises blast radius) |
+| `nsg-east-prod` | Network Security Group | ESCALATED — port 8080 open affects all governed VMs |
+| `sentinelprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |
 
 ---
 
@@ -199,6 +214,21 @@ data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── policies.json              # 6 governance policies
 ├── seed_incidents.json        # 7 historical incidents
-└── seed_resources.json        # Azure resource topology mock
+└── seed_resources.json        # Azure resource topology (see note below)
+infrastructure/
+├── terraform/                 # Main infra — Foundry, Search, Cosmos, Key Vault
+└── terraform-prod/            # Mini prod env — VMs, NSG, storage, App Service, alerts
 dashboard/                     # Vite + React frontend
 ```
+
+### seed_resources.json — Two Sections
+
+`data/seed_resources.json` contains two groups of resources:
+
+1. **Mini prod resources** (sentinel-prod-rg) — `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
+   `nsg-east-prod`, `sentinelproddata`. These match `infrastructure/terraform-prod/` exactly.
+   After `terraform apply`, replace `YOUR-SUBSCRIPTION-ID` with your real subscription ID.
+   Each has a specific governance scenario (DENIED / APPROVED / ESCALATED).
+
+2. **Legacy mock resources** — `vm-23`, `api-server-03`, `web-tier-01`, `nsg-east`, `aks-prod`,
+   `storageshared01`. These are referenced by all unit tests and must not be removed.

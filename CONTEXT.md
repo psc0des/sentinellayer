@@ -151,14 +151,32 @@ Operational Agent proposes action (ProposedAction)
 2. `src/config.py` — SRI thresholds and weights are configurable here.
 3. `data/policies.json` — 6 governance policies for PolicyComplianceAgent.
 4. `data/seed_incidents.json` — 7 past incidents for HistoricalPatternAgent.
-5. `data/seed_resources.json` — Mock Azure resource topology with dependencies.
+5. `data/seed_resources.json` — Azure resource topology. Contains two sections:
+   - **Mini prod resources** (`sentinel-prod-rg`): `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
+     `nsg-east-prod`, `sentinelproddata` — matches `infrastructure/terraform-prod/` deployment.
+   - **Legacy mock resources**: `vm-23`, `api-server-03`, `nsg-east`, `aks-prod`, `storageshared01`
+     — kept for test compatibility (all unit tests reference these names).
 6. `src/a2a/sentinel_a2a_server.py` — A2A entry point: `SentinelAgentExecutor` + `AgentCard`.
 7. `src/a2a/agent_registry.py` — Agent registry: tracks connected agents and their stats.
+8. `infrastructure/terraform-prod/` — Mini production environment for live demos. Deploy these
+   resources so SentinelLayer governs real Azure VMs instead of purely mock data.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 10 — A2A Protocol + Bug Fixes (current)**
+**Phase 11 — Mini Production Environment (current)**
+
+- `infrastructure/terraform-prod/` — Terraform config that creates 5 real Azure resources in
+  `sentinel-prod-rg` for live hackathon demos: `vm-dr-01` (DENIED scenario), `vm-web-01`
+  (APPROVED scenario), `payment-api-prod` (critical dependency), `nsg-east-prod` (ESCALATED
+  scenario), shared storage `sentinelprod{suffix}`. Auto-shutdown at 22:00 UTC on both VMs.
+  Azure Monitor alerts: CPU >80% on `vm-web-01`, heartbeat on `vm-dr-01`.
+- `data/seed_resources.json` updated: real `sentinel-prod-rg` resource IDs added alongside
+  legacy mock resources. Replace `YOUR-SUBSCRIPTION-ID` with your subscription ID after
+  running `terraform apply` in `infrastructure/terraform-prod/`.
+- **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+
+**Previous: Phase 10 — A2A Protocol + Bug Fixes**
 
 - `src/a2a/sentinel_a2a_server.py` — SentinelLayer exposed as an A2A-compliant
   server using `agent-framework-a2a` + `a2a-sdk`. Agent Card at

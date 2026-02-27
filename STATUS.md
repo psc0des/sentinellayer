@@ -27,6 +27,7 @@
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
 | Dashboard API | ✅ Complete | FastAPI REST (+ A2A agent endpoints) |
 | Azure infrastructure (Terraform) | ✅ Deployed | Foundry · Search · Cosmos · KV |
+| Mini prod environment (Terraform) | ✅ Complete | `infrastructure/terraform-prod/` |
 | Secret management | ✅ Complete | Key Vault + `DefaultAzureCredential` |
 | Live Azure wiring | ✅ Complete | All 3 services connected |
 | React dashboard | ✅ Complete | `dashboard/` (Vite + React, same repo) |
@@ -114,7 +115,38 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 10 — A2A Protocol  ← LATEST
+### Phase 11 — Mini Production Environment  ← LATEST
+- [x] `infrastructure/terraform-prod/main.tf` — 14 Azure resources in `sentinel-prod-rg`:
+  - `vm-dr-01` (Standard_B1s, Ubuntu) — idle DR VM; cost agent → `DELETE` → **DENIED**
+    (tags: `disaster-recovery=true`, `environment=production`, `owner=platform-team`, `cost-center=infrastructure`)
+  - `vm-web-01` (Standard_B1s, Ubuntu) — active web server; SRE agent → `SCALE_UP` → **APPROVED**
+    (tags: `tier=web`, `environment=production`, `owner=web-team`, `cost-center=frontend`)
+  - `payment-api-prod-{suffix}` (App Service Free F1) — payment microservice; `critical=true`
+    dependency of vm-web-01 that raises blast radius for any web-tier action
+  - `nsg-east-prod` (NSG, HTTP/HTTPS allow) — deploy agent → open port 8080 → **ESCALATED**
+    (affects all workloads behind subnet gateway; tags: `managed-by=platform-team`)
+  - `sentinelprod{suffix}` (Storage LRS) — shared dependency for all three resources
+  - Auto-shutdown at 22:00 UTC on both VMs (saves ~$1/day between demo runs)
+  - CPU metric alert on `vm-web-01` (>80%, 15-min window) — triggers monitoring agent
+  - Heartbeat scheduled-query alert on `vm-dr-01` (no heartbeat in 15 min) — triggers cost agent
+  - Log Analytics workspace + Monitor action group backing both alerts
+- [x] `infrastructure/terraform-prod/variables.tf` — 6 variables: `subscription_id`, `location`,
+  `suffix` (regex-validated, drives globally-unique names), `vm_admin_username`,
+  `vm_admin_password` (sensitive, 12-char min), `alert_email`
+- [x] `infrastructure/terraform-prod/outputs.tf` — all resource IDs, names, tags, IPs,
+  App Service URL, `seed_resources_ids` helper output for updating `data/seed_resources.json`
+- [x] `infrastructure/terraform-prod/terraform.tfvars.example` — template with all placeholders
+- [x] `infrastructure/terraform-prod/README.md` — governance scenario SRI score breakdowns,
+  deploy/destroy commands, cost table (~$0.35/day with auto-shutdown), agent install note
+- [x] `data/seed_resources.json` — new `sentinel-prod-rg` resources added with real Azure ID paths
+  (placeholder subscription ID until `terraform apply`). Legacy mock resources (`vm-23`,
+  `api-server-03`, `nsg-east`, etc.) **kept** for test compatibility.
+- [x] `.gitignore` — `infrastructure/terraform-prod/` tfstate and tfvars entries added
+- [x] `learning/21-mini-prod-environment.md` — IaC concepts, tagging strategy, auto-shutdown
+  cost math, full governance scenario walkthrough for a non-programmer audience (gitignored)
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (seed_resources still has all legacy names)
+
+### Phase 10 — A2A Protocol
 - [x] `src/a2a/sentinel_a2a_server.py` — `SentinelAgentExecutor(AgentExecutor)` routes
   tasks through the governance pipeline; streams progress via `TaskUpdater.new_agent_message()`;
   returns `GovernanceVerdict` as A2A artifact. Agent Card at `/.well-known/agent-card.json`
@@ -351,6 +383,10 @@ These are ideas, not commitments. Pick up from here:
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints; uses `get_recent()` not `_load_all()` | Runtime fixes |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
+| `infrastructure/terraform-prod/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |
+| `infrastructure/terraform-prod/outputs.tf` | Exports all resource IDs, names, tags, URLs | Phase 11 |
+| `infrastructure/terraform-prod/variables.tf` | Input variables incl. sensitive vm_admin_password | Phase 11 |
+| `data/seed_resources.json` | Azure resource topology — sentinel-prod-rg resources + legacy mocks | Phase 11 |
 | `dashboard/src/App.jsx` | Root component — fetchAll, setInterval, ConnectedAgents, LiveActivityFeed | Runtime fixes |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid with online status + bar chart (NEW) | Runtime fixes |
 | `dashboard/src/components/LiveActivityFeed.jsx` | Real-time evaluation feed with relative timestamps (NEW) | Runtime fixes |
