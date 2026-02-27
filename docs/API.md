@@ -169,6 +169,106 @@ All endpoints are `async def` (FastAPI manages the event loop).
 
 ---
 
+## A2A Agent Endpoints (Phase 10)
+
+Added to `src/api/dashboard_api.py`.
+
+### `GET /api/agents`
+
+List all operational agents connected to SentinelLayer via the A2A protocol,
+sorted by most-recently-seen first.
+
+**Response:**
+```json
+{
+  "count": 3,
+  "agents": [
+    {
+      "name": "cost-optimization-agent",
+      "agent_card_url": "",
+      "registered_at": "2026-02-27T10:00:00Z",
+      "last_seen": "2026-02-27T10:05:00Z",
+      "total_actions_proposed": 5,
+      "approval_count": 2,
+      "denial_count": 2,
+      "escalation_count": 1
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/agents/{agent_name}/history`
+
+Return recent governance decisions for one A2A agent.
+
+**Path parameter:** `agent_name` — e.g. `cost-optimization-agent`.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `limit` | int | 10 | Max records (1–100) |
+
+**Response:**
+```json
+{
+  "agent": { "name": "cost-optimization-agent", "total_actions_proposed": 5, ... },
+  "history_count": 3,
+  "history": [ { "action_id": "...", "decision": "denied", ... } ]
+}
+```
+
+Returns **404** if the agent is not registered.
+
+---
+
+## A2A Protocol Endpoints (Phase 10)
+
+Served by `src/a2a/sentinel_a2a_server.py`.
+Start with: `uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000`
+(or set `A2A_SERVER_URL` env var for a custom URL).
+
+### `GET /.well-known/agent-card.json`
+
+Returns the A2A Agent Card — machine-readable capabilities advertisement.
+
+```json
+{
+  "name": "SentinelLayer Governance Engine",
+  "description": "AI Action Governance — evaluates proposed infrastructure actions using SRI™ scoring.",
+  "version": "1.0.0",
+  "url": "http://localhost:8000",
+  "capabilities": { "streaming": true },
+  "skills": [
+    { "id": "evaluate_action", ... },
+    { "id": "query_decision_history", ... },
+    { "id": "get_resource_risk_profile", ... }
+  ]
+}
+```
+
+`/.well-known/agent.json` is also served as a legacy alias.
+
+### `POST /` — A2A task submission (streaming)
+
+Send a `ProposedAction` JSON string as the message text using JSON-RPC
+`tasks/sendSubscribe`. Receive SSE progress then a `GovernanceVerdict` artifact.
+
+**SSE progress stream:**
+```
+"Evaluating blast radius..."
+"Checking policy compliance..."
+"Querying historical incidents..."
+"Calculating financial impact..."
+"SRI Composite: 74.0 → DENIED"
+```
+
+**Final artifact:** full `GovernanceVerdict` JSON (same shape as MCP output above).
+
+---
+
 ## Direct Python API
 
 For code that imports SentinelLayer directly (not via MCP):

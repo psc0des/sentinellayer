@@ -45,7 +45,12 @@ GovernanceVerdict returned to caller
    `asyncio.gather()` so all 4 governance agents run concurrently without nested event loops.
    Safe under FastAPI, MCP server (FastMCP), and async test runners.
 
-2. **MCP as interception layer** — `sentinel_evaluate_action` is a standard MCP tool; any
+2. **A2A as the network protocol layer** — `src/a2a/sentinel_a2a_server.py` exposes
+   SentinelLayer as an A2A-compliant HTTP server. Any A2A-capable agent discovers it via
+   `/.well-known/agent-card.json`, sends `ProposedAction` tasks, and receives streaming
+   `GovernanceVerdict` results via SSE. Existing MCP and direct Python paths are unchanged.
+
+3. **MCP as interception layer** — `sentinel_evaluate_action` is a standard MCP tool; any
    MCP-capable agent (Claude Desktop, Copilot, custom agents) can call SentinelLayer without
    SDK changes.
 
@@ -102,6 +107,34 @@ and in-memory logic — no cloud connection needed.
 
 ---
 
+## A2A Protocol Flow (Phase 10)
+
+```
+Operational Agent (A2A Client)          SentinelLayer (A2A Server)
+       │                                        │
+       │  GET /.well-known/agent-card.json      │
+       │ ─────────────────────────────────────► │
+       │  ← Agent Card (name, skills, url)      │
+       │                                        │
+       │  POST /  tasks/sendSubscribe            │
+       │  (ProposedAction JSON as TextPart)      │
+       │ ─────────────────────────────────────► │
+       │  ← SSE: "Evaluating blast radius..."   │
+       │  ← SSE: "Checking policy..."           │
+       │  ← SSE: "SRI Composite: 74.0 → DENIED" │
+       │  ← ARTIFACT: GovernanceVerdict JSON    │
+       │  ← TASK COMPLETE                       │
+       │                                        │
+       ▼                                        ▼
+AgentRegistry.update_agent_stats()    DecisionTracker.record()
+(data/agents/ or Cosmos DB)           (data/decisions/ or Cosmos DB)
+```
+
+All three paths — A2A, MCP, and direct Python — converge at
+`SentinelLayerPipeline.evaluate()`. No governance logic was duplicated.
+
+---
+
 ## File Map
 
 ```
@@ -114,11 +147,16 @@ src/
 │   └── interception.py        # ActionInterceptor façade (async)
 ├── governance_agents/         # 4 governors — all async def evaluate()
 ├── operational_agents/        # 3 governed agents — all async def scan()
+├── a2a/                       # A2A Protocol layer (Phase 10)
+│   ├── sentinel_a2a_server.py # A2A server — AgentCard + SentinelAgentExecutor
+│   ├── operational_a2a_clients.py # A2A client wrappers for 3 operational agents
+│   └── agent_registry.py     # Tracks connected agents + stats
 ├── mcp_server/server.py       # FastMCP stdio — sentinel_evaluate_action (async)
-├── api/dashboard_api.py       # FastAPI REST — 4 async endpoints
+├── api/dashboard_api.py       # FastAPI REST — 6 async endpoints (+ /api/agents)
 ├── infrastructure/            # Azure clients with mock fallback
 └── config.py                  # SRI thresholds + env vars
 data/
+├── agents/                    # A2A agent registry (mock mode)
 ├── policies.json              # 6 governance policies
 ├── seed_incidents.json        # 7 historical incidents
 └── seed_resources.json        # Azure resource topology mock
