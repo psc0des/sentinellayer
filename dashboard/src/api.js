@@ -36,3 +36,10 @@ export async function fetchResourceRisk(resourceId) {
   if (!res.ok) throw new Error(`No risk data found for "${resourceId}"`)
   return res.json()
 }
+
+/** Fetch all connected A2A agents with their governance stats. */
+export async function fetchAgents() {
+  const res = await fetch(`${BASE}/agents`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch agents`)
+  return res.json()
+}

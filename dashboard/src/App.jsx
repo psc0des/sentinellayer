@@ -1,21 +1,26 @@
 /**
  * App.jsx — root component of the SentinelLayer Governance Dashboard.
  *
- * Layout:
+ * Layout (top to bottom):
  *   Header
- *   MetricsBar   (4 stat cards)
- *   SRIGauge  |  DecisionTable   (side by side)
- *   EvaluationDetail              (appears when a row is selected)
+ *   ConnectedAgents  (A2A agent cards — new)
+ *   MetricsBar       (4 stat cards)
+ *   SRIGauge  |  DecisionTable   (side by side, gauge shows triggering agent)
+ *   LiveActivityFeed (real-time evaluation stream — new)
+ *   EvaluationDetail (appears when a table row is selected)
  *
  * Data is fetched from the FastAPI backend at http://localhost:8000/api/.
+ * A silent background refresh runs every 5 seconds to keep the feed current.
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { fetchEvaluations, fetchMetrics } from './api'
-import MetricsBar from './components/MetricsBar'
-import SRIGauge from './components/SRIGauge'
-import DecisionTable from './components/DecisionTable'
-import EvaluationDetail from './components/EvaluationDetail'
+import { fetchEvaluations, fetchMetrics, fetchAgents } from './api'
+import MetricsBar        from './components/MetricsBar'
+import SRIGauge          from './components/SRIGauge'
+import DecisionTable     from './components/DecisionTable'
+import EvaluationDetail  from './components/EvaluationDetail'
+import ConnectedAgents   from './components/ConnectedAgents'
+import LiveActivityFeed  from './components/LiveActivityFeed'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -58,31 +63,65 @@ function ErrorScreen({ message, onRetry }) {
 
 export default function App() {
   const [evaluations, setEvaluations] = useState([])
-  const [metrics, setMetrics]         = useState(null)
-  const [selected, setSelected]       = useState(null)
-  const [loading, setLoading]         = useState(true)
-  const [error, setError]             = useState(null)
+  const [metrics,     setMetrics]     = useState(null)
+  const [agents,      setAgents]      = useState([])
+  const [selected,    setSelected]    = useState(null)
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState(null)
 
+  /**
+   * fetchAll — fetches evaluations, metrics, and agents in parallel.
+   *
+   * This is extracted so it can be called both from the initial load
+   * (which shows the loading spinner) and from the background interval
+   * (which runs silently without touching loading/error state).
+   *
+   * useCallback with [] means this function is created once and never
+   * recreated — it's stable, so setInterval always calls the same reference.
+   * React guarantees that state setters (setEvaluations etc.) are stable too.
+   */
+  const fetchAll = useCallback(async () => {
+    const [evalsData, metricsData, agentsData] = await Promise.all([
+      fetchEvaluations(50),   // up to 50 for the Live Activity Feed
+      fetchMetrics(),
+      fetchAgents(),
+    ])
+    setEvaluations(evalsData.evaluations ?? [])
+    setMetrics(metricsData)
+    setAgents(agentsData.agents ?? [])
+  }, [])
+
+  /**
+   * load — initial fetch with loading indicator and error handling.
+   * Called on mount and by the manual Refresh button.
+   */
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      // Fetch evaluations and metrics in parallel — Promise.all waits for both
-      const [evalsData, metricsData] = await Promise.all([
-        fetchEvaluations(20),
-        fetchMetrics(),
-      ])
-      setEvaluations(evalsData.evaluations ?? [])
-      setMetrics(metricsData)
+      await fetchAll()
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [fetchAll])
 
-  // Fetch on first render
+  // Fetch data on first render
   useEffect(() => { load() }, [load])
+
+  /**
+   * Silent background refresh every 5 seconds.
+   * Errors are swallowed so a momentary network hiccup doesn't kill the UI.
+   * The cleanup function (return () => clearInterval) runs when the component
+   * unmounts so the interval doesn't leak.
+   */
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try { await fetchAll() } catch { /* ignore transient errors */ }
+    }, 5_000)
+    return () => clearInterval(id)
+  }, [fetchAll])
 
   if (loading) return <LoadingScreen />
   if (error)   return <ErrorScreen message={error} onRetry={load} />
@@ -127,13 +166,16 @@ export default function App() {
       {/* ── Main content ── */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* Metrics summary bar */}
+        {/* ① Connected Agents — at the top as required */}
+        <ConnectedAgents agents={agents} />
+
+        {/* ② Metrics summary bar */}
         {metrics && <MetricsBar metrics={metrics} />}
 
-        {/* Gauge + Decision table */}
+        {/* ③ SRI Gauge + Decision table */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* SRI Gauge panel */}
+          {/* SRI Gauge panel — updated to show which agent triggered latest eval */}
           <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col items-center justify-center gap-4">
             <h2 className="self-start text-xs font-semibold text-slate-400 uppercase tracking-widest">
               Latest Evaluation
@@ -141,18 +183,24 @@ export default function App() {
 
             <SRIGauge score={latestScore} />
 
-            {latestEval && (
-              <div className="text-center">
+            {latestEval ? (
+              <div className="text-center space-y-0.5">
+                {/* Resource name */}
                 <p className="text-sm font-mono font-medium text-slate-300">
                   {latestEval.resource_id?.split('/').filter(Boolean).pop()}
                 </p>
-                <p className="text-xs text-slate-500 mt-0.5">
+                {/* Action type */}
+                <p className="text-xs text-slate-500">
                   {latestEval.action_type?.replace(/_/g, ' ')}
                 </p>
+                {/* Triggering agent — NEW */}
+                {latestEval.agent_id && (
+                  <p className="text-xs text-blue-400 font-mono pt-0.5">
+                    via {latestEval.agent_id}
+                  </p>
+                )}
               </div>
-            )}
-
-            {!latestEval && (
+            ) : (
               <p className="text-xs text-slate-500 text-center">
                 No evaluations yet — run the demo to populate data.
               </p>
@@ -169,7 +217,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* Evaluation detail (shown when a row is selected) */}
+        {/* ④ Live Activity Feed */}
+        <LiveActivityFeed evaluations={evaluations} />
+
+        {/* ⑤ Evaluation detail (shown when a row is selected) */}
         {selected && (
           <EvaluationDetail
             evaluation={selected}
