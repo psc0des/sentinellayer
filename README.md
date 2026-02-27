@@ -72,17 +72,21 @@ flowchart LR
     A2A["A2A HTTP Server<br/>port 8000 / SSE"]
     MCP["MCP stdio Server<br/>Claude Desktop / IDEs"]
     PY["Direct Python Entry<br/>demo.py"]
+    IN["Unified Request Input"]
 
     OPS --> A2A
     OPS --> MCP
     OPS --> PY
+    A2A --> IN
+    MCP --> IN
+    PY --> IN
 
     subgraph CORE["SentinelLayer Core"]
         direction TB
         PIPE["SentinelLayerPipeline.evaluate()"]
 
-        subgraph GOV["SRI Governance Agents (async)"]
-            direction LR
+        subgraph GOV["SRI Governance Agents"]
+            direction TB
             BR["Blast Radius<br/>weight 0.30"]
             POL["Policy Compliance<br/>weight 0.25"]
             HIST["Historical Pattern<br/>weight 0.25"]
@@ -94,13 +98,13 @@ flowchart LR
         ENGINE --> TRACKER["Decision Tracker<br/>immutable audit trail"]
     end
 
-    A2A --> PIPE
-    MCP --> PIPE
-    PY --> PIPE
+    IN --> PIPE
 
-    TRACKER --> COSMOS["Azure Cosmos DB<br/>governance-decisions"]
-    TRACKER --> AZURE["Azure Services<br/>Foundry + AI Search + Key Vault"]
-    TRACKER --> DASH["Dashboard API + React UI"]
+    OUT["Storage + Integrations"]
+    TRACKER --> OUT
+    OUT --> COSMOS["Azure Cosmos DB<br/>governance-decisions"]
+    OUT --> AZURE["Azure Services<br/>Foundry + AI Search + Key Vault"]
+    OUT --> DASH["Dashboard API + React UI"]
 ```
 
 ---
