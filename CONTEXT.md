@@ -179,6 +179,11 @@ Operational Agent proposes action (ProposedAction)
 - `src/a2a/agent_registry.py` — Tracks connected agents with governance stats
   (approval/denial/escalation counts). JSON mock in `data/agents/`, Cosmos DB
   container `governance-agents` (partition key `/name`) in live mode.
+  `cosmos_key` is now resolved **before** the `_is_mock` decision (mirrors
+  `CosmosDecisionClient`): `_is_mock = use_local_mocks or not endpoint or not key`.
+  Previously the key was resolved inside the `try` block but not checked — so the
+  registry entered live mode with an empty key, then `_save_entry()` failed with
+  no try/except and agents were silently dropped.
 - `src/api/dashboard_api.py` — New endpoints: `GET /api/agents`,
   `GET /api/agents/{name}/history`. Agent history pre-fetch raised to
   `limit=1000` (was 200). Internal: `get_recent(limit=10_000)` used for
@@ -188,6 +193,9 @@ Operational Agent proposes action (ProposedAction)
   added alongside `governance-decisions`.
 - `demo_a2a.py` — End-to-end A2A demo: server in background thread, 3
   scenarios (DENIED / APPROVED / ESCALATED), agent registry summary.
+  `os.environ.setdefault("USE_LOCAL_MOCKS", "true")` removed — demo now
+  reads `USE_LOCAL_MOCKS` from `.env` like every other process (setdefault
+  was silently overriding `.env` because it always ran before dotenv loading).
 - **Test result: 398 passed, 10 xfailed, 0 failed** ✅
   (17 previously-xfailed dashboard tests promoted to passing after `_load_all`
   fix; 10 remaining xfails are `TestRecord` tests about `tracker._dir`.)

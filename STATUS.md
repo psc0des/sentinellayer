@@ -177,6 +177,21 @@
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 - [x] Learning: `learning/19-dashboard-a2a.md`
 
+### AgentRegistry Cosmos Key + Demo Mock Fix (commit 3534d0e)
+- [x] `src/a2a/agent_registry.py` — `cosmos_key` now resolved before the `_is_mock`
+  check, adding `or not self._cosmos_key` to the condition (mirrors `CosmosDecisionClient`
+  exactly). Previously the key was resolved inside the live-mode `try` block but not
+  guarded — registry entered live mode with an empty key, `_save_entry()` called
+  `container.upsert_item()`, Cosmos rejected with auth error, exception propagated with
+  no catch → all agent writes silently dropped → dashboard showed "No A2A agents connected".
+  `CosmosDecisionClient` always had this guard and fell to mock correctly; now both clients
+  behave identically.
+- [x] `demo_a2a.py` — removed `os.environ.setdefault("USE_LOCAL_MOCKS", "true")`.
+  `setdefault` only writes if the key is absent; because Python loads imports before
+  dotenv files, the setdefault always fired first and forced mock mode regardless of what
+  `.env` said. Demo now reads `USE_LOCAL_MOCKS` from `.env` like the dashboard API does.
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+
 ### SSE Event Unwrapping Fix (commit 72d5204)
 - [x] `src/a2a/operational_a2a_clients.py` — `A2AClient.send_message_streaming()`
   yields `SendStreamingMessageResponse` objects, not raw events. The actual
@@ -319,10 +334,11 @@ These are ideas, not commitments. Pick up from here:
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
 | `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write | Phase 10 bugfixes |
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
-| `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats | Phase 10 |
+| `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints; uses `get_recent()` not `_load_all()` | Runtime fixes |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
 | `dashboard/src/App.jsx` | Root component — fetchAll, setInterval, ConnectedAgents, LiveActivityFeed | Runtime fixes |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid with online status + bar chart (NEW) | Runtime fixes |
 | `dashboard/src/components/LiveActivityFeed.jsx` | Real-time evaluation feed with relative timestamps (NEW) | Runtime fixes |
 | `dashboard/src/api.js` | Frontend fetch helpers incl. fetchAgents() | Runtime fixes |
+| `demo_a2a.py` | A2A end-to-end demo (3 scenarios); removed USE_LOCAL_MOCKS setdefault | Registry fix |
