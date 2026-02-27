@@ -9,10 +9,11 @@ structured verdict.
 ```
 Operational Agent (proposes action)
     │
-    ▼
-ActionInterceptor  ←── MCP tool / direct Python call
+    ├─── A2A HTTP (src/a2a/sentinel_a2a_server.py)
+    ├─── MCP stdio (src/mcp_server/server.py)
+    └─── Direct Python (src/core/interception.py)
     │
-    ▼
+    ▼ (all three paths converge here)
 SentinelLayerPipeline.evaluate(action)
     │
     ├─ asyncio.gather() ──────────────────────────────────┐
@@ -54,20 +55,20 @@ GovernanceVerdict returned to caller
    MCP-capable agent (Claude Desktop, Copilot, custom agents) can call SentinelLayer without
    SDK changes.
 
-3. **Microsoft Agent Framework** — in live mode, each agent is backed by GPT-4.1 (via
+4. **Microsoft Agent Framework** — in live mode, each agent is backed by GPT-4.1 (via
    `agent-framework-core==1.0.0rc2`). The LLM calls a deterministic `@af.tool`, then synthesises
    a human-readable reasoning narrative. Mock mode bypasses the framework entirely (no Azure needed).
 
-4. **DefaultAzureCredential** — used in all 7 agents. Works with `az login` locally and Managed
+5. **DefaultAzureCredential** — used in all 7 agents. Works with `az login` locally and Managed
    Identity in Azure — no code changes between environments.
 
-5. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
+6. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
    configurable thresholds in `src/config.py`.
 
-6. **Immutable audit trail** — every verdict is written to Cosmos DB (live) or a local JSON file
+7. **Immutable audit trail** — every verdict is written to Cosmos DB (live) or a local JSON file
    (mock). Never overwritten; each decision gets a UUID `action_id`.
 
-7. **Configurable thresholds** — `SRI_AUTO_APPROVE_THRESHOLD` (default 25) and
+8. **Configurable thresholds** — `SRI_AUTO_APPROVE_THRESHOLD` (default 25) and
    `SRI_HUMAN_REVIEW_THRESHOLD` (default 60) are environment-variable driven.
 
 ---

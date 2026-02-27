@@ -73,18 +73,19 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 │         │                 │                 │            │
 │         └─────────────────┼─────────────────┘            │
 │                           │                              │
-│                    Proposed Action                        │
-│                    (via Azure MCP)                        │
-└───────────────────────────┬──────────────────────────────┘
-                            │
-                            ▼
+│              Proposed Action — three entry paths:         │
+│   A2A HTTP ──────────┬──── MCP stdio ──── Direct Python  │
+└─────────────────────┬┴───────────────────────────────────┘
+                      │
+                      ▼
 ┌──────────────────────────────────────────────────────────┐
 │                  SENTINELLAYER CORE                       │
 │                                                          │
-│  ┌──────────────┐                                        │
-│  │ Interception  │◄── Captures action proposals via MCP  │
-│  │    Engine     │                                        │
-│  └──────┬───────┘                                        │
+│  ┌──────────────────────────────────────────────┐        │
+│  │ Protocol Layer                               │        │
+│  │  A2A Server  │  MCP Server  │  Direct Python │        │
+│  │  (port 8000) │  (stdio)     │  (pipeline.py) │        │
+│  └──────────────────────┬───────────────────────┘        │
 │         │                                                │
 │         ▼                                                │
 │  ┌────────────────────────────────────────────┐          │
@@ -119,16 +120,15 @@ SentinelLayer is the missing governance layer. Before any agent action executes,
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Agent Orchestration | Microsoft Agent Framework | Multi-agent coordination |
-| Model Intelligence | Microsoft Foundry + Model Router | Cost-optimized model routing |
-| Cloud Interception | Azure MCP (consumer + provider) | Intercept actions, query Azure |
-| Infrastructure Graph | Azure Resource Graph | Real-time resource dependencies |
-| LLM Reasoning | Microsoft Foundry — GPT-4.1 | Simulation reasoning |
-| Vector Search | Azure AI Search | Incident history similarity |
-| Graph + Audit DB | Cosmos DB (Gremlin + SQL API) | Dependencies + decision trail |
-| Serverless Compute | Azure Functions | Event processing |
-| Code Analysis | GitHub Copilot Agent Mode | IaC PR governance |
-| Dashboard | React + Azure Static Web Apps | Governance visualization |
+| Agent-to-Agent Protocol | A2A SDK (`a2a-sdk`) + `agent-framework-a2a` | Network protocol for agent discovery and task streaming |
+| Agent Orchestration | Microsoft Agent Framework (`agent-framework-core`) | Multi-agent coordination + GPT-4.1 tool calls |
+| Model Intelligence | Azure OpenAI Foundry — GPT-4.1 | LLM reasoning for each governance agent |
+| MCP Interception | FastMCP stdio server | Intercept actions from Claude Desktop / MCP hosts |
+| Infrastructure Graph | Azure Resource Graph | Real-time resource dependency data |
+| Incident Search | Azure AI Search (BM25) | Historical incident similarity |
+| Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry |
+| Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
+| Dashboard | React + Vite + FastAPI | Governance visualization + REST API |
 
 ---
 
@@ -177,13 +177,20 @@ bash scripts/setup_env.sh
 # Seed demo data
 python scripts/seed_data.py
 
-# Run SentinelLayer MCP server
+# Run SentinelLayer — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
 
-# Run operational agents (in separate terminal)
-python -m src.operational_agents.run
+# Run SentinelLayer — A2A HTTP server (for agent-to-agent protocol)
+uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
 
-# Run dashboard (in separate terminal)
+# Run SentinelLayer — Dashboard REST API
+uvicorn src.api.dashboard_api:app --reload
+
+# Run demos
+python demo.py        # direct pipeline demo (3 scenarios)
+python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
+
+# Run React dashboard (in separate terminal)
 cd dashboard
 npm install
 npm run dev
@@ -192,7 +199,8 @@ npm run dev
 ### Run Tests
 
 ```bash
-pytest tests/ -v --cov=src --cov-report=term-missing
+# Expected: 381 passed, 27 xfailed, 0 failed
+pytest tests/ -v
 ```
 
 ---
@@ -202,9 +210,10 @@ pytest tests/ -v --cov=src --cov-report=term-missing
 ```
 sentinellayer/
 ├── src/
-│   ├── operational_agents/     # The governed — SRE & cost agents
+│   ├── operational_agents/     # The governed — propose actions
 │   │   ├── monitoring_agent.py
-│   │   └── cost_agent.py
+│   │   ├── cost_agent.py
+│   │   └── deploy_agent.py          # Phase 8: NSG rules, lifecycle tags
 │   ├── governance_agents/      # The governors — SRI™ dimension agents
 │   │   ├── blast_radius_agent.py    # SRI:Infrastructure
 │   │   ├── policy_agent.py          # SRI:Policy
@@ -213,23 +222,33 @@ sentinellayer/
 │   ├── core/                   # Decision engine & tracking
 │   │   ├── governance_engine.py     # SRI™ scoring + verdicts
 │   │   ├── decision_tracker.py      # Cosmos DB audit trail
-│   │   ├── interception.py          # MCP action interception
-│   │   └── models.py               # Pydantic data models
+│   │   ├── interception.py          # Action interception façade
+│   │   ├── pipeline.py              # asyncio.gather() orchestration
+│   │   └── models.py               # Pydantic data models (read first)
+│   ├── a2a/                    # A2A Protocol layer (Phase 10)
+│   │   ├── sentinel_a2a_server.py   # A2A server + Agent Card
+│   │   ├── operational_a2a_clients.py  # A2A client wrappers
+│   │   └── agent_registry.py        # Connected agent tracking
 │   ├── mcp_server/             # SentinelLayer as MCP provider
 │   │   └── server.py
-│   ├── infrastructure/         # Azure service clients
+│   ├── infrastructure/         # Azure service clients (mock fallback)
 │   │   ├── resource_graph.py
 │   │   ├── cosmos_client.py
 │   │   ├── search_client.py
-│   │   └── openai_client.py
+│   │   ├── openai_client.py
+│   │   └── secrets.py               # Key Vault secret resolver
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py
-├── dashboard/                  # React governance dashboard
+│       └── dashboard_api.py         # 6 endpoints incl. /api/agents
+├── dashboard/                  # React + Vite governance dashboard
 ├── functions/                  # Azure Functions triggers
 ├── data/                       # Seed data for demo
+│   ├── agents/                      # A2A agent registry (mock)
+│   ├── decisions/                   # Audit trail (mock)
 │   ├── seed_incidents.json
 │   ├── seed_resources.json
 │   └── policies.json
+├── demo.py                     # Direct pipeline demo (3 scenarios)
+├── demo_a2a.py                 # A2A protocol demo (Phase 10)
 ├── tests/
 ├── docs/
 └── scripts/
@@ -239,20 +258,22 @@ sentinellayer/
 
 ## Demo Scenarios
 
-### Scenario A: Dangerous Action → DENIED
-**Cost Agent** proposes deleting VM-23 (idle for 30 days, $847/mo).
-SentinelLayer discovers VM-23 is tagged `disaster-recovery`, has 3 dependent services, and a similar deletion caused INC-2025-1204 ($50K damage).
-**SRI™: 72 → ❌ DENIED**
+Run `python demo.py` (direct pipeline) or `python demo_a2a.py` (A2A protocol).
 
-### Scenario B: Safe Action → AUTO-APPROVED
-**SRE Agent** proposes scaling web-tier from D4 to D8 during traffic spike.
-SentinelLayer finds no dependencies affected, no policy violations, similar scale-ups succeeded before.
-**SRI™: 7 → ✅ AUTO-APPROVED**
+### Scenario 1: Dangerous Action → DENIED
+**Cost Agent** proposes deleting `vm-23` (disaster-recovery VM, $847/mo).
+SentinelLayer detects the `purpose=disaster-recovery` tag → POL-DR-001 critical violation fires, overriding the numeric score.
+**SRI™: 74.0 → ❌ DENIED** (critical policy override)
 
-### Scenario C: Moderate Risk → ESCALATED
-**Deploy Agent** proposes NSG rule change to open port 8080.
-SentinelLayer finds the NSG governs multiple subnets; security policy requires review.
-**SRI™: 45 → ⚠️ ESCALATED for human review**
+### Scenario 2: Safe Action → AUTO-APPROVED
+**Monitoring Agent** proposes scaling `web-tier-01` (D4s_v3 → D8s_v3) during a CPU spike.
+No critical violations, low blast radius, no historical incidents matching the pattern.
+**SRI™: 14.1 → ✅ AUTO-APPROVED**
+
+### Scenario 3: Moderate Risk → ESCALATED
+**Deploy Agent** proposes modifying `nsg-east` (add deny-all inbound rule).
+POL-SEC-001 fires (high severity — NSG changes require security review), pushing the composite into the review band.
+**SRI™: 55.2 → ⚠️ ESCALATED for human review**
 
 ---
 

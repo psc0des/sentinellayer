@@ -168,6 +168,7 @@ COSMOS_ENDPOINT=https://sentinel-cosmos-psc0des.documents.azure.com:443/
 COSMOS_DATABASE=sentinellayer
 COSMOS_CONTAINER_DECISIONS=governance-decisions
 AZURE_KEYVAULT_URL=https://sentinel-kv-psc0des.vault.azure.net/
+A2A_SERVER_URL=http://localhost:8000    ← A2A server base URL (Phase 10)
 ```
 
 API keys are **not** in `.env` — fetched at runtime from Key Vault.
@@ -181,10 +182,16 @@ Run `az login` locally before starting any live-mode service.
 # One-time: seed incidents into Azure AI Search
 python scripts/seed_data.py
 
-# End-to-end governance demo (3 scenarios)
+# End-to-end governance demo — direct Python pipeline (3 scenarios)
 python demo.py
 
-# FastAPI dashboard
+# A2A protocol demo — server + 3 agent clients via A2A (Phase 10)
+python demo_a2a.py
+
+# SentinelLayer as A2A server (Phase 10)
+uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
+
+# FastAPI dashboard (includes /api/agents endpoints)
 uvicorn src.api.dashboard_api:app --reload
 
 # Unit tests (mock mode — no Azure needed)

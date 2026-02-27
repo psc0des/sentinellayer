@@ -69,6 +69,8 @@ Operational Agent proposes action (ProposedAction)
 3. `data/policies.json` — 6 governance policies for PolicyComplianceAgent.
 4. `data/seed_incidents.json` — 7 past incidents for HistoricalPatternAgent.
 5. `data/seed_resources.json` — Mock Azure resource topology with dependencies.
+6. `src/a2a/sentinel_a2a_server.py` — A2A entry point: `SentinelAgentExecutor` + `AgentCard`.
+7. `src/a2a/agent_registry.py` — Agent registry: tracks connected agents and their stats.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.

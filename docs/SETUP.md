@@ -62,8 +62,33 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: all pass or xfail — 0 unexpected failures
+# Expected: 381 passed, 27 xfailed, 0 failed
 
-# 7. Start SentinelLayer
+# 7a. Start SentinelLayer — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
+
+# 7b. Start SentinelLayer — A2A HTTP server (for agent-to-agent protocol)
+uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
+
+# 7c. Start SentinelLayer — Dashboard REST API
+uvicorn src.api.dashboard_api:app --reload
+
+# 8. Run demos
+python demo.py        # direct Python pipeline demo (3 scenarios)
+python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
 ```
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `USE_LOCAL_MOCKS` | No | `true` | `true` = JSON files; `false` = live Azure |
+| `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-41` | Model deployment name |
+| `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |
+| `AZURE_SEARCH_INDEX` | Live only | `incident-history` | Search index name |
+| `COSMOS_ENDPOINT` | Live only | — | Cosmos DB endpoint |
+| `COSMOS_DATABASE` | Live only | `sentinellayer` | Database name |
+| `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container name |
+| `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
+| `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
