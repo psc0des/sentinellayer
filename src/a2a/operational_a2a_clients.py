@@ -150,20 +150,22 @@ async def send_action_to_sentinel(
 
         try:
             async for event in client.send_message_streaming(request):
-                # Each event has a .root that is either a TaskStatusUpdateEvent
-                # (progress message) or a TaskArtifactUpdateEvent (final result).
+                # A2AClient (legacy) yields SendStreamingMessageResponse objects.
+                # event.root  → SendStreamingMessageSuccessResponse
+                # event.root.result → the actual TaskStatusUpdateEvent | TaskArtifactUpdateEvent
                 root = getattr(event, "root", event)
+                result = getattr(root, "result", root)
 
-                if isinstance(root, TaskStatusUpdateEvent):
+                if isinstance(result, TaskStatusUpdateEvent):
                     # Progress message — log it so the demo shows live updates
-                    if root.status and root.status.message:
-                        text = get_message_text(root.status.message)
+                    if result.status and result.status.message:
+                        text = get_message_text(result.status.message)
                         if text:
                             logger.info("[%s] A2A progress: %s", agent_name, text)
 
-                elif isinstance(root, TaskArtifactUpdateEvent):
+                elif isinstance(result, TaskArtifactUpdateEvent):
                     # Artifact — this is the GovernanceVerdict JSON
-                    text = get_artifact_text(root.artifact)
+                    text = get_artifact_text(result.artifact)
                     if text:
                         verdict_json = text
                         logger.debug(
