@@ -133,7 +133,7 @@
   `httpx==0.28.1`.
 - [x] `tests/test_a2a.py` — 20 tests: Agent Card, registry CRUD, executor (mock pipeline),
   dashboard API endpoints.
-- [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 
 ### Phase 10 Bug Fixes (commit 1fee7d1)
 - [x] `src/a2a/sentinel_a2a_server.py` — `DecisionTracker().record(verdict)` added after
@@ -144,16 +144,38 @@
   (was `""` — empty string stored in registry).
 - [x] `src/api/dashboard_api.py` — `get_recent(limit=1000)` raised from 200; prevents
   silent record truncation before agent-name filtering.
-- [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 - [x] Learning: `learning/20-a2a-bugfixes.md`
 
-### Partition Key Mismatch Fix (commit TBD)
+### Partition Key Mismatch Fix (commit a09dc96→ earlier)
 - [x] `infrastructure/terraform/main.tf` — `governance-agents` container partition key
   corrected from `/agent_name` (field that never existed in documents) to `/name`
   (matches the `"name"` field in every registry document and the `partition_key=name`
   value passed by `_load_entry`). Option (b) chosen — zero Python changes required.
 - [x] `CONTEXT.md`, `STATUS.md`, `docs/SETUP.md` — docs updated to `/name`
-- [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+
+### Runtime Fixes (commits ac6ca2c, 50fac30, 7b62822)
+- [x] `src/a2a/operational_a2a_clients.py` — `A2ACardResolver` constructor renamed
+  from `http_client=` to `httpx_client=` (a2a-sdk==0.3.24 API). Was causing
+  `TypeError` at demo startup — no verdicts reached, `data/agents/` stayed empty.
+- [x] `src/api/dashboard_api.py` — replaced two `_get_tracker()._load_all()` calls
+  with `_get_tracker().get_recent(limit=10_000)`. `_load_all()` does not exist on
+  `DecisionTracker` (it's private to `CosmosDecisionClient`). Was causing HTTP 500
+  on `GET /api/metrics` and `GET /api/evaluations/{id}`.
+- [x] `tests/test_dashboard_api.py` — removed 17 `@pytest.mark.xfail` decorators from
+  `TestGetEvaluation` and `TestGetMetrics`. These tests now pass because the
+  `_load_all()` root cause is fixed. Remaining 10 xfails: `TestRecord` tests about
+  `tracker._dir` (unrelated Phase 7 issue).
+- [x] `dashboard/src/components/ConnectedAgents.jsx` — NEW: agent card grid with
+  online/offline status (last_seen < 5 min), mini flex bar chart (approved/escalated/denied).
+- [x] `dashboard/src/components/LiveActivityFeed.jsx` — NEW: real-time feed of
+  recent evaluations, relative time display, VerdictBadge.
+- [x] `dashboard/src/App.jsx` — `fetchAll()` extracted for silent background refresh;
+  `setInterval(5000)` auto-refresh with `clearInterval` cleanup; SRI gauge shows
+  triggering `agent_id`.
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+- [x] Learning: `learning/19-dashboard-a2a.md`
 
 ### Phase 9 — Async-First Refactor
 - [x] **Issue 1 — async-first**: all 7 agent `evaluate()`/`scan()` methods → `async def`;
@@ -285,7 +307,11 @@ These are ideas, not commitments. Pick up from here:
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
 | `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write | Phase 10 bugfixes |
-| `src/a2a/operational_a2a_clients.py` | A2A client wrappers for 3 operational agents | Phase 10 bugfixes |
+| `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=` (not `http_client=`) | Runtime fixes |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats | Phase 10 |
-| `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints incl. /api/agents | Phase 10 bugfixes |
+| `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints; uses `get_recent()` not `_load_all()` | Runtime fixes |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
+| `dashboard/src/App.jsx` | Root component — fetchAll, setInterval, ConnectedAgents, LiveActivityFeed | Runtime fixes |
+| `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid with online status + bar chart (NEW) | Runtime fixes |
+| `dashboard/src/components/LiveActivityFeed.jsx` | Real-time evaluation feed with relative timestamps (NEW) | Runtime fixes |
+| `dashboard/src/api.js` | Frontend fetch helpers incl. fetchAgents() | Runtime fixes |

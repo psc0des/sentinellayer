@@ -62,7 +62,7 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: 381 passed, 27 xfailed, 0 failed
+# Expected: 398 passed, 10 xfailed, 0 failed
 
 # 7a. Start SentinelLayer — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server

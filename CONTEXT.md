@@ -57,7 +57,7 @@ SentinelLayer streams SSE progress updates and returns a `GovernanceVerdict` art
 
 ```python
 # The external agent side (discovery + call)
-resolver = A2ACardResolver(http_client, "http://sentinel:8000")
+resolver = A2ACardResolver(httpx_client=http_client, base_url="http://sentinel:8000")
 agent_card = await resolver.get_agent_card()
 client = A2AClient(httpx_client=http_client, agent_card=agent_card)
 async for event in client.send_message_streaming(request):
@@ -168,19 +168,25 @@ Operational Agent proposes action (ProposedAction)
   decisions appear in `/api/evaluations`, `/api/metrics`, and Cosmos DB.
 - `src/a2a/operational_a2a_clients.py` — Three A2A client wrappers
   (`CostAgentA2AClient`, `MonitoringAgentA2AClient`, `DeployAgentA2AClient`)
-  using `A2ACardResolver` + `A2AClient` with `httpx.AsyncClient`.
-  `agent_card_url=self._server_url` (was `""` — now a real URL).
+  using `A2ACardResolver(httpx_client=..., base_url=...)` + `A2AClient` with
+  `httpx.AsyncClient`. `agent_card_url=self._server_url` (was `""` — now a
+  real URL). `httpx_client=` keyword is required by a2a-sdk==0.3.24 (was
+  incorrectly `http_client=`).
 - `src/a2a/agent_registry.py` — Tracks connected agents with governance stats
   (approval/denial/escalation counts). JSON mock in `data/agents/`, Cosmos DB
   container `governance-agents` (partition key `/name`) in live mode.
 - `src/api/dashboard_api.py` — New endpoints: `GET /api/agents`,
   `GET /api/agents/{name}/history`. Agent history pre-fetch raised to
-  `limit=1000` (was 200, which silently truncated high-volume agents).
+  `limit=1000` (was 200). Internal: `get_recent(limit=10_000)` used for
+  `/api/evaluations/{id}` and `/api/metrics` (was `_load_all()` which does
+  not exist on `DecisionTracker`; that caused 500 errors on both endpoints).
 - `infrastructure/terraform/main.tf` — `governance-agents` Cosmos container
   added alongside `governance-decisions`.
 - `demo_a2a.py` — End-to-end A2A demo: server in background thread, 3
   scenarios (DENIED / APPROVED / ESCALATED), agent registry summary.
-- **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+- **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+  (17 previously-xfailed dashboard tests promoted to passing after `_load_all`
+  fix; 10 remaining xfails are `TestRecord` tests about `tracker._dir`.)
 - MCP and direct Python pipeline continue to work unchanged.
 
 **Previous: Phase 9 — Async-First Refactor**
