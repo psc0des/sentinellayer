@@ -135,6 +135,18 @@
   dashboard API endpoints.
 - [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
 
+### Phase 10 Bug Fixes (commit 1fee7d1)
+- [x] `src/a2a/sentinel_a2a_server.py` — `DecisionTracker().record(verdict)` added after
+  `pipeline.evaluate()`; A2A verdicts now written to Cosmos DB audit trail (were silently dropped).
+- [x] `infrastructure/terraform/main.tf` — `azurerm_cosmosdb_sql_container "governance_agents"`
+  added with `partition_key_paths = ["/agent_name"]`; container now exists in Terraform.
+- [x] `src/a2a/operational_a2a_clients.py` — `agent_card_url=self._server_url` in all 3 clients
+  (was `""` — empty string stored in registry).
+- [x] `src/api/dashboard_api.py` — `get_recent(limit=1000)` raised from 200; prevents
+  silent record truncation before agent-name filtering.
+- [x] **Test result: 381 passed, 27 xfailed, 0 failed** ✅
+- [x] Learning: `learning/20-a2a-bugfixes.md`
+
 ### Phase 9 — Async-First Refactor
 - [x] **Issue 1 — async-first**: all 7 agent `evaluate()`/`scan()` methods → `async def`;
   `asyncio.run()` removed everywhere; callers use `await`
@@ -264,3 +276,8 @@ These are ideas, not commitments. Pick up from here:
 | `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
+| `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write | Phase 10 bugfixes |
+| `src/a2a/operational_a2a_clients.py` | A2A client wrappers for 3 operational agents | Phase 10 bugfixes |
+| `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats | Phase 10 |
+| `src/api/dashboard_api.py` | FastAPI REST — 6 endpoints incl. /api/agents | Phase 10 bugfixes |
+| `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |

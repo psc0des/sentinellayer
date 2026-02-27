@@ -158,20 +158,26 @@ Operational Agent proposes action (ProposedAction)
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 10 — A2A Protocol (current)**
+**Phase 10 — A2A Protocol + Bug Fixes (current)**
 
 - `src/a2a/sentinel_a2a_server.py` — SentinelLayer exposed as an A2A-compliant
   server using `agent-framework-a2a` + `a2a-sdk`. Agent Card at
   `/.well-known/agent-card.json`. `SentinelAgentExecutor` routes tasks through
   the existing governance pipeline, streaming SSE progress via `TaskUpdater`.
+  `DecisionTracker().record(verdict)` called after every A2A evaluation so
+  decisions appear in `/api/evaluations`, `/api/metrics`, and Cosmos DB.
 - `src/a2a/operational_a2a_clients.py` — Three A2A client wrappers
   (`CostAgentA2AClient`, `MonitoringAgentA2AClient`, `DeployAgentA2AClient`)
   using `A2ACardResolver` + `A2AClient` with `httpx.AsyncClient`.
+  `agent_card_url=self._server_url` (was `""` — now a real URL).
 - `src/a2a/agent_registry.py` — Tracks connected agents with governance stats
   (approval/denial/escalation counts). JSON mock in `data/agents/`, Cosmos DB
-  in live mode.
+  container `governance-agents` (partition key `/agent_name`) in live mode.
 - `src/api/dashboard_api.py` — New endpoints: `GET /api/agents`,
-  `GET /api/agents/{name}/history`.
+  `GET /api/agents/{name}/history`. Agent history pre-fetch raised to
+  `limit=1000` (was 200, which silently truncated high-volume agents).
+- `infrastructure/terraform/main.tf` — `governance-agents` Cosmos container
+  added alongside `governance-decisions`.
 - `demo_a2a.py` — End-to-end A2A demo: server in background thread, 3
   scenarios (DENIED / APPROVED / ESCALATED), agent registry summary.
 - **Test result: 381 passed, 27 xfailed, 0 failed** ✅

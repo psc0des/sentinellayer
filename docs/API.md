@@ -185,7 +185,7 @@ sorted by most-recently-seen first.
   "agents": [
     {
       "name": "cost-optimization-agent",
-      "agent_card_url": "",
+      "agent_card_url": "http://localhost:8000",
       "registered_at": "2026-02-27T10:00:00Z",
       "last_seen": "2026-02-27T10:05:00Z",
       "total_actions_proposed": 5,
