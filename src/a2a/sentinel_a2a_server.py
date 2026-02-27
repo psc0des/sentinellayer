@@ -98,8 +98,8 @@ class SentinelAgentExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
 
         # submit() → task received; start_work() → task is actively being processed
-        updater.submit()
-        updater.start_work()
+        await updater.submit()
+        await updater.start_work()
 
         # ── Parse the incoming ProposedAction ─────────────────────────────
         user_text = context.get_user_input()
@@ -112,7 +112,7 @@ class SentinelAgentExecutor(AgentExecutor):
         except Exception as exc:
             logger.error("A2A: invalid ProposedAction payload: %s", exc)
             # complete() with an error message ends the task gracefully
-            updater.complete(
+            await updater.complete(
                 message=new_agent_text_message(
                     f"ERROR: invalid ProposedAction JSON — {exc}",
                     task_id=context.task_id,
@@ -164,11 +164,12 @@ class SentinelAgentExecutor(AgentExecutor):
         # ── Return full GovernanceVerdict as an artifact ──────────────────
         # add_artifact() attaches the result payload to the task.
         # complete() finalises the task — the client's stream ends here.
-        updater.add_artifact(
+        # Both are async — must be awaited or the events are never enqueued.
+        await updater.add_artifact(
             parts=[Part(root=TextPart(kind="text", text=verdict.model_dump_json()))],
             name="governance_verdict",
         )
-        updater.complete()
+        await updater.complete()
 
         logger.info(
             "A2A: completed task %s — verdict=%s sri=%.1f agent=%s",

@@ -260,7 +260,7 @@ class TestSentinelAgentExecutor:
             event_queue = MagicMock()
 
             with patch("src.a2a.sentinel_a2a_server.TaskUpdater") as MockUpdater:
-                updater_instance = MagicMock()
+                updater_instance = AsyncMock()
                 MockUpdater.return_value = updater_instance
 
                 await executor.execute(context, event_queue)
@@ -288,7 +288,7 @@ class TestSentinelAgentExecutor:
             event_queue = MagicMock()
 
             with patch("src.a2a.sentinel_a2a_server.TaskUpdater") as MockUpdater:
-                updater_instance = MagicMock()
+                updater_instance = AsyncMock()
                 MockUpdater.return_value = updater_instance
 
                 await executor.execute(context, event_queue)
@@ -330,7 +330,7 @@ class TestSentinelAgentExecutor:
             event_queue = MagicMock()
 
             with patch("src.a2a.sentinel_a2a_server.TaskUpdater") as MockUpdater:
-                updater_instance = MagicMock()
+                updater_instance = AsyncMock()
                 MockUpdater.return_value = updater_instance
 
                 await executor.execute(context, event_queue)
