@@ -51,13 +51,21 @@ htmlcov/
 *.key
 *.cert
 
-# Terraform
+# Terraform — main infra
 infrastructure/terraform/.terraform/
 infrastructure/terraform/*.tfstate
 infrastructure/terraform/*.tfstate.*
 infrastructure/terraform/*.tfstate.backup
 infrastructure/terraform/terraform.tfvars
 infrastructure/terraform/.terraform.lock.hcl
+
+# Terraform — mini prod environment
+infrastructure/terraform-prod/.terraform/
+infrastructure/terraform-prod/*.tfstate
+infrastructure/terraform-prod/*.tfstate.*
+infrastructure/terraform-prod/*.tfstate.backup
+infrastructure/terraform-prod/terraform.tfvars
+infrastructure/terraform-prod/.terraform.lock.hcl
 
 # Runtime-generated data (not source code)
 data/decisions/

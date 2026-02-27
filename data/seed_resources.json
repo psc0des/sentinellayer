@@ -1,8 +1,123 @@
 {
-  "resource_group": "sentinel-layer-rg",
-  "subscription_id": "demo-subscription-id",
+  "resource_group": "sentinel-prod-rg",
+  "subscription_id": "YOUR-SUBSCRIPTION-ID",
+  "_note": "After deploying infrastructure/terraform-prod/, replace YOUR-SUBSCRIPTION-ID and run: terraform output seed_resources_ids to get real IDs for the sentinel-prod-rg resources.",
   "resources": [
     {
+      "_comment": "=== MINI PROD ENVIRONMENT (infrastructure/terraform-prod/) ===",
+      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Compute/virtualMachines/vm-dr-01",
+      "name": "vm-dr-01",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "eastus",
+      "sku": "Standard_B1s",
+      "monthly_cost": 15.00,
+      "tags": {
+        "disaster-recovery": "true",
+        "environment": "production",
+        "owner": "platform-team",
+        "cost-center": "infrastructure",
+        "project": "sentinellayer",
+        "managed_by": "terraform",
+        "purpose": "governance-demo"
+      },
+      "dependencies": [
+        "sentinelproddata",
+        "nsg-east-prod"
+      ],
+      "dependents": [
+        "dr-failover-service",
+        "backup-coordinator",
+        "compliance-monitor"
+      ]
+    },
+    {
+      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+      "name": "vm-web-01",
+      "type": "Microsoft.Compute/virtualMachines",
+      "location": "eastus",
+      "sku": "Standard_B1s",
+      "monthly_cost": 15.00,
+      "tags": {
+        "tier": "web",
+        "environment": "production",
+        "owner": "web-team",
+        "cost-center": "frontend",
+        "project": "sentinellayer",
+        "managed_by": "terraform",
+        "purpose": "governance-demo"
+      },
+      "dependencies": [
+        "payment-api-prod",
+        "sentinelproddata",
+        "nsg-east-prod"
+      ],
+      "dependents": []
+    },
+    {
+      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Web/sites/payment-api-prod",
+      "name": "payment-api-prod",
+      "type": "Microsoft.Web/sites",
+      "location": "eastus",
+      "sku": "F1",
+      "monthly_cost": 0.00,
+      "tags": {
+        "tier": "api",
+        "environment": "production",
+        "critical": "true",
+        "project": "sentinellayer",
+        "managed_by": "terraform",
+        "purpose": "governance-demo"
+      },
+      "dependencies": [
+        "sentinelproddata"
+      ],
+      "dependents": [
+        "vm-web-01"
+      ]
+    },
+    {
+      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Network/networkSecurityGroups/nsg-east-prod",
+      "name": "nsg-east-prod",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "location": "eastus",
+      "tags": {
+        "environment": "production",
+        "managed-by": "platform-team",
+        "project": "sentinellayer",
+        "managed_by": "terraform",
+        "purpose": "governance-demo"
+      },
+      "governs": [
+        "vm-dr-01",
+        "vm-web-01"
+      ],
+      "rules": [
+        {"name": "allow-http",       "port": 80,  "access": "Allow"},
+        {"name": "allow-https",      "port": 443, "access": "Allow"},
+        {"name": "deny-all-inbound", "port": "*", "access": "Deny", "priority": 4096}
+      ]
+    },
+    {
+      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Storage/storageAccounts/sentinelproddata",
+      "name": "sentinelproddata",
+      "type": "Microsoft.Storage/storageAccounts",
+      "location": "eastus",
+      "monthly_cost": 5.00,
+      "tags": {
+        "environment": "production",
+        "shared": "true",
+        "project": "sentinellayer",
+        "managed_by": "terraform",
+        "purpose": "governance-demo"
+      },
+      "consumers": [
+        "vm-dr-01",
+        "vm-web-01",
+        "payment-api-prod"
+      ]
+    },
+    {
+      "_comment": "=== LEGACY MOCK RESOURCES (kept for test compatibility) ===",
       "id": "/subscriptions/demo/resourceGroups/prod/providers/Microsoft.Compute/virtualMachines/vm-23",
       "name": "vm-23",
       "type": "Microsoft.Compute/virtualMachines",
@@ -86,9 +201,9 @@
         "vnet-prod-subnet-admin"
       ],
       "rules": [
-        {"name": "allow-https", "port": 443, "access": "Allow"},
-        {"name": "allow-ssh-internal", "port": 22, "access": "Allow", "source": "10.0.0.0/8"},
-        {"name": "deny-all-inbound", "port": "*", "access": "Deny", "priority": 4096}
+        {"name": "allow-https",           "port": 443, "access": "Allow"},
+        {"name": "allow-ssh-internal",    "port": 22,  "access": "Allow", "source": "10.0.0.0/8"},
+        {"name": "deny-all-inbound",      "port": "*", "access": "Deny",  "priority": 4096}
       ]
     },
     {
@@ -135,15 +250,23 @@
     }
   ],
   "dependency_edges": [
-    {"from": "web-tier-01", "to": "api-server-03", "type": "http_dependency"},
-    {"from": "api-server-03", "to": "aks-prod", "type": "service_dependency"},
-    {"from": "payment-api", "to": "notification-service", "type": "circular_dependency"},
+    {"from": "vm-dr-01",        "to": "sentinelproddata",  "type": "storage_dependency"},
+    {"from": "vm-dr-01",        "to": "nsg-east-prod",     "type": "network_governance"},
+    {"from": "vm-web-01",       "to": "payment-api-prod",  "type": "service_dependency"},
+    {"from": "vm-web-01",       "to": "sentinelproddata",  "type": "storage_dependency"},
+    {"from": "vm-web-01",       "to": "nsg-east-prod",     "type": "network_governance"},
+    {"from": "payment-api-prod","to": "sentinelproddata",  "type": "storage_dependency"},
+    {"from": "nsg-east-prod",   "to": "vm-dr-01",          "type": "network_governance"},
+    {"from": "nsg-east-prod",   "to": "vm-web-01",         "type": "network_governance"},
+    {"from": "web-tier-01",     "to": "api-server-03",     "type": "http_dependency"},
+    {"from": "api-server-03",   "to": "aks-prod",          "type": "service_dependency"},
+    {"from": "payment-api",     "to": "notification-service", "type": "circular_dependency"},
     {"from": "notification-service", "to": "payment-api", "type": "circular_dependency"},
-    {"from": "order-processing", "to": "storageshared01", "type": "storage_dependency"},
+    {"from": "order-processing","to": "storageshared01",   "type": "storage_dependency"},
     {"from": "notification-service", "to": "storageshared01", "type": "storage_dependency"},
-    {"from": "vm-23", "to": "dr-failover-service", "type": "dr_dependency"},
-    {"from": "vm-23", "to": "backup-coordinator", "type": "dr_dependency"},
-    {"from": "nsg-east", "to": "api-server-03", "type": "network_governance"},
-    {"from": "nsg-east", "to": "admin-dashboard", "type": "network_governance"}
+    {"from": "vm-23",           "to": "dr-failover-service","type": "dr_dependency"},
+    {"from": "vm-23",           "to": "backup-coordinator", "type": "dr_dependency"},
+    {"from": "nsg-east",        "to": "api-server-03",     "type": "network_governance"},
+    {"from": "nsg-east",        "to": "admin-dashboard",   "type": "network_governance"}
   ]
 }

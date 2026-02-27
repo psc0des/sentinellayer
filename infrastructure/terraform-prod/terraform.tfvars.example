@@ -1,0 +1,35 @@
+# =============================================================================
+# SentinelLayer — Mini Production Environment — Variable Values
+# =============================================================================
+# HOW TO USE:
+#   1. Copy this file:  cp terraform.tfvars.example terraform.tfvars
+#   2. Fill in YOUR values below (replace every <placeholder>)
+#   3. terraform.tfvars is in .gitignore — it will NEVER be committed
+#
+# FIND YOUR SUBSCRIPTION ID:
+#   az account show --query id -o tsv
+# =============================================================================
+
+# Your Azure Subscription ID
+subscription_id = "<your-azure-subscription-id>"
+
+# Azure region — keep this the same as your main sentinel-layer-rg
+location = "eastus"
+
+# Short unique suffix for globally-unique resource names.
+# Rules: lowercase letters and digits ONLY, max 8 characters.
+# Example: if your name is Alex and you pick 4 digits: "alex7291"
+# This makes:
+#   storage account → sentinelprodálex7291
+#   app service     → payment-api-prod-alex7291
+suffix = "<your-suffix>"
+
+# VM local admin username (cannot be: admin, administrator, root, user)
+vm_admin_username = "sentineladmin"
+
+# VM local admin password (min 12 chars, must include UPPER, lower, digit, symbol)
+# Example format (don't use this exact password!): "Sentinel@Demo2026!"
+vm_admin_password = "<your-strong-password>"
+
+# Email address for Azure Monitor alert notifications
+alert_email = "<your-email@example.com>"
