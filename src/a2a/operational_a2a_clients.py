@@ -120,7 +120,7 @@ async def send_action_to_sentinel(
     """
     async with httpx.AsyncClient(base_url=server_url, timeout=120.0) as http_client:
         # Step 1 — Discover SentinelLayer via its Agent Card
-        resolver = A2ACardResolver(http_client=http_client, base_url=server_url)
+        resolver = A2ACardResolver(httpx_client=http_client, base_url=server_url)
         try:
             agent_card = await resolver.get_agent_card()
             logger.debug("[%s] A2A: discovered agent '%s'", agent_name, agent_card.name)
