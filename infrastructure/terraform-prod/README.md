@@ -9,9 +9,9 @@ Every resource here has a specific role in the governance story.
 
 | Resource | Type | Purpose | Expected Verdict |
 |---|---|---|---|
-| `vm-dr-01` | Linux VM B1s | Idle disaster-recovery standby | **DENIED** (DR policy + high blast radius) |
-| `vm-web-01` | Linux VM B1s | Active web server under CPU load | **APPROVED** (safe scale-up, no policy violations) |
-| `payment-api-prod-<suffix>` | App Service F1 | Payment microservice | Critical dependency (raises blast radius of vm-web-01 actions) |
+| `vm-dr-01` | Linux VM B1ms | Idle disaster-recovery standby | **DENIED** (DR policy + high blast radius) |
+| `vm-web-01` | Linux VM B1ms | Active web server under CPU load | **APPROVED** (safe scale-up, no policy violations) |
+| `payment-api-prod-<suffix>` | App Service B1 | Payment microservice | Critical dependency (raises blast radius of vm-web-01 actions) |
 | `nsg-east-prod` | Network Security Group | Subnet gateway for both VMs | **ESCALATED** (opening port 8080 affects all governed workloads) |
 | `sentinelprod<suffix>` | Storage Account LRS | Shared dependency for all three | Deletion would cascade to all three resources |
 | Auto-shutdown | Dev/Test Schedule | Shutdown VMs at 22:00 UTC | Saves ~$1/day while not demoing |
@@ -37,7 +37,7 @@ SentinelLayer evaluates:
 ### Scenario 2 — APPROVED: SRE Agent Scales Up vm-web-01
 
 ```
-Monitoring agent: "vm-web-01 CPU at 87% for 15 minutes. Proposing scale-up to Standard_B2s."
+Monitoring agent: "vm-web-01 CPU at 87% for 15 minutes. Proposing scale-up to Standard_B2ms."
 SentinelLayer evaluates:
   SRI:Policy      = 10  ← no policy violations (not a protected resource)
   SRI:Blast Radius= 15  ← vm-web-01 has no critical downstream services
@@ -64,8 +64,9 @@ SentinelLayer evaluates:
 
 - Terraform 1.5+
 - Azure CLI — run `az login` first
-- Azure subscription with enough quota for 2× Standard_B1s VMs
-- About $2–5 of Azure credits (VMs auto-shutdown nightly)
+- Azure subscription with quota for 2× Standard_B1ms VMs and 1× App Service B1
+- About $5–10 of Azure credits (VMs auto-shutdown nightly; App Service B1 runs continuously)
+- Region with B1ms availability — default is `eastus2` (matches main Foundry/Cosmos infra)
 
 ---
 
@@ -128,12 +129,12 @@ This removes all resources and stops all charges. Always run this after the demo
 
 | Resource | Cost while running | With auto-shutdown (8h/day) |
 |---|---|---|
-| vm-dr-01 (B1s) | $0.021/hour | ~$0.17/day |
-| vm-web-01 (B1s) | $0.021/hour | ~$0.17/day |
-| App Service F1 | FREE | FREE |
+| vm-dr-01 (B1ms) | ~$0.021/hour | ~$0.17/day |
+| vm-web-01 (B1ms) | ~$0.021/hour | ~$0.17/day |
+| App Service B1 | ~$0.018/hour (always running) | ~$0.43/day |
 | Storage LRS 1GB | ~$0.002/day | ~$0.002/day |
 | Log Analytics | pay-per-GB | minimal for demo |
-| **Total** | — | **~$0.35/day** |
+| **Total** | — | **~$0.77/day** |
 
 Auto-shutdown is configured at 22:00 UTC. Remember to start VMs manually before a demo:
 ```bash

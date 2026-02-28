@@ -11,9 +11,9 @@ variable "subscription_id" {
 }
 
 variable "location" {
-  description = "Azure region for all prod resources. Must match or be compatible with the main sentinel-layer-rg region."
+  description = "Azure region for all prod resources. Use eastus2 to match Foundry/Cosmos from the main infra, or whichever region has B1ms capacity in your subscription."
   type        = string
-  default     = "eastus"
+  default     = "eastus2"
 }
 
 variable "suffix" {

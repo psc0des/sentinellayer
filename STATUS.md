@@ -146,6 +146,16 @@
   cost math, full governance scenario walkthrough for a non-programmer audience (gitignored)
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (seed_resources still has all legacy names)
 
+#### Phase 11 Bugfix — Azure capacity/quota constraints (commit next)
+- [x] `infrastructure/terraform-prod/main.tf` — VM size `Standard_B1s` → `Standard_B1ms`
+  (B1s capacity unavailable in eastus/eastus2 on trial subscriptions)
+- [x] `infrastructure/terraform-prod/main.tf` — App Service plan `F1` → `B1`
+  (Free F1 quota is 0 on most trial/PAYG subscriptions; B1 Basic has available quota)
+- [x] `infrastructure/terraform-prod/variables.tf` — default `location` changed `eastus` → `eastus2`
+  (matches Foundry + Cosmos region from main infra; B1ms consistently available there)
+- Demo intent unchanged: governance verdicts (DENIED/APPROVED/ESCALATED) are tag-driven,
+  not SKU-driven — swapping VM size has zero effect on SRI scoring
+
 #### Phase 11 Bugfix — Storage ip_rules `/32` rejection (commit 31b40ba)
 - [x] `infrastructure/terraform-prod/main.tf` — split `locals` into two:
   - `local.allowed_source_cidr` → `<ip>/32` — used for NSG `source_address_prefix` (NSG accepts `/32`)

@@ -266,7 +266,7 @@ resource "azurerm_linux_virtual_machine" "dr01" {
   name                            = "vm-dr-01"
   resource_group_name             = azurerm_resource_group.prod.name
   location                        = azurerm_resource_group.prod.location
-  size                            = "Standard_B1s"
+  size                            = "Standard_B1ms"
   admin_username                  = var.vm_admin_username
   admin_password                  = var.vm_admin_password
   disable_password_authentication = false
@@ -297,7 +297,7 @@ resource "azurerm_linux_virtual_machine" "dr01" {
 # 8. VM 2: vm-web-01 — Active Web Server (should be APPROVED for scale-up)
 # =============================================================================
 # This is the live web tier. When the CPU alert fires at >80%, the monitoring
-# agent proposes a scale-up from Standard_B1s → Standard_B2s.
+# agent proposes a scale-up from Standard_B1ms → Standard_B2ms.
 # SentinelLayer APPROVES because:
 #   - No policy violations (no protected tags, no deny-listed action types)
 #   - Low blast radius (no critical downstream services depend on it)
@@ -307,7 +307,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
   name                            = "vm-web-01"
   resource_group_name             = azurerm_resource_group.prod.name
   location                        = azurerm_resource_group.prod.location
-  size                            = "Standard_B1s"
+  size                            = "Standard_B1ms"
   admin_username                  = var.vm_admin_username
   admin_password                  = var.vm_admin_password
   disable_password_authentication = false
@@ -339,7 +339,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
 # =============================================================================
 # Both VMs auto-shutdown at 22:00 UTC every day.
 # This prevents overnight charges while the VMs sit idle between demo runs.
-# The B1s VM costs ~$0.02/hour — auto-shutdown saves ~$10/month per VM.
+# Standard_B1ms costs ~$0.021/hour — auto-shutdown saves ~$10/month per VM.
 
 resource "azurerm_dev_test_global_vm_shutdown_schedule" "dr01" {
   virtual_machine_id    = azurerm_linux_virtual_machine.dr01.id
@@ -366,18 +366,19 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "web01" {
 }
 
 # =============================================================================
-# 10. App Service: payment-api-prod (Free F1 tier)
+# 10. App Service: payment-api-prod (Basic B1 tier)
 # =============================================================================
 # The payment microservice that vm-web-01 depends on.
 # Tagged critical=true — so SentinelLayer's blast radius agent will score any
 # action touching vm-web-01 higher because it could cascade to the payment API.
+# B1 used instead of F1: Free (F1) quota is 0 on most trial/PAYG subscriptions.
 
 resource "azurerm_service_plan" "prod" {
   name                = "asp-sentinel-prod-${var.suffix}"
   resource_group_name = azurerm_resource_group.prod.name
   location            = azurerm_resource_group.prod.location
   os_type             = "Linux"
-  sku_name            = "F1"
+  sku_name            = "B1"
   tags                = local.common_tags
 }
 
@@ -388,7 +389,7 @@ resource "azurerm_linux_web_app" "payment_api" {
   service_plan_id     = azurerm_service_plan.prod.id
 
   site_config {
-    always_on = false # F1 free tier does not support always_on
+    always_on = false # keep false to minimise cost on demo environment
   }
 
   tags = merge(local.common_tags, {
