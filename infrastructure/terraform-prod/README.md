@@ -78,6 +78,8 @@ cd infrastructure/terraform-prod
 # 2. Copy and fill in your variables
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars with your subscription ID, suffix, password, email
+# NSG source IP is auto-detected by default (api.ipify.org) and applied as /32.
+# Optional: set allowed_source_cidr_override to pin a fixed CIDR.
 
 # 3. Initialize Terraform (downloads the Azure provider)
 terraform init
@@ -90,6 +92,10 @@ terraform apply
 
 # 6. Copy real resource IDs into seed_resources.json
 terraform output seed_resources_ids
+
+# Optional: verify what IP rules were applied to NSG and Storage
+terraform output nsg_allowed_source_cidr   # e.g. 1.2.3.4/32 (NSG accepts /32)
+terraform output storage_allowed_ip        # e.g. 1.2.3.4   (Storage rejects /32)
 ```
 
 ---
@@ -151,6 +157,16 @@ infrastructure/terraform-prod/
 ---
 
 ## Notes
+
+- **Network access model (hardened for demo):**
+  - NSG allows HTTP/HTTPS from your current public IP (as a `/32` CIDR) and from inside the VNet.
+  - Storage firewall is `Deny` by default; allows your plain public IP and the prod subnet via service endpoint.
+  - NSG and Storage use *different* representations of the same IP — NSG uses `1.2.3.4/32` (CIDR
+    notation is valid in NSG rules), Storage uses `1.2.3.4` (plain IP — Azure Storage rejects `/31`
+    and `/32` CIDRs in `ip_rules`). This split is handled automatically by `local.allowed_source_cidr`
+    (NSG) vs `local.storage_allowed_ip` (Storage) in `main.tf`.
+  - To pin a fixed IP/CIDR (instead of auto-detected IP), set `allowed_source_cidr_override` in
+    `terraform.tfvars`. If you enter a `/32`, Terraform strips it to a plain IP for Storage automatically.
 
 - **Heartbeat alerts** require the Azure Monitor Agent to be installed on each VM.
   Without it, the heartbeat alert will always be in "No data" state.

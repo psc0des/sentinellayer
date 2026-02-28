@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-02-27 (Phase 10)
+**Last updated:** 2026-02-28 (Phase 11)
 **Active branch:** `main`
 **Demo verdict:** All 3 A2A scenarios pass in mock mode (DENIED / APPROVED / ESCALATED)
 
@@ -145,6 +145,15 @@
 - [x] `learning/21-mini-prod-environment.md` — IaC concepts, tagging strategy, auto-shutdown
   cost math, full governance scenario walkthrough for a non-programmer audience (gitignored)
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (seed_resources still has all legacy names)
+
+#### Phase 11 Bugfix — Storage ip_rules `/32` rejection (commit 31b40ba)
+- [x] `infrastructure/terraform-prod/main.tf` — split `locals` into two:
+  - `local.allowed_source_cidr` → `<ip>/32` — used for NSG `source_address_prefix` (NSG accepts `/32`)
+  - `local.storage_allowed_ip` → plain IP — used for storage `ip_rules` (Azure Storage rejects `/31` and `/32` CIDRs)
+  - `local.raw_public_ip` — intermediate: `trimspace(api.ipify.org response)`, consumed by both
+  - For override CIDRs ending in `/32`: `cidrhost()` strips to plain IP for storage; NSG keeps the `/32`
+- [x] `infrastructure/terraform-prod/outputs.tf` — added `storage_allowed_ip` output alongside
+  the existing `nsg_allowed_source_cidr` so both effective values are visible after apply
 
 ### Phase 10 — A2A Protocol
 - [x] `src/a2a/sentinel_a2a_server.py` — `SentinelAgentExecutor(AgentExecutor)` routes
