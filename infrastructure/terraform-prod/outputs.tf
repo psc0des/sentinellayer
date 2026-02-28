@@ -121,6 +121,16 @@ output "nsg_tags" {
   value       = azurerm_network_security_group.prod.tags
 }
 
+output "nsg_allowed_source_cidr" {
+  description = "Effective source CIDR for NSG HTTP/HTTPS rules (e.g. 1.2.3.4/32). NSG accepts /32."
+  value       = local.allowed_source_cidr
+}
+
+output "storage_allowed_ip" {
+  description = "Effective IP for storage firewall rule (plain IP, no /32 — Azure Storage rejects /32 CIDRs)."
+  value       = local.storage_allowed_ip
+}
+
 # --- Storage Account ---
 
 output "storage_account_id" {

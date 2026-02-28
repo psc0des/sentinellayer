@@ -22,6 +22,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.58"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.4"
+    }
   }
 }
 
@@ -31,8 +35,30 @@ provider "azurerm" {
 }
 
 data "azurerm_client_config" "current" {}
+data "http" "current_public_ip" {
+  url = "https://api.ipify.org"
+}
 
 locals {
+  raw_public_ip = trimspace(data.http.current_public_ip.response_body)
+
+  # For NSG source_address_prefix — /32 CIDR is valid in NSG rules.
+  allowed_source_cidr = (
+    var.allowed_source_cidr_override != "" ?
+    var.allowed_source_cidr_override :
+    "${local.raw_public_ip}/32"
+  )
+
+  # For Storage ip_rules — Azure Storage rejects /31 and /32 CIDRs.
+  # Use plain IP for auto-detected case; strip /32 from override if present.
+  storage_allowed_ip = (
+    var.allowed_source_cidr_override != "" ?
+    (endswith(var.allowed_source_cidr_override, "/32") ?
+      cidrhost(var.allowed_source_cidr_override, 0) :
+      var.allowed_source_cidr_override) :
+    local.raw_public_ip
+  )
+
   common_tags = {
     project    = "sentinellayer"
     managed_by = "terraform"
@@ -67,12 +93,15 @@ resource "azurerm_subnet" "prod" {
   resource_group_name  = azurerm_resource_group.prod.name
   virtual_network_name = azurerm_virtual_network.prod.name
   address_prefixes     = ["10.1.1.0/24"]
+  service_endpoints    = ["Microsoft.Storage"]
 }
 
 # =============================================================================
 # 3. NSG: nsg-east-prod
 # =============================================================================
-# Default: allow HTTP (80) + HTTPS (443).
+# Default: allow HTTP (80) + HTTPS (443) from:
+#   1) your current public IP (auto-detected, or override)
+#   2) inside the VNet (VirtualNetwork service tag)
 # Demo scenario: deploy agent proposes opening port 8080 → SentinelLayer
 # ESCALATES because NSG changes affect all workloads behind the subnet gateway.
 
@@ -87,26 +116,50 @@ resource "azurerm_network_security_group" "prod" {
   })
 
   security_rule {
-    name                       = "allow-http"
+    name                       = "allow-http-my-ip"
     priority                   = 100
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "80"
-    source_address_prefix      = "*"
+    source_address_prefix      = local.allowed_source_cidr
     destination_address_prefix = "*"
   }
 
   security_rule {
-    name                       = "allow-https"
+    name                       = "allow-https-my-ip"
     priority                   = 110
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "443"
-    source_address_prefix      = "*"
+    source_address_prefix      = local.allowed_source_cidr
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow-http-vnet"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow-https-vnet"
+    priority                   = 130
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "VirtualNetwork"
     destination_address_prefix = "*"
   }
 }
@@ -124,11 +177,20 @@ resource "azurerm_subnet_network_security_group_association" "prod" {
 # because three production resources depend on it simultaneously.
 
 resource "azurerm_storage_account" "prod" {
-  name                     = "sentinelprod${var.suffix}"
-  resource_group_name      = azurerm_resource_group.prod.name
-  location                 = azurerm_resource_group.prod.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
+  name                            = "sentinelprod${var.suffix}"
+  resource_group_name             = azurerm_resource_group.prod.name
+  location                        = azurerm_resource_group.prod.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+
+  network_rules {
+    default_action             = "Deny"
+    bypass                     = ["AzureServices"]
+    ip_rules                   = [local.storage_allowed_ip] # plain IP — /32 CIDRs are rejected by Azure Storage
+    virtual_network_subnet_ids = [azurerm_subnet.prod.id]
+  }
 
   tags = merge(local.common_tags, {
     environment = "production"
