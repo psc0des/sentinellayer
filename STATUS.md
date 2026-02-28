@@ -146,15 +146,33 @@
   cost math, full governance scenario walkthrough for a non-programmer audience (gitignored)
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (seed_resources still has all legacy names)
 
-#### Phase 11 Bugfix — Azure capacity/quota constraints (commit next)
-- [x] `infrastructure/terraform-prod/main.tf` — VM size `Standard_B1s` → `Standard_B1ms`
-  (B1s capacity unavailable in eastus/eastus2 on trial subscriptions)
-- [x] `infrastructure/terraform-prod/main.tf` — App Service plan `F1` → `B1`
-  (Free F1 quota is 0 on most trial/PAYG subscriptions; B1 Basic has available quota)
-- [x] `infrastructure/terraform-prod/variables.tf` — default `location` changed `eastus` → `eastus2`
-  (matches Foundry + Cosmos region from main infra; B1ms consistently available there)
+#### Phase 11 Bugfix — Azure capacity/quota constraints + region switch
+- [x] `infrastructure/terraform-prod/main.tf` — VM size `Standard_B1s` → `Standard_B2ls_v2`
+  (B1s/B1ms capacity unavailable in eastus/eastus2 on trial subscriptions; B2ls_v2 available in canadacentral)
+- [x] `infrastructure/terraform-prod/main.tf` — App Service plan `B1` → `F1`
+  (F1 free tier sufficient for governance demo; saves ~$0.43/day)
+- [x] `infrastructure/terraform-prod/variables.tf` — default `location` changed to `canadacentral`
+  (eastus/eastus2 had consistent quota failures; canadacentral has reliable B2ls_v2 + F1 availability)
+- [x] `infrastructure/terraform-prod/variables.tf` — location description updated (removed eastus2 reference)
+- [x] `infrastructure/terraform-prod/terraform.tfvars.example` — location updated to `canadacentral`, `vm_size` added explicitly
 - Demo intent unchanged: governance verdicts (DENIED/APPROVED/ESCALATED) are tag-driven,
   not SKU-driven — swapping VM size has zero effect on SRI scoring
+
+#### Phase 11 Enhancement — CPU stress automation + AMA/DCR + Bastion removal
+- [x] `infrastructure/terraform-prod/main.tf` — `custom_data` (cloud-init) added to `vm-web-01`:
+  installs `stress-ng` + adds cron job (`*/30 * * * *`, 20-min CPU spike) on first boot.
+  CPU alert fires naturally every 30 min without manual intervention or SSH access.
+  Cron persists across deallocation (OS disk preserved); only lost on `terraform destroy`.
+- [x] `infrastructure/terraform-prod/main.tf` — Azure Monitor Agent (AMA) VM extension added
+  to both VMs (`azurerm_virtual_machine_extension`); Data Collection Rule (DCR) +
+  associations added — heartbeat alert now uses real telemetry, not "no data" state
+- [x] `infrastructure/terraform-prod/main.tf` — Azure Bastion removed (subnet, public IP, host,
+  SSH NSG rule). SSH not needed — VMs are governance targets, not interactive boxes.
+  Saves ~$4.56/day. Use `az vm run-command invoke` for any one-off commands.
+- [x] `infrastructure/terraform-prod/main.tf` — dynamic cost lookup map (`vm_hourly_rate_usd_by_sku`)
+  added to `locals`; `outputs.tf` now prints actual hourly rate for the configured SKU
+- [x] `infrastructure/terraform-prod/README.md` — updated: SKU, region, cost table,
+  cloud-init note, AMA/DCR note, Bastion removal note
 
 #### Phase 11 Bugfix — Storage ip_rules `/32` rejection (commit 31b40ba)
 - [x] `infrastructure/terraform-prod/main.tf` — split `locals` into two:

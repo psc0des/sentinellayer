@@ -154,8 +154,8 @@ agent actions — not the governance system itself.
 
 | Resource | Type | Governance Scenario |
 |---|---|---|
-| `vm-dr-01` | Linux VM B1ms | DENIED — `disaster-recovery=true` policy |
-| `vm-web-01` | Linux VM B1ms | APPROVED — safe CPU-triggered scale-up |
+| `vm-dr-01` | Linux VM (`var.vm_size`, default B2ls_v2) | DENIED — `disaster-recovery=true` policy |
+| `vm-web-01` | Linux VM (`var.vm_size`, default B2ls_v2) | APPROVED — safe CPU-triggered scale-up (cloud-init runs stress-ng cron) |
 | `payment-api-prod` | App Service B1 | Critical dependency (raises blast radius) |
 | `nsg-east-prod` | Network Security Group | ESCALATED — port 8080 open affects all governed VMs |
 | `sentinelprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |

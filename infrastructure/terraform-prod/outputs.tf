@@ -50,11 +50,6 @@ output "vm_dr01_private_ip" {
   value       = azurerm_network_interface.dr01.private_ip_address
 }
 
-output "vm_dr01_public_ip" {
-  description = "Public IP address of vm-dr-01"
-  value       = azurerm_public_ip.dr01.ip_address
-}
-
 # --- VM: vm-web-01 ---
 
 output "vm_web01_id" {
@@ -75,11 +70,6 @@ output "vm_web01_tags" {
 output "vm_web01_private_ip" {
   description = "Private IP address of vm-web-01"
   value       = azurerm_network_interface.web01.private_ip_address
-}
-
-output "vm_web01_public_ip" {
-  description = "Public IP address of vm-web-01"
-  value       = azurerm_public_ip.web01.ip_address
 }
 
 # --- App Service: payment-api-prod ---
@@ -122,7 +112,7 @@ output "nsg_tags" {
 }
 
 output "nsg_allowed_source_cidr" {
-  description = "Effective source CIDR for NSG HTTP/HTTPS rules (e.g. 1.2.3.4/32). NSG accepts /32."
+  description = "Effective source CIDR for NSG HTTP/HTTPS rules (e.g. 1.2.3.4/32). No SSH rule — VMs are private-only."
   value       = local.allowed_source_cidr
 }
 
@@ -221,12 +211,13 @@ output "next_steps" {
     5. To destroy when done (avoid charges):
          terraform destroy
 
-    Cost estimate (while VMs are running, Standard_B1s):
-      vm-dr-01:  ~$0.021/hour (~$0.50/day with auto-shutdown at 22:00 UTC)
-      vm-web-01: ~$0.021/hour (~$0.50/day with auto-shutdown at 22:00 UTC)
+    Cost estimate (while VMs are running, ${var.vm_size}):
+      vm-dr-01:  ${local.vm_hourly_rate_usd != null ? format("~$%.4f/hour", local.vm_hourly_rate_usd) : "See Azure Pricing for selected SKU"}
+      vm-web-01: ${local.vm_hourly_rate_usd != null ? format("~$%.4f/hour", local.vm_hourly_rate_usd) : "See Azure Pricing for selected SKU"}
       App Service F1: FREE
       Storage LRS: ~$0.01/GB/month
       Log Analytics: pay-per-GB, minimal for demo
+      Note: auto-shutdown is configured daily at 22:00 UTC; there is no auto-start.
 
   EOT
 }

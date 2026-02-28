@@ -105,9 +105,9 @@ Resources created and their governance roles:
 
 | Resource | Demo Scenario | Expected Verdict |
 |---|---|---|
-| `vm-dr-01` (B1ms) | Cost agent proposes DELETE (idle DR VM) | DENIED — `disaster-recovery=true` policy |
-| `vm-web-01` (B1ms) | SRE agent proposes SCALE UP (CPU >80%) | APPROVED — safe action |
-| `payment-api-prod` (App Service B1) | Critical dependency of vm-web-01 | Raises blast radius score |
+| `vm-dr-01` (B2ls_v2) | Cost agent proposes DELETE (idle DR VM) | DENIED — `disaster-recovery=true` policy |
+| `vm-web-01` (B2ls_v2) | SRE agent proposes SCALE UP (CPU >80%) — cloud-init stress cron fires automatically | APPROVED — safe action |
+| `payment-api-prod` (App Service F1, free) | Critical dependency of vm-web-01 | Raises blast radius score |
 | `nsg-east-prod` (NSG) | Deploy agent proposes open port 8080 | ESCALATED — affects all governed workloads |
 | `sentinelprod{suffix}` (Storage) | Shared dependency of all three above | Deletion → high blast radius |
 

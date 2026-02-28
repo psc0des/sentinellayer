@@ -55,9 +55,18 @@ locals {
     var.allowed_source_cidr_override != "" ?
     (endswith(var.allowed_source_cidr_override, "/32") ?
       cidrhost(var.allowed_source_cidr_override, 0) :
-      var.allowed_source_cidr_override) :
+    var.allowed_source_cidr_override) :
     local.raw_public_ip
   )
+
+  # Rough on-demand hourly estimates in USD for quick demo budgeting.
+  vm_hourly_rate_usd_by_sku = {
+    Standard_B1s      = 0.0104
+    Standard_B1ms     = 0.0210
+    Standard_B2ls_v2  = 0.0499
+    Standard_D2als_v6 = 0.0804
+  }
+  vm_hourly_rate_usd = lookup(local.vm_hourly_rate_usd_by_sku, var.vm_size, null)
 
   common_tags = {
     project    = "sentinellayer"
@@ -162,6 +171,7 @@ resource "azurerm_network_security_group" "prod" {
     source_address_prefix      = "VirtualNetwork"
     destination_address_prefix = "*"
   }
+
 }
 
 resource "azurerm_subnet_network_security_group_association" "prod" {
@@ -199,29 +209,7 @@ resource "azurerm_storage_account" "prod" {
 }
 
 # =============================================================================
-# 5. Public IPs for the two VMs
-# =============================================================================
-
-resource "azurerm_public_ip" "dr01" {
-  name                = "pip-vm-dr-01"
-  resource_group_name = azurerm_resource_group.prod.name
-  location            = azurerm_resource_group.prod.location
-  allocation_method   = "Static"
-  sku                 = "Standard"
-  tags                = local.common_tags
-}
-
-resource "azurerm_public_ip" "web01" {
-  name                = "pip-vm-web-01"
-  resource_group_name = azurerm_resource_group.prod.name
-  location            = azurerm_resource_group.prod.location
-  allocation_method   = "Static"
-  sku                 = "Standard"
-  tags                = local.common_tags
-}
-
-# =============================================================================
-# 6. Network Interface Cards
+# 5. Network Interface Cards
 # =============================================================================
 
 resource "azurerm_network_interface" "dr01" {
@@ -234,7 +222,6 @@ resource "azurerm_network_interface" "dr01" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.prod.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.dr01.id
   }
 }
 
@@ -248,12 +235,11 @@ resource "azurerm_network_interface" "web01" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.prod.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.web01.id
   }
 }
 
 # =============================================================================
-# 7. VM 1: vm-dr-01 — Disaster Recovery (should be DENIED for deletion)
+# 6. VM 1: vm-dr-01 — Disaster Recovery (should be DENIED for deletion)
 # =============================================================================
 # This VM is intentionally idle — that's the point of a standby DR server.
 # The cost agent will flag it as "unused for 30+ days" and propose deletion.
@@ -266,7 +252,7 @@ resource "azurerm_linux_virtual_machine" "dr01" {
   name                            = "vm-dr-01"
   resource_group_name             = azurerm_resource_group.prod.name
   location                        = azurerm_resource_group.prod.location
-  size                            = "Standard_B1ms"
+  size                            = var.vm_size
   admin_username                  = var.vm_admin_username
   admin_password                  = var.vm_admin_password
   disable_password_authentication = false
@@ -281,7 +267,7 @@ resource "azurerm_linux_virtual_machine" "dr01" {
   source_image_reference {
     publisher = "Canonical"
     offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts"
+    sku       = "22_04-lts-gen2"
     version   = "latest"
   }
 
@@ -294,10 +280,10 @@ resource "azurerm_linux_virtual_machine" "dr01" {
 }
 
 # =============================================================================
-# 8. VM 2: vm-web-01 — Active Web Server (should be APPROVED for scale-up)
+# 7. VM 2: vm-web-01 — Active Web Server (should be APPROVED for scale-up)
 # =============================================================================
 # This is the live web tier. When the CPU alert fires at >80%, the monitoring
-# agent proposes a scale-up from Standard_B1ms → Standard_B2ms.
+# agent proposes a scale-up from var.vm_size to a larger size.
 # SentinelLayer APPROVES because:
 #   - No policy violations (no protected tags, no deny-listed action types)
 #   - Low blast radius (no critical downstream services depend on it)
@@ -307,10 +293,24 @@ resource "azurerm_linux_virtual_machine" "web01" {
   name                            = "vm-web-01"
   resource_group_name             = azurerm_resource_group.prod.name
   location                        = azurerm_resource_group.prod.location
-  size                            = "Standard_B1ms"
+  size                            = var.vm_size
   admin_username                  = var.vm_admin_username
   admin_password                  = var.vm_admin_password
   disable_password_authentication = false
+
+  # Cloud-init script: runs once on first boot after terraform apply.
+  # Installs stress-ng and adds a cron job that spikes CPU every 30 minutes
+  # for 20 minutes — long enough to breach the 15-minute alert window and
+  # trigger the Azure Monitor CPU alert → SentinelLayer APPROVES scale-up.
+  # The cron entry survives VM deallocation (auto-shutdown) because the OS
+  # disk is preserved. It is only lost if the VM is destroyed and recreated.
+  custom_data = base64encode(<<-EOF
+    #!/bin/bash
+    apt-get update -q
+    apt-get install -y stress-ng -q
+    echo '*/30 * * * * root stress-ng --cpu 0 --timeout 1200s' >> /etc/crontab
+  EOF
+  )
 
   network_interface_ids = [azurerm_network_interface.web01.id]
 
@@ -322,7 +322,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
   source_image_reference {
     publisher = "Canonical"
     offer     = "0001-com-ubuntu-server-jammy"
-    sku       = "22_04-lts"
+    sku       = "22_04-lts-gen2"
     version   = "latest"
   }
 
@@ -335,11 +335,11 @@ resource "azurerm_linux_virtual_machine" "web01" {
 }
 
 # =============================================================================
-# 9. Auto-Shutdown Schedules (cost management)
+# 8. Auto-Shutdown Schedules (cost management)
 # =============================================================================
 # Both VMs auto-shutdown at 22:00 UTC every day.
 # This prevents overnight charges while the VMs sit idle between demo runs.
-# Standard_B1ms costs ~$0.021/hour — auto-shutdown saves ~$10/month per VM.
+# Hourly cost depends on var.vm_size and region pricing.
 
 resource "azurerm_dev_test_global_vm_shutdown_schedule" "dr01" {
   virtual_machine_id    = azurerm_linux_virtual_machine.dr01.id
@@ -366,19 +366,19 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "web01" {
 }
 
 # =============================================================================
-# 10. App Service: payment-api-prod (Basic B1 tier)
+# 9. App Service: payment-api-prod (Free F1 tier)
 # =============================================================================
 # The payment microservice that vm-web-01 depends on.
 # Tagged critical=true — so SentinelLayer's blast radius agent will score any
 # action touching vm-web-01 higher because it could cascade to the payment API.
-# B1 used instead of F1: Free (F1) quota is 0 on most trial/PAYG subscriptions.
+# F1 selected for low-cost demo usage in this subscription/region.
 
 resource "azurerm_service_plan" "prod" {
   name                = "asp-sentinel-prod-${var.suffix}"
   resource_group_name = azurerm_resource_group.prod.name
   location            = azurerm_resource_group.prod.location
   os_type             = "Linux"
-  sku_name            = "B1"
+  sku_name            = "F1"
   tags                = local.common_tags
 }
 
@@ -400,7 +400,7 @@ resource "azurerm_linux_web_app" "payment_api" {
 }
 
 # =============================================================================
-# 11. Log Analytics Workspace (backing store for monitor alerts)
+# 10. Log Analytics Workspace (backing store for monitor alerts)
 # =============================================================================
 
 resource "azurerm_log_analytics_workspace" "prod" {
@@ -410,6 +410,69 @@ resource "azurerm_log_analytics_workspace" "prod" {
   sku                 = "PerGB2018"
   retention_in_days   = 30
   tags                = local.common_tags
+}
+
+# =============================================================================
+# 11. Azure Monitor Agent + DCR (real heartbeat/metrics pipeline)
+# =============================================================================
+
+resource "azurerm_virtual_machine_extension" "ama_dr01" {
+  name                       = "AzureMonitorLinuxAgent"
+  virtual_machine_id         = azurerm_linux_virtual_machine.dr01.id
+  publisher                  = "Microsoft.Azure.Monitor"
+  type                       = "AzureMonitorLinuxAgent"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+}
+
+resource "azurerm_virtual_machine_extension" "ama_web01" {
+  name                       = "AzureMonitorLinuxAgent"
+  virtual_machine_id         = azurerm_linux_virtual_machine.web01.id
+  publisher                  = "Microsoft.Azure.Monitor"
+  type                       = "AzureMonitorLinuxAgent"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+}
+
+resource "azurerm_monitor_data_collection_rule" "vm_signals" {
+  name                = "dcr-sentinel-prod-${var.suffix}"
+  resource_group_name = azurerm_resource_group.prod.name
+  location            = azurerm_resource_group.prod.location
+  kind                = "Linux"
+  tags                = local.common_tags
+
+  destinations {
+    log_analytics {
+      workspace_resource_id = azurerm_log_analytics_workspace.prod.id
+      name                  = "law-destination"
+    }
+  }
+
+  data_flow {
+    streams      = ["Microsoft-Perf"]
+    destinations = ["law-destination"]
+  }
+
+  data_sources {
+    performance_counter {
+      name                          = "cpu-perf-60s"
+      streams                       = ["Microsoft-Perf"]
+      sampling_frequency_in_seconds = 60
+      counter_specifiers            = ["\\Processor Information(_Total)\\% Processor Time"]
+    }
+  }
+}
+
+resource "azurerm_monitor_data_collection_rule_association" "dr01" {
+  name                    = "dcra-vm-dr-01"
+  target_resource_id      = azurerm_linux_virtual_machine.dr01.id
+  data_collection_rule_id = azurerm_monitor_data_collection_rule.vm_signals.id
+}
+
+resource "azurerm_monitor_data_collection_rule_association" "web01" {
+  name                    = "dcra-vm-web-01"
+  target_resource_id      = azurerm_linux_virtual_machine.web01.id
+  data_collection_rule_id = azurerm_monitor_data_collection_rule.vm_signals.id
 }
 
 # =============================================================================
@@ -465,7 +528,7 @@ resource "azurerm_monitor_metric_alert" "web01_cpu" {
 # If vm-dr-01 sends no heartbeat for 15 minutes it is considered idle/stopped.
 # In the demo flow: no heartbeat → cost agent flags as idle → proposes deletion
 # → SentinelLayer DENIES (disaster-recovery policy + high blast radius).
-# Requires Azure Monitor Agent installed on the VM to emit heartbeats.
+# Uses AMA + DCR so this is real heartbeat telemetry, not just "no data".
 
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dr01_heartbeat" {
   name                = "alert-vm-dr-01-heartbeat"
@@ -480,11 +543,10 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dr01_heartbeat" {
   scopes               = [azurerm_log_analytics_workspace.prod.id]
 
   criteria {
-    # Returns one row per heartbeat received from vm-dr-01 in the last 15 minutes.
-    # Count = 0 means the VM is not communicating → alert fires.
+    # If no heartbeat rows for vm-dr-01 in last 15m, alert fires.
     query = <<-QUERY
       Heartbeat
-      | where Computer contains "vm-dr-01"
+      | where _ResourceId =~ "${azurerm_linux_virtual_machine.dr01.id}"
       | where TimeGenerated > ago(15m)
     QUERY
 
@@ -503,4 +565,9 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dr01_heartbeat" {
   }
 
   tags = local.common_tags
+
+  depends_on = [
+    azurerm_virtual_machine_extension.ama_dr01,
+    azurerm_monitor_data_collection_rule_association.dr01
+  ]
 }

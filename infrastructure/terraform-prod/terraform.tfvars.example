@@ -14,7 +14,8 @@
 subscription_id = "<your-azure-subscription-id>"
 
 # Azure region — keep this the same as your main sentinel-layer-rg
-location = "eastus"
+location = "canadacentral"
+vm_size  = "Standard_B2ls_v2"
 
 # Short unique suffix for globally-unique resource names.
 # Rules: lowercase letters and digits ONLY, max 8 characters.

@@ -9,14 +9,15 @@ Every resource here has a specific role in the governance story.
 
 | Resource | Type | Purpose | Expected Verdict |
 |---|---|---|---|
-| `vm-dr-01` | Linux VM B1ms | Idle disaster-recovery standby | **DENIED** (DR policy + high blast radius) |
-| `vm-web-01` | Linux VM B1ms | Active web server under CPU load | **APPROVED** (safe scale-up, no policy violations) |
-| `payment-api-prod-<suffix>` | App Service B1 | Payment microservice | Critical dependency (raises blast radius of vm-web-01 actions) |
+| `vm-dr-01` | Linux VM (`var.vm_size`) | Idle disaster-recovery standby | **DENIED** (DR policy + high blast radius) |
+| `vm-web-01` | Linux VM (`var.vm_size`) | Active web server — cloud-init installs CPU stress cron | **APPROVED** (safe scale-up, no policy violations) |
+| `payment-api-prod-<suffix>` | App Service F1 (free) | Payment microservice | Critical dependency (raises blast radius of vm-web-01 actions) |
 | `nsg-east-prod` | Network Security Group | Subnet gateway for both VMs | **ESCALATED** (opening port 8080 affects all governed workloads) |
 | `sentinelprod<suffix>` | Storage Account LRS | Shared dependency for all three | Deletion would cascade to all three resources |
-| Auto-shutdown | Dev/Test Schedule | Shutdown VMs at 22:00 UTC | Saves ~$1/day while not demoing |
+| Auto-shutdown | Dev/Test Schedule | Shutdown VMs at 22:00 UTC | Saves money while not demoing |
 | CPU alert | Monitor Metric Alert | Fires when vm-web-01 CPU > 80% | Triggers monitoring agent → scale-up proposal |
 | Heartbeat alert | Scheduled Query Alert | Fires when vm-dr-01 goes silent | Triggers cost agent → deletion proposal |
+| AMA + DCR | VM Extension + Data Collection Rule | Routes heartbeat + perf data to Log Analytics | Enables real alert telemetry (not just "no data") |
 
 ---
 
@@ -64,9 +65,9 @@ SentinelLayer evaluates:
 
 - Terraform 1.5+
 - Azure CLI — run `az login` first
-- Azure subscription with quota for 2× Standard_B1ms VMs and 1× App Service B1
-- About $5–10 of Azure credits (VMs auto-shutdown nightly; App Service B1 runs continuously)
-- Region with B1ms availability — default is `eastus2` (matches main Foundry/Cosmos infra)
+- Azure subscription with quota for 2× `Standard_B2ls_v2` VMs (default `var.vm_size`) and 1× App Service F1
+- About $5–10 of Azure credits (VMs auto-shutdown nightly; App Service F1 is free)
+- Region with B2ls_v2 availability — default is `canadacentral`
 
 ---
 
@@ -129,12 +130,14 @@ This removes all resources and stops all charges. Always run this after the demo
 
 | Resource | Cost while running | With auto-shutdown (8h/day) |
 |---|---|---|
-| vm-dr-01 (B1ms) | ~$0.021/hour | ~$0.17/day |
-| vm-web-01 (B1ms) | ~$0.021/hour | ~$0.17/day |
-| App Service B1 | ~$0.018/hour (always running) | ~$0.43/day |
+| vm-dr-01 (B2ls_v2) | ~$0.0499/hour | ~$0.40/day |
+| vm-web-01 (B2ls_v2) | ~$0.0499/hour | ~$0.40/day |
+| App Service F1 | FREE | FREE |
 | Storage LRS 1GB | ~$0.002/day | ~$0.002/day |
 | Log Analytics | pay-per-GB | minimal for demo |
-| **Total** | — | **~$0.77/day** |
+| **Total** | — | **~$0.80/day** |
+
+> Prices are for `canadacentral`. If you override `var.vm_size`, the `terraform output next_steps` will print the actual hourly rate for your chosen SKU.
 
 Auto-shutdown is configured at 22:00 UTC. Remember to start VMs manually before a demo:
 ```bash
@@ -169,10 +172,18 @@ infrastructure/terraform-prod/
   - To pin a fixed IP/CIDR (instead of auto-detected IP), set `allowed_source_cidr_override` in
     `terraform.tfvars`. If you enter a `/32`, Terraform strips it to a plain IP for Storage automatically.
 
-- **Heartbeat alerts** require the Azure Monitor Agent to be installed on each VM.
-  Without it, the heartbeat alert will always be in "No data" state.
-  To install: `az vm extension set --name AzureMonitorLinuxAgent ...`
-  (not included in Terraform to keep the demo lightweight)
+- **Heartbeat alerts** use a real pipeline: AMA (Azure Monitor Agent) is installed on both VMs
+  via `azurerm_virtual_machine_extension`, and a Data Collection Rule (DCR) routes heartbeat +
+  CPU perf data to the Log Analytics workspace. No manual setup required after `terraform apply`.
+
+- **CPU stress (vm-web-01 only):** A cloud-init script runs on first boot. It installs `stress-ng`
+  and adds a cron job (`*/30 * * * *`) that pegs all CPUs for 20 minutes every 30 minutes.
+  This ensures the CPU alert fires naturally during a demo without any manual intervention.
+  To verify or stop the cron: `az vm run-command invoke --resource-group sentinel-prod-rg
+  --name vm-web-01 --command-id RunShellScript --scripts "cat /etc/crontab"`
+
+- **No Azure Bastion** — SSH access is not needed for these demo VMs. They are governance targets,
+  not interactive boxes. Use `az vm run-command invoke` for any one-off commands.
 
 - **App Service name** includes your suffix (`payment-api-prod-<suffix>`) because
   App Service names must be globally unique across all Azure customers.

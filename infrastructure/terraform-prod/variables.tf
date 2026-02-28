@@ -11,9 +11,15 @@ variable "subscription_id" {
 }
 
 variable "location" {
-  description = "Azure region for all prod resources. Use eastus2 to match Foundry/Cosmos from the main infra, or whichever region has B1ms capacity in your subscription."
+  description = "Azure region for all prod resources. Default is canadacentral where this demo has reliable VM/App Service capacity."
   type        = string
-  default     = "eastus2"
+  default     = "canadacentral"
+}
+
+variable "vm_size" {
+  description = "VM size for both production demo VMs."
+  type        = string
+  default     = "Standard_B2ls_v2"
 }
 
 variable "suffix" {
