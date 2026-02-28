@@ -44,8 +44,8 @@ variable "vm_admin_password" {
     Must be 12+ characters with uppercase, lowercase, digit, and special character.
     Stored only in terraform.tfvars (gitignored) — never committed.
   EOT
-  type      = string
-  sensitive = true
+  type        = string
+  sensitive   = true
 
   validation {
     condition     = length(var.vm_admin_password) >= 12
@@ -57,4 +57,18 @@ variable "alert_email" {
   description = "Email address for Azure Monitor alert notifications (CPU + heartbeat alerts)."
   type        = string
   default     = "ops-team@example.com"
+}
+
+variable "allowed_source_cidr_override" {
+  description = "Optional CIDR override for NSG HTTP/HTTPS allow rules (example: 203.0.113.10/32). If empty, Terraform auto-detects your current public IP."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.allowed_source_cidr_override == "" ||
+      can(cidrhost(var.allowed_source_cidr_override, 0))
+    )
+    error_message = "allowed_source_cidr_override must be empty or a valid CIDR (for example 203.0.113.10/32)."
+  }
 }
