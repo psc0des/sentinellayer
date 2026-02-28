@@ -117,11 +117,11 @@
 
 ### Phase 11 — Mini Production Environment  ← LATEST
 - [x] `infrastructure/terraform-prod/main.tf` — 14 Azure resources in `sentinel-prod-rg`:
-  - `vm-dr-01` (Standard_B1s, Ubuntu) — idle DR VM; cost agent → `DELETE` → **DENIED**
+  - `vm-dr-01` (Standard_B1ms, Ubuntu) — idle DR VM; cost agent → `DELETE` → **DENIED**
     (tags: `disaster-recovery=true`, `environment=production`, `owner=platform-team`, `cost-center=infrastructure`)
-  - `vm-web-01` (Standard_B1s, Ubuntu) — active web server; SRE agent → `SCALE_UP` → **APPROVED**
+  - `vm-web-01` (Standard_B1ms, Ubuntu) — active web server; SRE agent → `SCALE_UP` → **APPROVED**
     (tags: `tier=web`, `environment=production`, `owner=web-team`, `cost-center=frontend`)
-  - `payment-api-prod-{suffix}` (App Service Free F1) — payment microservice; `critical=true`
+  - `payment-api-prod-{suffix}` (App Service Basic B1) — payment microservice; `critical=true`
     dependency of vm-web-01 that raises blast radius for any web-tier action
   - `nsg-east-prod` (NSG, HTTP/HTTPS allow) — deploy agent → open port 8080 → **ESCALATED**
     (affects all workloads behind subnet gateway; tags: `managed-by=platform-team`)
