@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-01 (Phase 12 planning)
+**Last updated:** 2026-03-01 (Phase 12 complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -20,7 +20,10 @@
 | Blast radius agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
 | Historical agent | ✅ Complete + live search | Azure AI Search (BM25) + GPT-4.1 |
 | Financial agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
-| Operational agent: deploy-agent | ✅ Complete | `data/seed_resources.json` |
+| Operational agent: deploy-agent | ✅ Complete | `data/seed_resources.json` + Resource Graph + NSG rules |
+| Generic Azure tools (`azure_tools.py`) | ✅ Complete | `src/infrastructure/azure_tools.py` |
+| Two-layer intelligence (Phase 12) | ✅ Complete | ops agents + GPT-4.1 investigation |
+| Alert-trigger endpoint | ✅ Complete | `POST /api/alert-trigger` |
 | Pipeline (parallel execution) | ✅ Complete | `asyncio.gather()` (async-first) |
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
@@ -115,7 +118,43 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 11 — Mini Production Environment  ← LATEST
+### Phase 12 — Intelligent Ops Agents  ← LATEST
+- [x] `src/infrastructure/azure_tools.py` — **NEW**: 5 generic sync Azure investigation tools:
+  - `query_resource_graph(kusto_query)` — KQL query via `ResourceGraphClient`; discovers resources
+  - `query_metrics(resource_id, metric_names, timespan)` — real CPU/memory data via `MetricsQueryClient`
+  - `get_resource_details(resource_id)` — full resource info via Resource Graph
+  - `query_activity_log(resource_group, timespan)` — recent changes via `LogsQueryClient` (LA workspace)
+  - `list_nsg_rules(nsg_resource_id)` — actual NSG security rules via Resource Graph
+  - Each: `DefaultAzureCredential` live mode + realistic mock fallback from `seed_resources.json`
+  - All sync (work directly inside `@af.tool` without `asyncio.run()` conflicts)
+- [x] `src/operational_agents/cost_agent.py` — **rewritten**: Senior FinOps Engineer persona
+  - Tools: `query_resource_graph`, `query_metrics`, `get_resource_details`, `propose_action`
+  - GPT-4.1 discovers VMs, checks 7-day avg CPU, only proposes when evidence shows waste (< 20%)
+  - `propose_action` tool validates ActionType/Urgency enums, parses ARM resource IDs
+  - `_scan_rules()` preserved unchanged for mock/CI fallback
+- [x] `src/operational_agents/monitoring_agent.py` — **rewritten**: Senior SRE persona
+  - New `alert_payload` parameter: alert-driven mode receives Azure Monitor webhook data
+  - Alert mode: confirms metric with real data before proposing remediation
+  - Scan mode: proactive reliability scan across a resource group
+  - Tools: `query_metrics`, `get_resource_details`, `query_resource_graph`, `propose_action`
+- [x] `src/operational_agents/deploy_agent.py` — **rewritten**: Senior Platform Engineer persona
+  - GPT-4.1 discovers NSGs, inspects actual rules via `list_nsg_rules`, checks activity logs
+  - Tools: `query_resource_graph`, `list_nsg_rules`, `get_resource_details`, `query_activity_log`, `propose_action`
+- [x] `src/api/dashboard_api.py` — `POST /api/alert-trigger` endpoint added
+  - Receives Azure Monitor alert webhook body (resource_id, metric, value, threshold)
+  - Calls `MonitoringAgent.scan(alert_payload=...)` → `pipeline.evaluate()` for each proposal
+  - Returns proposals + governance verdicts in one response
+  - CORS updated to allow POST methods
+- [x] `demo_live.py` — **NEW**: Phase 12 two-layer intelligence demo
+  - Scenario 1: CPU alert → MonitoringAgent investigates vm-web-01 → SCALE_UP proposal
+  - Scenario 2: FinOps scan → CostAgent discovers idle vm-dr-01 → SCALE_DOWN proposal
+  - Scenario 3: Security review → DeployAgent audits nsg-east-prod → MODIFY_NSG proposal
+  - Each: shows GPT-4.1 reasoning (Layer 1) + SentinelLayer SRI verdict (Layer 2)
+- [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+- [x] Commit: `af1bf28` — `feat(agents): environment-agnostic intelligent ops agents`
+- [x] Learning: `learning/23-intelligent-agents.md`
+
+### Phase 11 — Mini Production Environment
 - [x] `infrastructure/terraform-prod/main.tf` — 14 Azure resources in `sentinel-prod-rg`:
   - `vm-dr-01` (Standard_B1ms, Ubuntu) — idle DR VM; cost agent → `DELETE` → **DENIED**
     (tags: `disaster-recovery=true`, `environment=production`, `owner=platform-team`, `cost-center=infrastructure`)
@@ -336,14 +375,20 @@ python scripts/seed_data.py
 # End-to-end governance demo — direct Python pipeline (3 scenarios)
 python demo.py
 
+# Phase 12 — two-layer intelligence demo (ops agents investigate + SentinelLayer evaluates)
+python demo_live.py
+
 # A2A protocol demo — server + 3 agent clients via A2A (Phase 10)
 python demo_a2a.py
 
 # SentinelLayer as A2A server (Phase 10)
 uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
 
-# FastAPI dashboard (includes /api/agents endpoints)
+# FastAPI dashboard (includes /api/agents + alert-trigger endpoints)
 uvicorn src.api.dashboard_api:app --reload
+
+# Trigger monitoring agent via API (simulates Azure Monitor alert webhook):
+# POST /api/alert-trigger  body: {"resource_id":"vm-web-01","metric":"Percentage CPU","value":95}
 
 # Unit tests (mock mode — no Azure needed)
 pytest tests/ -v
@@ -390,52 +435,43 @@ equivalent tag formats or novel risk patterns — is never reached.
 
 These are ideas, not commitments. Pick up from here:
 
-### Phase 12 — Intelligent Ops Agents (Priority)
+### Phase 13 — Azure Monitor Alert Webhook Wiring (Priority)
 
-The core insight: **SentinelLayer should be a second opinion, not the only intelligence.**
-Right now ops agents are "message senders" — they assemble hardcoded `ProposedAction`
-structs. A well-designed agent should reason before it proposes.
+Phase 12 built the `POST /api/alert-trigger` endpoint and the intelligent `MonitoringAgent`.
+Phase 13 closes the loop by wiring real Azure Monitor alerts directly to this endpoint:
 
-**Two-layer intelligence model:**
 ```
-Layer 1 — Ops Agent (pre-flight reasoning)
-  ├── Query real data (Azure Monitor metrics, Resource Graph tags)
-  ├── Understand blast radius of its own action before proposing
-  ├── Self-filter obviously dangerous proposals (e.g. detect disaster-recovery tag)
-  └── Submit a rich, evidence-backed ProposedAction
-
-Layer 2 — SentinelLayer (independent second opinion)
-  ├── Catches what the ops agent missed
-  ├── Enforces org-wide policy the agent may not know about
-  └── Escalates or denies based on composite SRI
-```
-
-**Why this matters — the tag example:** `POL-DR-001` today uses an exact string match
-(`disaster-recovery: true`). An intelligent ops agent with semantic understanding of
-resource tags would recognise a DR resource and either not propose the deletion or flag
-it explicitly in its reason — before SentinelLayer even sees it. The governance engine
-is the safety net, not the first line of defence.
-
-**Concrete next build — intelligent monitoring-agent:**
-```
-Real flow (buildable now):
-  Azure Monitor alert fires (vm-web-01 CPU > 80%)
+Real flow (Phase 13 target):
+  vm-web-01 CPU > 80% (stress-ng fires every 30 min via cron)
         ↓
-  Logic App webhook hits SentinelLayer API endpoint
+  Azure Monitor metric alert fires
         ↓
-  monitoring-agent receives real alert payload
+  Action Group webhook → POST /api/alert-trigger
         ↓
-  Agent queries Azure Monitor for actual metric value + duration
+  MonitoringAgent.scan(alert_payload=...) → confirms via query_metrics
         ↓
-  Agent reasons: "CPU at 89% sustained for 20 min — not a transient spike.
-                  B4ms will handle it without over-provisioning."
+  GPT-4.1: "7-day avg CPU 82.5%, peak 100% — sustained load. Propose scale_up."
         ↓
-  Submits ProposedAction with metric evidence attached
+  SentinelLayer evaluates → APPROVED (SRI < 25, low blast radius)
         ↓
-  SentinelLayer evaluates → APPROVED with full audit trail
+  Verdict written to Cosmos DB, visible on dashboard
 ```
 
-This is the end-to-end story: real alert → real reasoning → real governance.
+**Steps:**
+1. Expose `POST /api/alert-trigger` publicly (ngrok for demo, or Azure App Service)
+2. In Azure Portal: Alerts → Action Groups → add Webhook pointing to the endpoint
+3. Test: run `stress-ng` on vm-web-01 → alert fires → end-to-end
+
+### Phase 14 — React Dashboard: Live Agent Intelligence Panel
+
+Add a new dashboard panel showing the two-layer intelligence in real time:
+- Layer 1 card: which ops agent fired, what tools it called, the evidence it gathered
+- Layer 2 card: SentinelLayer's SRI breakdown and verdict
+
+### Phase 15 — Multi-Agent Orchestrator
+
+Build an orchestrator that runs all 3 ops agents on a schedule and pipes proposals
+through SentinelLayer automatically — fully autonomous cloud governance loop.
 
 - [ ] **Wire Logic App webhook** — Azure Monitor alert → HTTP POST to
   `POST /api/evaluate` or a new `/api/alert-trigger` endpoint

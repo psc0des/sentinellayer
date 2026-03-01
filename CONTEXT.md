@@ -28,6 +28,11 @@ src/
 │   ├── operational_a2a_clients.py  # Operational agent A2A client wrappers
 │   └── agent_registry.py        # Tracks connected A2A agents with stats
 ├── infrastructure/              # Azure service clients (live + mock fallback)
+│   ├── azure_tools.py           # 5 generic investigation tools (Phase 12) ← NEW
+│   │                            #   query_resource_graph, query_metrics,
+│   │                            #   get_resource_details, query_activity_log,
+│   │                            #   list_nsg_rules — used by all ops agents
+│   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff (Phase 12)
 │   ├── resource_graph.py        # Azure Resource Graph (mock: seed_resources.json)
 │   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
@@ -152,8 +157,10 @@ SentinelLayer (Layer 2 — independent second opinion)
     → Decision logged to audit trail
 ```
 
-**Current state:** Ops agents are simple rule-based proposal generators.
-The intelligence plan is Phase 12 — see STATUS.md for the roadmap.
+**Current state (Phase 12 complete):** Ops agents now genuinely investigate real Azure
+data with GPT-4.1 before proposing. Each agent uses 5 generic tools from
+``src/infrastructure/azure_tools.py`` to query Resource Graph, Monitor metrics, NSG rules,
+and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
@@ -173,11 +180,13 @@ The intelligence plan is Phase 12 — see STATUS.md for the roadmap.
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 12 — Intelligent Ops Agents (planning)**
+**Phase 12 — Intelligent Ops Agents (complete)**
 
-The next major step is making the operational agents genuinely intelligent — not just
-rule-based proposal generators. See STATUS.md → "What's Next → Phase 12" for the full
-plan including the two-layer intelligence model and the intelligent monitoring-agent build.
+Ops agents now use 5 generic Azure tools (``src/infrastructure/azure_tools.py``) to
+investigate real data before proposing. GPT-4.1 discovers resources, checks actual CPU
+metrics, inspects NSG rules, and reviews activity logs — then calls ``propose_action``
+with evidence-backed reasons. ``POST /api/alert-trigger`` enables Azure Monitor webhook
+integration. Run ``python demo_live.py`` to see two-layer intelligence end-to-end.
 
 **Phase 11 — Mini Production Environment (complete)**
 
