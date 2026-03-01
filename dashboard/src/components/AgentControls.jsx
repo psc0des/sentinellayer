@@ -103,7 +103,9 @@ function AgentButton({ type, scanning, lastStatus, onTrigger }) {
  *   evaluation data and update the dashboard.
  */
 export default function AgentControls({ onScanComplete }) {
-  const [resourceGroup, setResourceGroup] = useState('sentinel-prod-rg')
+  // Default empty → API sends null resource_group → agents scan whole subscription.
+  // Fill in a resource group name to scope scans to a specific RG.
+  const [resourceGroup, setResourceGroup] = useState('')
 
   // { cost: bool, monitoring: bool, deploy: bool }
   const [scanning,    setScanning]    = useState({ cost: false, monitoring: false, deploy: false })
@@ -206,14 +208,14 @@ export default function AgentControls({ onScanComplete }) {
       {/* ── Resource group input ── */}
       <div className="mb-4">
         <label className="block text-xs text-slate-500 mb-1" htmlFor="rg-input">
-          Resource Group
+          Resource Group <span className="text-slate-600">(optional)</span>
         </label>
         <input
           id="rg-input"
           type="text"
           value={resourceGroup}
           onChange={e => setResourceGroup(e.target.value)}
-          placeholder="sentinel-prod-rg"
+          placeholder="e.g. sentinel-prod-rg (leave empty to scan whole subscription)"
           className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors font-mono"
         />
       </div>

@@ -114,25 +114,50 @@ def query_resource_graph(kusto_query: str, subscription_id: str = "") -> list[di
 
 
 def _mock_query_resource_graph(kusto_query: str) -> list[dict]:
-    """Return seed resources filtered by type hints found in the Kusto query."""
+    """Return seed resources filtered by type and resource-group hints in the KQL.
+
+    This is an approximate parser — it extracts type keywords and an optional
+    ``resourceGroup`` equality filter from the Kusto query string.  It does not
+    implement full KQL semantics; complex joins, projections, and predicates are
+    silently ignored.  Live mode uses the real Resource Graph API instead.
+    """
     resources = _seed().get("resources", [])
     query_lower = kusto_query.lower()
 
-    # Infer which resource types the query is interested in.
-    type_filters: list[str] = []
-    if "virtualmachines" in query_lower:
-        type_filters.append("Microsoft.Compute/virtualMachines")
-    if "networksecuritygroups" in query_lower:
-        type_filters.append("Microsoft.Network/networkSecurityGroups")
-    if "managedclusters" in query_lower:
-        type_filters.append("Microsoft.ContainerService/managedClusters")
-    if "storageaccounts" in query_lower:
-        type_filters.append("Microsoft.Storage/storageAccounts")
-    if "sites" in query_lower:
-        type_filters.append("Microsoft.Web/sites")
-
+    # --- Resource-type filter (keyword matching) ---
+    # Map Kusto type substrings → canonical Azure resource type strings.
+    _TYPE_MAP: list[tuple[str, str]] = [
+        ("virtualmachines",         "Microsoft.Compute/virtualMachines"),
+        ("networksecuritygroups",   "Microsoft.Network/networkSecurityGroups"),
+        ("managedclusters",         "Microsoft.ContainerService/managedClusters"),
+        ("storageaccounts",         "Microsoft.Storage/storageAccounts"),
+        ("serverfarms",             "Microsoft.Web/serverFarms"),
+        ("sites",                   "Microsoft.Web/sites"),
+        ("servers/databases",       "Microsoft.Sql/servers/databases"),
+        ("databaseaccounts",        "Microsoft.DocumentDB/databaseAccounts"),
+        ("registries",              "Microsoft.ContainerRegistry/registries"),
+        ("azurefirewalls",          "Microsoft.Network/azureFirewalls"),
+        ("workspaces",              "Microsoft.OperationalInsights/workspaces"),
+    ]
+    type_filters: list[str] = [t for kw, t in _TYPE_MAP if kw in query_lower]
     if type_filters:
         resources = [r for r in resources if r.get("type") in type_filters]
+
+    # --- Resource-group filter (simple equality / =~ extraction) ---
+    # Handles patterns: resourceGroup == 'rg-name'  or  resourceGroup =~ 'rg-name'
+    import re as _re
+    rg_match = _re.search(
+        r"resourcegroup\s*=~?\s*'([^']+)'",
+        query_lower,
+    )
+    if rg_match:
+        target_rg = rg_match.group(1).lower()
+        seed_meta = _seed()
+        resources = [
+            r for r in resources
+            if (r.get("resource_group") or seed_meta.get("resource_group", "")).lower()
+            == target_rg
+        ]
 
     seed_meta = _seed()
     result: list[dict] = []
@@ -254,7 +279,11 @@ def _mock_query_metrics(
         # Legacy demo DR VM: idle
         cpu_avg, cpu_max, cpu_min = 4.1, 18.5, 0.8
     else:
-        cpu_avg, cpu_max, cpu_min = 20.0, 45.0, 5.0
+        # Unknown resource: return a moderate "busy" baseline so that unknown
+        # resources do NOT trigger false-positive right-sizing proposals in
+        # mock mode.  The 20 % threshold for right-sizing would fire on the
+        # old default (20 % avg); 50 % is safely above that threshold.
+        cpu_avg, cpu_max, cpu_min = 50.0, 75.0, 20.0
 
     metrics: dict = {}
     for metric_name in metric_names:

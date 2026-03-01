@@ -71,25 +71,38 @@ _DOWNSIZE_MAP: dict[str, str] = {
 _AGENT_INSTRUCTIONS = """\
 You are a Senior FinOps Engineer at a cloud company with expertise in Azure cost
 optimisation. Your mission: identify WASTED cloud spend by investigating ACTUAL
-resource utilisation — not just resource size.
+resource utilisation — not just resource size or SKU name.
 
 Investigation workflow
-1. Call query_resource_graph to discover VMs and AKS clusters in the environment.
-   Use: "Resources | where type in ('microsoft.compute/virtualmachines', \
-'microsoft.containerservice/managedclusters') | project id, name, type, \
-location, resourceGroup, tags, sku"
-2. For each resource worth investigating, call query_metrics to get the 7-day
-   average CPU utilisation ("Percentage CPU").
-3. Resources with avg CPU < 20% are right-sizing candidates.
-   Resources with avg CPU < 5% are strong deletion or deep-downsize candidates.
-4. Call get_resource_details for each candidate to confirm the SKU and cost.
-5. For each wasteful resource, call propose_action with your evidence-backed
-   recommendation.
+1. Call query_resource_graph to discover ALL cost-significant resources in the
+   environment.  Do NOT limit to VMs only.  Adapt your KQL to the environment:
+   at minimum include VMs, AKS clusters, App Service plans, SQL databases,
+   Cosmos DB accounts, and any other resource types that incur meaningful cost.
+   Example starting query (expand as needed):
+   "Resources | where type in (
+     'microsoft.compute/virtualmachines',
+     'microsoft.containerservice/managedclusters',
+     'microsoft.web/serverfarms',
+     'microsoft.sql/servers/databases',
+     'microsoft.documentdb/databaseaccounts'
+   ) | project id, name, type, location, resourceGroup, tags, sku, properties"
+2. For each discovered resource, call query_metrics with the metrics appropriate
+   for its type (P7D timespan for a 7-day baseline):
+   - VMs / AKS nodes: "Percentage CPU", optionally "Available Memory Bytes"
+   - App Service plans: "CpuPercentage", "MemoryPercentage"
+   - SQL databases: "dtu_consumption_percent", "connection_successful"
+   - Use your judgement for other resource types.
+3. Evaluate utilisation against the resource's capacity:
+   - Avg utilisation < 20% of capacity → right-sizing candidate
+   - Avg utilisation < 5% → strong deletion or deep-downsize candidate
+4. Call get_resource_details for each candidate to confirm SKU and cost context.
+5. For each wasteful resource, call propose_action with an evidence-backed reason.
 
 Proposal rules
 - Reason MUST include actual metric values (e.g. "7-day avg CPU: 3.2%, peak 14.8%").
-- Do NOT propose deleting resources tagged 'disaster-recovery: true' unless
-  CPU evidence is overwhelmingly clear (< 2% avg).
+- Do NOT propose deleting resources that appear to serve disaster-recovery or
+  backup purposes (check tags and name) unless utilisation is overwhelmingly
+  low (< 2% avg) — their idleness may be intentional.
 - For VMs: prefer scale_down (right-size SKU) before delete_resource.
 - For AKS: propose scale_down (reduce node count) if cluster avg CPU < 40%.
 - projected_savings_monthly: estimate 45% savings for one VM SKU tier reduction.
@@ -164,9 +177,11 @@ class CostOptimizationAgent:
             return await self._scan_with_framework(target_resource_group)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "CostOptimizationAgent: framework call failed (%s) — falling back to rules.", exc
+                "CostOptimizationAgent: framework call failed (%s) — returning no proposals "
+                "(live-mode fallback to seed data would generate false positives).",
+                exc,
             )
-            return self._scan_rules()
+            return []
 
     # ------------------------------------------------------------------
     # Microsoft Agent Framework path (live mode)
@@ -331,7 +346,10 @@ class CostOptimizationAgent:
             "CPU utilisation with query_metrics before proposing any action."
         )
 
-        return proposals_holder if proposals_holder else self._scan_rules()
+        # Empty proposals means GPT found no waste — that is a valid outcome.
+        # Falling back to seed-data rules would produce false positives in any
+        # real environment that does not match the demo seed_resources.json.
+        return proposals_holder
 
     # ------------------------------------------------------------------
     # Deterministic rule-based scan (fallback / mock mode)

@@ -52,6 +52,9 @@ _DEFAULT_RESOURCES_PATH = (
 # Rule-based fallback thresholds (unchanged from Phase 8)
 _SPARSE_TOPOLOGY_THRESHOLD: int = 3
 _NSG_RESOURCE_TYPE = "Microsoft.Network/networkSecurityGroups"
+# Tags used by the rule-based (mock/CI) path to detect lifecycle metadata.
+# These are organisation-specific examples from the SentinelLayer demo environment.
+# In production, replace with your org's actual lifecycle tag key names.
 _LIFECYCLE_TAGS: set[str] = {"backup", "disaster-recovery", "purpose"}
 
 # System instructions for the framework agent.
@@ -70,14 +73,18 @@ Investigation workflow
    is Azure's lowest priority — typically used for deny-all.
 3. Call query_activity_log for the resource group to see recent changes.
    Look for: failed write operations on NSGs, recent security rule modifications.
-4. Use get_resource_details to check resource tags.
-   Production resources should have lifecycle tags (backup, disaster-recovery, purpose).
+4. Use get_resource_details to check resource tags for lifecycle management
+   indicators. Do NOT check for specific tag key names — tag schemas vary by
+   organisation. Instead, flag resources that have NO lifecycle or ownership
+   tags of any kind (e.g. no backup policy, no DR designation, no owner, no
+   cost centre, no environment label). A resource with ANY of these categories
+   populated — regardless of the exact key name — is adequately tagged.
 5. For each security gap or configuration issue found, call propose_action.
 
 Focus areas
 - NSGs missing an explicit deny-all inbound rule → propose modify_nsg (MEDIUM urgency)
 - Recent FAILED writes to NSGs → investigate and propose remediation (HIGH urgency)
-- Production resources missing lifecycle management tags → propose update_config (LOW urgency)
+- Production resources with zero lifecycle or ownership tags → propose update_config (LOW urgency)
 
 Do not propose changes that are already correctly configured. Only flag genuine gaps.
 """
@@ -150,9 +157,11 @@ class DeployAgent:
             return await self._scan_with_framework(target_resource_group)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "DeployAgent: framework call failed (%s) — falling back to rules.", exc
+                "DeployAgent: framework call failed (%s) — returning no proposals "
+                "(live-mode fallback to seed data would generate false positives).",
+                exc,
             )
-            return self._scan_rules()
+            return []
 
     # ------------------------------------------------------------------
     # Microsoft Agent Framework path (live mode)
@@ -319,7 +328,10 @@ class DeployAgent:
             "logs for failed operations, and identify any configuration gaps."
         )
 
-        return proposals_holder if proposals_holder else self._scan_rules()
+        # Empty proposals means GPT found no security gaps — a valid outcome.
+        # Falling back to seed-data rules would produce false positives in any
+        # real environment that does not match the demo seed_resources.json.
+        return proposals_holder
 
     # ------------------------------------------------------------------
     # Deterministic rule-based scan (fallback / mock mode)

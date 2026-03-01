@@ -179,9 +179,11 @@ class MonitoringAgent:
             return await self._scan_with_framework(alert_payload, target_resource_group)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "MonitoringAgent: framework call failed (%s) — falling back to rules.", exc
+                "MonitoringAgent: framework call failed (%s) — returning no proposals "
+                "(live-mode fallback to seed data would generate false positives).",
+                exc,
             )
-            return self._scan_rules()
+            return []
 
     # ------------------------------------------------------------------
     # Microsoft Agent Framework path (live mode)
@@ -354,7 +356,10 @@ class MonitoringAgent:
 
         await agent.run(prompt)
 
-        return proposals_holder if proposals_holder else self._scan_rules()
+        # Empty proposals means GPT found no reliability risks — a valid outcome.
+        # Falling back to seed-data rules would produce false positives in any
+        # real environment that does not match the demo seed_resources.json.
+        return proposals_holder
 
     # ------------------------------------------------------------------
     # Deterministic rule-based scan (fallback / mock mode)
