@@ -76,6 +76,7 @@ uvicorn src.api.dashboard_api:app --reload
 # 8. Run demos
 python demo.py        # direct Python pipeline demo (3 scenarios)
 python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
+python demo_live.py   # two-layer intelligence demo — ops agents investigate then SentinelLayer evaluates
 ```
 
 ## Optional: Deploy Mini Production Environment

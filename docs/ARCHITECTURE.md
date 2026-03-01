@@ -127,13 +127,15 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 | Agent | What it proposes | Current state |
 |---|---|---|
-| `CostOptimizationAgent` | VM downsizing, idle resource deletion | Rule-based — hardcoded idle threshold |
-| `MonitoringAgent` | SRE anomaly remediation (circular deps, SPOFs, CPU spikes) | Rule-based — no real Azure Monitor query |
-| `DeployAgent` | NSG deny-all rules, lifecycle tag additions | Rule-based — no real deployment manifest |
+| `CostOptimizationAgent` | VM downsizing, idle resource deletion | GPT-4.1 intelligent — queries Resource Graph for all cost-significant resources, reasons about utilisation before proposing |
+| `MonitoringAgent` | SRE anomaly remediation (circular deps, SPOFs, CPU spikes) | GPT-4.1 intelligent — queries Azure Monitor metrics, reasons about anomaly context before proposing |
+| `DeployAgent` | NSG deny-all rules, lifecycle tag additions | GPT-4.1 intelligent — checks activity log and resource tags, reasons about topology before proposing |
 
-**Phase 12 target:** All three agents should query real Azure data sources and use
-GPT-4.1 to reason about context before proposing. See the Two-Layer Intelligence Model
-section below.
+**Phase 12 (complete):** All three agents query real Azure data sources (Resource Graph,
+Azure Monitor, Activity Log) via `azure_tools.py` and use GPT-4.1 via
+`agent-framework-core` to reason about context before proposing. Environment-agnostic:
+no hardcoded resource names, tag keys, or org-specific assumptions. See the
+Two-Layer Intelligence Model section below.
 
 ---
 
@@ -288,9 +290,13 @@ src/
 │   ├── operational_a2a_clients.py # A2A client wrappers for 3 operational agents
 │   └── agent_registry.py     # Tracks connected agents + stats
 ├── mcp_server/server.py       # FastMCP stdio — sentinel_evaluate_action (async)
-├── api/dashboard_api.py       # FastAPI REST — 6 async endpoints (+ /api/agents)
+├── api/dashboard_api.py       # FastAPI REST — 12 async endpoints (evaluations, agents, scan triggers)
 ├── infrastructure/            # Azure clients with mock fallback
+│   └── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
 └── config.py                  # SRI thresholds + env vars
+dashboard/
+└── src/components/
+    └── AgentControls.jsx      # Scan trigger panel: per-agent buttons, RG filter, 2 s polling
 data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── policies.json              # 6 governance policies

@@ -136,6 +136,14 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/evaluations/{evaluation_id}` | Full record for one evaluation by UUID |
 | GET | `/api/metrics` | Aggregate stats: decision counts, SRI avg/min/max, top violations |
 | GET | `/api/resources/{resource_id}/risk` | Risk profile for one resource |
+| GET | `/api/agents` | List operational agents connected via A2A |
+| GET | `/api/agents/{agent_name}/history` | Recent decisions for one A2A agent |
+| POST | `/api/alert-trigger` | Webhook — trigger monitoring agent from Azure Monitor alert |
+| POST | `/api/scan/cost` | Start a background cost agent scan |
+| POST | `/api/scan/monitoring` | Start a background monitoring agent scan |
+| POST | `/api/scan/deploy` | Start a background deploy agent scan |
+| POST | `/api/scan/all` | Start background scans for all three agents |
+| GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 
 ### Query parameters for `GET /api/evaluations`
 
@@ -221,6 +229,86 @@ Return recent governance decisions for one A2A agent.
 ```
 
 Returns **404** if the agent is not registered.
+
+---
+
+### `POST /api/alert-trigger` (Phase 12)
+
+Webhook endpoint for Azure Monitor alert rules. When an Azure Monitor alert fires,
+a Logic App posts the alert payload here; SentinelLayer triggers the monitoring agent
+and evaluates any proposed remediation.
+
+**Request body:** Azure Monitor alert schema (passed through as `alert_data`).
+**Response:**
+```json
+{
+  "status": "processed",
+  "proposals_evaluated": 1,
+  "verdicts": [{ "decision": "approved", "sri_composite": 14.1 }]
+}
+```
+
+---
+
+### Scan Trigger Endpoints (Phase 13)
+
+Start background agent scans without blocking the HTTP response. Returns immediately with
+a `scan_id`; poll `GET /api/scan/{scan_id}/status` to track progress.
+
+**Common request body (all POST scan endpoints):**
+```json
+{ "resource_group": "sentinel-prod-rg" }
+```
+`resource_group` is optional — omit or send `null` to scan the whole subscription.
+Empty body `{}` is also accepted.
+
+**Common response:**
+```json
+{ "status": "started", "scan_id": "b3e7c1a2-...", "agent_type": "cost" }
+```
+`POST /api/scan/all` returns `scan_ids` (array) instead of `scan_id`.
+
+| Endpoint | Agent triggered |
+|---|---|
+| `POST /api/scan/cost` | `CostOptimizationAgent` |
+| `POST /api/scan/monitoring` | `MonitoringAgent` |
+| `POST /api/scan/deploy` | `DeployAgent` |
+| `POST /api/scan/all` | All three, as independent background tasks |
+
+---
+
+### `GET /api/scan/{scan_id}/status`
+
+Poll a background scan started by one of the scan trigger endpoints.
+
+**Response (in progress):**
+```json
+{
+  "scan_id": "b3e7c1a2-...",
+  "status": "running",
+  "agent_type": "cost",
+  "resource_group": "sentinel-prod-rg",
+  "started_at": "2026-03-01T10:00:00+00:00"
+}
+```
+
+**Response (complete):**
+```json
+{
+  "scan_id": "b3e7c1a2-...",
+  "status": "complete",
+  "agent_type": "cost",
+  "resource_group": "sentinel-prod-rg",
+  "started_at": "2026-03-01T10:00:00+00:00",
+  "completed_at": "2026-03-01T10:00:12+00:00",
+  "proposals_count": 2,
+  "evaluations_count": 2,
+  "proposals": [...],
+  "evaluations": [...]
+}
+```
+
+Returns **404** if the `scan_id` is not recognised (unknown or from a previous server restart — scan state is in-memory).
 
 ---
 
