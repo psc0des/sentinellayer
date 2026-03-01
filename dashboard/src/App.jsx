@@ -21,6 +21,7 @@ import DecisionTable     from './components/DecisionTable'
 import EvaluationDetail  from './components/EvaluationDetail'
 import ConnectedAgents   from './components/ConnectedAgents'
 import LiveActivityFeed  from './components/LiveActivityFeed'
+import AgentControls     from './components/AgentControls'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -169,10 +170,12 @@ export default function App() {
         {/* ① Connected Agents — at the top as required */}
         <ConnectedAgents agents={agents} />
 
-        {/* ② Metrics summary bar */}
+        {/* ② Agent Controls — trigger scans from the dashboard */}
+        <AgentControls onScanComplete={fetchAll} />
+
         {metrics && <MetricsBar metrics={metrics} />}
 
-        {/* ③ SRI Gauge + Decision table */}
+        {/* ④ SRI Gauge + Decision table */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
           {/* SRI Gauge panel — updated to show which agent triggered latest eval */}
@@ -217,10 +220,10 @@ export default function App() {
           </div>
         </div>
 
-        {/* ④ Live Activity Feed */}
+        {/* ⑤ Live Activity Feed */}
         <LiveActivityFeed evaluations={evaluations} />
 
-        {/* ⑤ Evaluation detail (shown when a row is selected) */}
+        {/* ⑥ Evaluation detail (shown when a row is selected) */}
         {selected && (
           <EvaluationDetail
             evaluation={selected}

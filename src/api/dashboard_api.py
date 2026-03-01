@@ -10,6 +10,11 @@ GET  /api/agents                   List all connected A2A agents with stats.
 GET  /api/agents/{name}/history    Recent action history for one A2A agent.
 POST /api/alert-trigger            Receive Azure Monitor alert → trigger MonitoringAgent
                                    → evaluate proposals → return verdicts.
+POST /api/scan/cost                Trigger cost optimisation agent scan.
+POST /api/scan/monitoring          Trigger SRE monitoring agent scan.
+POST /api/scan/deploy              Trigger infrastructure deploy agent scan.
+POST /api/scan/all                 Trigger all 3 agents simultaneously.
+GET  /api/scan/{scan_id}/status    Check if a scan is complete + retrieve results.
 
 Run
 ---
@@ -18,11 +23,14 @@ Run
 
 import asyncio
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from src.a2a.agent_registry import AgentRegistry
 from src.config import settings
@@ -56,6 +64,98 @@ app.add_middleware(
 
 _tracker: DecisionTracker | None = None
 _registry: AgentRegistry | None = None
+
+# ---------------------------------------------------------------------------
+# Scan request model + in-memory scan store
+# ---------------------------------------------------------------------------
+
+
+class ScanRequest(BaseModel):
+    """Optional body for POST /api/scan/* endpoints."""
+
+    resource_group: str | None = None
+
+
+# Keyed by scan_id (UUID str).  Values:
+#   status          "running" | "complete" | "error"
+#   agent_type      "cost" | "monitoring" | "deploy"
+#   started_at      ISO-8601 string
+#   completed_at    ISO-8601 string (set when done)
+#   proposed_actions list[dict]   — proposals from the ops agent
+#   evaluations     list[dict]   — governance verdicts from the pipeline
+#   error           str | None   — set on exception
+_scans: dict[str, dict] = {}
+
+
+async def _run_agent_scan(
+    scan_id: str,
+    agent_type: str,
+    resource_group: str | None,
+) -> None:
+    """Background coroutine: run one ops agent, evaluate all proposals, persist results.
+
+    Called by FastAPI BackgroundTasks — runs after the HTTP response is sent,
+    so the caller receives the scan_id immediately without waiting for the
+    (potentially slow) LLM + Azure calls.
+
+    Parameters
+    ----------
+    scan_id:        UUID string used as the key in ``_scans``.
+    agent_type:     One of ``"cost"``, ``"monitoring"``, or ``"deploy"``.
+    resource_group: Optional Azure resource group to scope the scan to.
+    """
+    from src.core.pipeline import SentinelLayerPipeline
+    from src.operational_agents.cost_agent import CostOptimizationAgent
+    from src.operational_agents.deploy_agent import DeployAgent
+    from src.operational_agents.monitoring_agent import MonitoringAgent
+
+    try:
+        # --- Pick the right ops agent ---
+        if agent_type == "cost":
+            agent = CostOptimizationAgent()
+            proposals = await agent.scan(target_resource_group=resource_group)
+        elif agent_type == "monitoring":
+            agent = MonitoringAgent()
+            proposals = await agent.scan(target_resource_group=resource_group)
+        else:  # "deploy"
+            agent = DeployAgent()
+            proposals = await agent.scan(target_resource_group=resource_group)
+
+        # --- Evaluate every proposal through the full governance pipeline ---
+        pipeline = SentinelLayerPipeline()
+        tracker = _get_tracker()
+        evaluations: list[dict] = []
+
+        for action in proposals:
+            verdict = await pipeline.evaluate(action)
+            tracker.record(verdict)
+            evaluations.append(verdict.model_dump(mode="json"))
+
+        _scans[scan_id].update(
+            {
+                "status": "complete",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "proposed_actions": [p.model_dump(mode="json") for p in proposals],
+                "evaluations": evaluations,
+            }
+        )
+        logger.info(
+            "scan %s (%s): %d proposals, %d verdicts",
+            scan_id[:8],
+            agent_type,
+            len(proposals),
+            len(evaluations),
+        )
+
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("scan %s (%s) failed: %s", scan_id[:8], agent_type, exc)
+        _scans[scan_id].update(
+            {
+                "status": "error",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(exc),
+            }
+        )
 
 
 def _get_tracker() -> DecisionTracker:
@@ -379,6 +479,177 @@ async def trigger_alert(alert: dict[str, Any]) -> dict:
         "proposals_count": len(proposals),
         "proposals": [p.model_dump(mode="json") for p in proposals],
         "verdicts": verdicts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 8 — trigger cost optimisation scan
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/scan/cost")
+async def trigger_cost_scan(
+    background_tasks: BackgroundTasks,
+    body: ScanRequest = Body(default=ScanRequest()),
+) -> dict:
+    """Trigger a background cost-optimisation agent scan.
+
+    Returns immediately with a ``scan_id``.  Poll
+    ``GET /api/scan/{scan_id}/status`` to retrieve results.
+
+    Optional body::
+
+        {"resource_group": "sentinel-prod-rg"}
+    """
+    scan_id = str(uuid.uuid4())
+    _scans[scan_id] = {
+        "status": "running",
+        "agent_type": "cost",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "proposed_actions": [],
+        "evaluations": [],
+        "error": None,
+    }
+    background_tasks.add_task(_run_agent_scan, scan_id, "cost", body.resource_group)
+    logger.info("scan %s (cost) started", scan_id[:8])
+    return {"status": "started", "scan_id": scan_id, "agent_type": "cost"}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 9 — trigger SRE monitoring scan
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/scan/monitoring")
+async def trigger_monitoring_scan(
+    background_tasks: BackgroundTasks,
+    body: ScanRequest = Body(default=ScanRequest()),
+) -> dict:
+    """Trigger a background SRE monitoring agent scan.
+
+    Returns immediately with a ``scan_id``.  Poll
+    ``GET /api/scan/{scan_id}/status`` to retrieve results.
+    """
+    scan_id = str(uuid.uuid4())
+    _scans[scan_id] = {
+        "status": "running",
+        "agent_type": "monitoring",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "proposed_actions": [],
+        "evaluations": [],
+        "error": None,
+    }
+    background_tasks.add_task(_run_agent_scan, scan_id, "monitoring", body.resource_group)
+    logger.info("scan %s (monitoring) started", scan_id[:8])
+    return {"status": "started", "scan_id": scan_id, "agent_type": "monitoring"}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 10 — trigger deploy / security review scan
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/scan/deploy")
+async def trigger_deploy_scan(
+    background_tasks: BackgroundTasks,
+    body: ScanRequest = Body(default=ScanRequest()),
+) -> dict:
+    """Trigger a background infrastructure / security review agent scan.
+
+    Returns immediately with a ``scan_id``.  Poll
+    ``GET /api/scan/{scan_id}/status`` to retrieve results.
+    """
+    scan_id = str(uuid.uuid4())
+    _scans[scan_id] = {
+        "status": "running",
+        "agent_type": "deploy",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "proposed_actions": [],
+        "evaluations": [],
+        "error": None,
+    }
+    background_tasks.add_task(_run_agent_scan, scan_id, "deploy", body.resource_group)
+    logger.info("scan %s (deploy) started", scan_id[:8])
+    return {"status": "started", "scan_id": scan_id, "agent_type": "deploy"}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 11 — trigger all three agents simultaneously
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/scan/all")
+async def trigger_all_scans(
+    background_tasks: BackgroundTasks,
+    body: ScanRequest = Body(default=ScanRequest()),
+) -> dict:
+    """Trigger all three ops agents as independent background scans.
+
+    Three separate scan IDs are returned — one per agent.  Each can be
+    polled independently via ``GET /api/scan/{scan_id}/status``.
+
+    Optional body::
+
+        {"resource_group": "sentinel-prod-rg"}
+    """
+    scan_ids: list[str] = []
+    for agent_type in ("cost", "monitoring", "deploy"):
+        scan_id = str(uuid.uuid4())
+        _scans[scan_id] = {
+            "status": "running",
+            "agent_type": agent_type,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "proposed_actions": [],
+            "evaluations": [],
+            "error": None,
+        }
+        background_tasks.add_task(_run_agent_scan, scan_id, agent_type, body.resource_group)
+        scan_ids.append(scan_id)
+        logger.info("scan %s (%s) started via /scan/all", scan_id[:8], agent_type)
+
+    return {"status": "started", "scan_ids": scan_ids}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 12 — poll scan status
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/scan/{scan_id}/status")
+async def get_scan_status(scan_id: str) -> dict:
+    """Return the current status of a background scan.
+
+    Path parameter:
+    - **scan_id**: UUID returned by ``POST /api/scan/*``.
+
+    Returns::
+
+        {
+            "scan_id": "...",
+            "status": "running" | "complete" | "error",
+            "agent_type": "cost" | "monitoring" | "deploy",
+            "started_at": "2025-...",
+            "completed_at": "2025-..." | null,
+            "proposals_count": 2,
+            "proposed_actions": [...],
+            "evaluations_count": 2,
+            "evaluations": [...],
+            "error": null
+        }
+
+    Returns 404 if the ``scan_id`` is unknown.
+    """
+    record = _scans.get(scan_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Scan '{scan_id}' not found.",
+        )
+    return {
+        "scan_id": scan_id,
+        **record,
+        "proposals_count": len(record.get("proposed_actions", [])),
+        "evaluations_count": len(record.get("evaluations", [])),
     }
 
 

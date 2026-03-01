@@ -43,3 +43,47 @@ export async function fetchAgents() {
   if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch agents`)
   return res.json()
 }
+
+/**
+ * Trigger a single-agent background scan.
+ * @param {'cost'|'monitoring'|'deploy'} type - which agent to run
+ * @param {string|null} resourceGroup - optional Azure resource group to scope the scan
+ * @returns {{ status: string, scan_id: string, agent_type: string }}
+ */
+export async function triggerScan(type, resourceGroup = null) {
+  const body = resourceGroup ? { resource_group: resourceGroup } : {}
+  const res = await fetch(`${BASE}/scan/${type}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to start ${type} scan`)
+  return res.json()
+}
+
+/**
+ * Trigger all three agent scans simultaneously.
+ * @param {string|null} resourceGroup - optional Azure resource group
+ * @returns {{ status: string, scan_ids: string[] }}
+ */
+export async function triggerAllScans(resourceGroup = null) {
+  const body = resourceGroup ? { resource_group: resourceGroup } : {}
+  const res = await fetch(`${BASE}/scan/all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to start all scans`)
+  return res.json()
+}
+
+/**
+ * Poll the status of a running scan.
+ * @param {string} scanId - UUID returned by triggerScan / triggerAllScans
+ * @returns {{ scan_id: string, status: string, evaluations: object[], ... }}
+ */
+export async function fetchScanStatus(scanId) {
+  const res = await fetch(`${BASE}/scan/${scanId}/status`)
+  if (!res.ok) throw new Error(`API error ${res.status}: scan "${scanId}" not found`)
+  return res.json()
+}
