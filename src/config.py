@@ -65,6 +65,20 @@ class Settings(BaseSettings):
     # If False but credentials are missing, each client falls back to mock automatically.
     use_local_mocks: bool = True
 
+    # --- LLM Rate Limiting ---
+    # Maximum number of simultaneous LLM calls across all governance agents.
+    # Azure OpenAI free-tier deployments typically allow ~3 RPM; higher tiers allow more.
+    # All four governance agents share one process-level semaphore from llm_throttle.py.
+    # Set to 1 to serialise all LLM calls (safest for very tight quota deployments).
+    # Env var: LLM_CONCURRENCY_LIMIT=3
+    llm_concurrency_limit: int = 3
+
+    # When true, pipeline.py runs governance agents sequentially (one at a time) instead
+    # of asyncio.gather(). Use this when the Azure OpenAI quota is so tight that the
+    # semaphore alone does not help (e.g. quota is 1 RPM).
+    # Env var: SEQUENTIAL_LLM=true
+    sequential_llm: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

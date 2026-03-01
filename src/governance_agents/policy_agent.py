@@ -228,11 +228,13 @@ class PolicyComplianceAgent:
             tools=[evaluate_policy_rules],
         )
 
+        from src.infrastructure.llm_throttle import run_with_throttle
         meta_str = json.dumps(resource_metadata or {})
-        response = await agent.run(
+        response = await run_with_throttle(
+            agent.run,
             f"Evaluate policy compliance for this proposed action.\n"
             f"Action JSON: {action.model_dump_json()}\n"
-            f"Resource metadata: {meta_str}"
+            f"Resource metadata: {meta_str}",
         )
 
         if result_holder:

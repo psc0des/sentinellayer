@@ -64,6 +64,7 @@ import json
 import logging
 from pathlib import Path
 
+from src.config import settings
 from src.core.governance_engine import GovernanceDecisionEngine
 from src.core.models import GovernanceVerdict, ProposedAction
 from src.governance_agents.blast_radius_agent import BlastRadiusAgent
@@ -166,31 +167,46 @@ class SentinelLayerPipeline:
         resource_metadata = self._build_policy_metadata(resource)
 
         logger.info(
-            "Pipeline: evaluating '%s' on '%s' (agent=%s)",
+            "Pipeline: evaluating '%s' on '%s' (agent=%s, sequential_llm=%s)",
             action.action_type.value,
             action.target.resource_id,
             action.agent_id,
+            settings.sequential_llm,
         )
 
-        # ------------------------------------------------------------------
-        # Concurrent agent evaluation via asyncio.gather()
-        # ------------------------------------------------------------------
-        # asyncio.gather() runs all four coroutines concurrently inside the
-        # same event loop.  No nested asyncio.run() calls are needed — each
-        # agent's evaluate() is a native coroutine that simply awaits the
-        # framework call (or returns the rule-based result immediately).
-        # ------------------------------------------------------------------
-        (
-            blast_result,
-            policy_result,
-            historical_result,
-            financial_result,
-        ) = await asyncio.gather(
-            self._blast.evaluate(action),
-            self._policy.evaluate(action, resource_metadata),
-            self._historical.evaluate(action),
-            self._financial.evaluate(action),
-        )
+        if settings.sequential_llm:
+            # ------------------------------------------------------------------
+            # Sequential mode (SEQUENTIAL_LLM=true)
+            # ------------------------------------------------------------------
+            # Runs one governance agent at a time.  Guarantees at most 1 LLM call
+            # is in flight per evaluation cycle — useful for very tight quota
+            # deployments (e.g. 1 RPM) where the semaphore alone is not enough.
+            # Trade-off: ~4x higher latency vs the default parallel mode.
+            # ------------------------------------------------------------------
+            blast_result = await self._blast.evaluate(action)
+            policy_result = await self._policy.evaluate(action, resource_metadata)
+            historical_result = await self._historical.evaluate(action)
+            financial_result = await self._financial.evaluate(action)
+        else:
+            # ------------------------------------------------------------------
+            # Parallel mode (default)
+            # ------------------------------------------------------------------
+            # asyncio.gather() runs all four coroutines concurrently inside the
+            # same event loop.  The shared semaphore in llm_throttle.py ensures
+            # at most LLM_CONCURRENCY_LIMIT calls reach Azure OpenAI at once;
+            # the others queue behind the semaphore.
+            # ------------------------------------------------------------------
+            (
+                blast_result,
+                policy_result,
+                historical_result,
+                financial_result,
+            ) = await asyncio.gather(
+                self._blast.evaluate(action),
+                self._policy.evaluate(action, resource_metadata),
+                self._historical.evaluate(action),
+                self._financial.evaluate(action),
+            )
 
         # ------------------------------------------------------------------
         # Composite scoring + verdict

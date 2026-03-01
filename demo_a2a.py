@@ -236,9 +236,12 @@ def _update_registry(agent_name: str, decision: str) -> None:
 def _print_verdict(label: str, verdict: Any) -> None:
     """Pretty-print a GovernanceVerdict to the console."""
     sri = verdict.sentinel_risk_index
+    llm_used = "Agent Framework Analysis (GPT-4.1):" in verdict.reason
+    llm_label = "[GPT-4.1 active]" if llm_used else "[rule-based fallback — GPT-4.1 not used]"
     print(f"\n{'━' * 60}")
     print(f"  {label} — {verdict.decision.value.upper()}")
     print(f"  Resource : {verdict.proposed_action.target.resource_id}")
+    print(f"  LLM      : {llm_label}")
     print(f"  SRI™ Composite  : {sri.sri_composite:.1f}")
     print(f"  ├─ Infrastructure : {sri.sri_infrastructure:.1f}")
     print(f"  ├─ Policy         : {sri.sri_policy:.1f}")
@@ -315,7 +318,9 @@ async def main() -> None:
 
     # ── Run the three scenarios ───────────────────────────────────────
     await scenario_1_cost_agent_denied()
+    await asyncio.sleep(2)   # give Azure OpenAI quota a moment to recover
     await scenario_2_monitoring_agent_approved()
+    await asyncio.sleep(2)
     await scenario_3_deploy_agent_escalated()
 
     # ── Print connected agents summary ───────────────────────────────

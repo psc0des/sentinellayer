@@ -74,6 +74,10 @@ def _print_verdict(
     if len(reason_display) > 120:
         reason_display = reason_display[:117] + "..."
 
+    # Detect whether GPT-4.1 contributed — the framework path appends this marker.
+    llm_used = "Agent Framework Analysis (GPT-4.1):" in verdict.reason
+    llm_label = "[GPT-4.1 active]" if llm_used else "[rule-based fallback — GPT-4.1 not used]"
+
     print(f"\n{_header()}")
     print(f"  SCENARIO {num}: {title}")
     print(_bar())
@@ -82,6 +86,7 @@ def _print_verdict(
     print(f"  Target  : {action.target.resource_id.split('/')[-1]}")
     reason_short = action.reason[:75] + ("..." if len(action.reason) > 75 else "")
     print(f"  Reason  : {reason_short}")
+    print(f"  LLM     : {llm_label}")
     print(_bar())
     print("  SRI Breakdown:")
     print(f"    Infrastructure  : {sri.sri_infrastructure:6.1f} / 100   (weight 0.30)")
@@ -220,7 +225,9 @@ async def main() -> None:
     print()
 
     await scenario_1(pipeline, tracker)
+    await asyncio.sleep(2)   # give Azure OpenAI quota a moment to recover
     await scenario_2(pipeline, tracker)
+    await asyncio.sleep(2)
     await scenario_3(pipeline, tracker)
 
     print(f"\n{_bar()}")

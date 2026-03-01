@@ -261,9 +261,11 @@ class FinancialImpactAgent:
             tools=[evaluate_financial_rules],
         )
 
-        response = await agent.run(
+        from src.infrastructure.llm_throttle import run_with_throttle
+        response = await run_with_throttle(
+            agent.run,
             f"Evaluate the financial risk for this proposed action.\n"
-            f"Action JSON: {action.model_dump_json()}"
+            f"Action JSON: {action.model_dump_json()}",
         )
 
         if result_holder:

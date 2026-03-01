@@ -33,6 +33,8 @@ Usage::
 """
 
 import logging
+import random
+import time
 
 from src.config import settings as _default_settings
 from src.infrastructure.secrets import KeyVaultSecretResolver
@@ -124,20 +126,37 @@ class AzureOpenAIClient:
         if self._is_mock:
             return self._mock_response()
 
-        try:
-            response = self._client.chat.completions.create(
-                model=self._cfg.azure_openai_deployment,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            return response.choices[0].message.content or ""
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("AzureOpenAIClient: completion failed (%s) — using fallback.", exc)
-            return self._mock_response()
+        max_retries = 3
+        base_delay = 2.0  # seconds; doubles each attempt: 2 s, 4 s, 8 s
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._cfg.azure_openai_deployment,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                return response.choices[0].message.content or ""
+            except Exception as exc:  # noqa: BLE001
+                exc_str = str(exc).lower()
+                is_429 = "429" in exc_str or "rate limit" in exc_str or "too many requests" in exc_str
+                if not is_429 or attempt == max_retries:
+                    logger.warning(
+                        "AzureOpenAIClient: completion failed (%s) — using fallback.", exc
+                    )
+                    return self._mock_response()
+                wait = base_delay * (2 ** attempt) + random.uniform(0.0, 1.0)
+                logger.warning(
+                    "AzureOpenAIClient: 429 rate limit (attempt %d/%d) — retrying in %.1f s.",
+                    attempt + 1, max_retries, wait,
+                )
+                time.sleep(wait)  # sync sleep — this method is synchronous
+
+        return self._mock_response()  # unreachable; satisfies type checker
 
     def analyze(
         self,
