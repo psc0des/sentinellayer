@@ -1,16 +1,16 @@
 {
   "resource_group": "sentinel-prod-rg",
-  "subscription_id": "YOUR-SUBSCRIPTION-ID",
-  "_note": "After deploying infrastructure/terraform-prod/, replace YOUR-SUBSCRIPTION-ID and run: terraform output seed_resources_ids to get real IDs for the sentinel-prod-rg resources.",
+  "subscription_id": "44caae19-24a6-4c48-9f94-b3aa3865a3f7",
+  "_note": "Real Azure resources deployed via infrastructure/terraform-prod/ in canadacentral. IDs sourced from terraform output on 2026-03-01.",
   "resources": [
     {
       "_comment": "=== MINI PROD ENVIRONMENT (infrastructure/terraform-prod/) ===",
-      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Compute/virtualMachines/vm-dr-01",
+      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/sentinel-prod-rg/providers/Microsoft.Compute/virtualMachines/vm-dr-01",
       "name": "vm-dr-01",
       "type": "Microsoft.Compute/virtualMachines",
-      "location": "eastus",
-      "sku": "Standard_B1s",
-      "monthly_cost": 15.00,
+      "location": "canadacentral",
+      "sku": "Standard_B2ls_v2",
+      "monthly_cost": 36.00,
       "tags": {
         "disaster-recovery": "true",
         "environment": "production",
@@ -21,7 +21,7 @@
         "purpose": "governance-demo"
       },
       "dependencies": [
-        "sentinelproddata",
+        "sentinelprodprod",
         "nsg-east-prod"
       ],
       "dependents": [
@@ -31,12 +31,12 @@
       ]
     },
     {
-      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/sentinel-prod-rg/providers/Microsoft.Compute/virtualMachines/vm-web-01",
       "name": "vm-web-01",
       "type": "Microsoft.Compute/virtualMachines",
-      "location": "eastus",
-      "sku": "Standard_B1s",
-      "monthly_cost": 15.00,
+      "location": "canadacentral",
+      "sku": "Standard_B2ls_v2",
+      "monthly_cost": 36.00,
       "tags": {
         "tier": "web",
         "environment": "production",
@@ -48,16 +48,16 @@
       },
       "dependencies": [
         "payment-api-prod",
-        "sentinelproddata",
+        "sentinelprodprod",
         "nsg-east-prod"
       ],
       "dependents": []
     },
     {
-      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Web/sites/payment-api-prod",
+      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/sentinel-prod-rg/providers/Microsoft.Web/sites/payment-api-prod-prod",
       "name": "payment-api-prod",
       "type": "Microsoft.Web/sites",
-      "location": "eastus",
+      "location": "canadacentral",
       "sku": "F1",
       "monthly_cost": 0.00,
       "tags": {
@@ -69,17 +69,17 @@
         "purpose": "governance-demo"
       },
       "dependencies": [
-        "sentinelproddata"
+        "sentinelprodprod"
       ],
       "dependents": [
         "vm-web-01"
       ]
     },
     {
-      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Network/networkSecurityGroups/nsg-east-prod",
+      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/sentinel-prod-rg/providers/Microsoft.Network/networkSecurityGroups/nsg-east-prod",
       "name": "nsg-east-prod",
       "type": "Microsoft.Network/networkSecurityGroups",
-      "location": "eastus",
+      "location": "canadacentral",
       "tags": {
         "environment": "production",
         "managed-by": "platform-team",
@@ -98,11 +98,11 @@
       ]
     },
     {
-      "id": "/subscriptions/YOUR-SUBSCRIPTION-ID/resourceGroups/sentinel-prod-rg/providers/Microsoft.Storage/storageAccounts/sentinelproddata",
-      "name": "sentinelproddata",
+      "id": "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7/resourceGroups/sentinel-prod-rg/providers/Microsoft.Storage/storageAccounts/sentinelprodprod",
+      "name": "sentinelprodprod",
       "type": "Microsoft.Storage/storageAccounts",
-      "location": "eastus",
-      "monthly_cost": 5.00,
+      "location": "canadacentral",
+      "monthly_cost": 1.00,
       "tags": {
         "environment": "production",
         "shared": "true",
@@ -250,14 +250,12 @@
     }
   ],
   "dependency_edges": [
-    {"from": "vm-dr-01",        "to": "sentinelproddata",  "type": "storage_dependency"},
+    {"from": "vm-dr-01",        "to": "sentinelprodprod",  "type": "storage_dependency"},
     {"from": "vm-dr-01",        "to": "nsg-east-prod",     "type": "network_governance"},
     {"from": "vm-web-01",       "to": "payment-api-prod",  "type": "service_dependency"},
-    {"from": "vm-web-01",       "to": "sentinelproddata",  "type": "storage_dependency"},
+    {"from": "vm-web-01",       "to": "sentinelprodprod",  "type": "storage_dependency"},
     {"from": "vm-web-01",       "to": "nsg-east-prod",     "type": "network_governance"},
-    {"from": "payment-api-prod","to": "sentinelproddata",  "type": "storage_dependency"},
-    {"from": "nsg-east-prod",   "to": "vm-dr-01",          "type": "network_governance"},
-    {"from": "nsg-east-prod",   "to": "vm-web-01",         "type": "network_governance"},
+    {"from": "payment-api-prod","to": "sentinelprodprod",  "type": "storage_dependency"},
     {"from": "web-tier-01",     "to": "api-server-03",     "type": "http_dependency"},
     {"from": "api-server-03",   "to": "aks-prod",          "type": "service_dependency"},
     {"from": "payment-api",     "to": "notification-service", "type": "circular_dependency"},
