@@ -2,19 +2,23 @@
 
 Endpoints
 ---------
-GET /api/evaluations              Recent governance decisions (newest-first).
-GET /api/evaluations/{id}         Full detail for one evaluation.
-GET /api/metrics                  Aggregate stats across all evaluations.
-GET /api/resources/{id}/risk      Risk profile for one resource.
-GET /api/agents                   List all connected A2A agents with stats.
-GET /api/agents/{name}/history    Recent action history for one A2A agent.
+GET  /api/evaluations              Recent governance decisions (newest-first).
+GET  /api/evaluations/{id}         Full detail for one evaluation.
+GET  /api/metrics                  Aggregate stats across all evaluations.
+GET  /api/resources/{id}/risk      Risk profile for one resource.
+GET  /api/agents                   List all connected A2A agents with stats.
+GET  /api/agents/{name}/history    Recent action history for one A2A agent.
+POST /api/alert-trigger            Receive Azure Monitor alert → trigger MonitoringAgent
+                                   → evaluate proposals → return verdicts.
 
 Run
 ---
     python -m src.api.dashboard_api
 """
 
+import asyncio
 import logging
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
@@ -42,7 +46,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -307,6 +311,74 @@ async def get_agent_history(
         "agent": agent,
         "history_count": len(agent_records[:limit]),
         "history": agent_records[:limit],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 7 — alert webhook trigger
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/alert-trigger")
+async def trigger_alert(alert: dict[str, Any]) -> dict:
+    """Receive an Azure Monitor alert and trigger the monitoring agent.
+
+    This endpoint acts as an Azure Monitor Action Group webhook target.
+    When a metric alert fires (e.g. CPU > 80 % on vm-web-01), Azure POSTs
+    the alert details here.  SentinelLayer then:
+
+    1. Passes the alert to the ``MonitoringAgent`` for investigation.
+    2. The agent queries real metrics, confirms the alert, and produces
+       evidence-backed ``ProposedAction`` objects.
+    3. Each proposal is evaluated by the full SentinelLayer governance
+       pipeline (SRI scoring → APPROVED / ESCALATED / DENIED).
+    4. All verdicts are returned and written to the audit trail.
+
+    Request body (JSON)::
+
+        {
+            "resource_id": "vm-web-01",
+            "metric": "Percentage CPU",
+            "value": 95.0,
+            "threshold": 80.0,
+            "severity": "3",
+            "resource_group": "sentinel-prod-rg"
+        }
+
+    All fields are optional — the agent can work with minimal context.
+
+    Returns:
+        Dict containing the original alert, list of proposals, and list of
+        governance verdicts (each with decision, SRI composite, and reason).
+    """
+    from src.operational_agents.monitoring_agent import MonitoringAgent
+    from src.core.pipeline import SentinelLayerPipeline
+
+    logger.info("alert-trigger: received alert — %s", alert)
+
+    agent = MonitoringAgent()
+    proposals = await agent.scan(alert_payload=alert)
+
+    pipeline = SentinelLayerPipeline()
+    tracker = _get_tracker()
+    verdicts: list[dict] = []
+
+    for action in proposals:
+        verdict = await pipeline.evaluate(action)
+        tracker.record(verdict)
+        verdicts.append(verdict.model_dump(mode="json"))
+
+    logger.info(
+        "alert-trigger: %d proposals evaluated — %s",
+        len(proposals),
+        [v.get("decision") for v in verdicts],
+    )
+
+    return {
+        "alert": alert,
+        "proposals_count": len(proposals),
+        "proposals": [p.model_dump(mode="json") for p in proposals],
+        "verdicts": verdicts,
     }
 
 

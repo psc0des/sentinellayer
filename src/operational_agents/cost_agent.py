@@ -3,34 +3,32 @@
 This is an operational agent (the governed subject). It proposes
 infrastructure actions that SentinelLayer evaluates before execution.
 
-Microsoft Agent Framework integration (Phase 8)
-------------------------------------------------
-In live mode (USE_LOCAL_MOCKS=false), this agent is driven by a
-Microsoft Agent Framework ``Agent`` backed by Azure OpenAI GPT-4.1.
+Phase 12 — Intelligent, environment-agnostic agent
+----------------------------------------------------
+The agent now **genuinely investigates** the Azure environment before
+proposing any action.  In live mode it:
 
-The LLM agent calls our deterministic ``scan_cost_opportunities`` tool,
-which applies heuristic rules to the resource topology and returns
-structured cost-saving proposals.  The LLM then synthesises a concise
-FinOps recommendation narrative.
+1. Queries Azure Resource Graph to **discover** VMs and clusters.
+2. Queries Azure Monitor to get **actual 7-day CPU utilisation** for each
+   resource — not hardcoded heuristics.
+3. Only proposes action when metric evidence shows the resource is wasteful
+   (avg CPU < 20 % for right-sizing; < 5 % for deletion candidates).
+4. Uses GPT-4.1 to **reason about trade-offs** before calling
+   ``propose_action``.
 
-In mock mode the framework is skipped — only deterministic rule-based
-scanning runs.  This preserves fully-offline CI/test behaviour.
+The agent is environment-agnostic: it accepts an optional
+``target_resource_group`` parameter and can scan any Azure subscription.
 
-The agent scans a resource topology (loaded from ``data/seed_resources.json``)
-and applies heuristics to identify overprovisioned or idle resources:
+In mock mode (USE_LOCAL_MOCKS=true) the deterministic ``_scan_rules()``
+fallback runs instead — it reads ``data/seed_resources.json`` and applies
+the same heuristics as Phase 8 for CI/offline compatibility.
 
-Detection rules
----------------
-1. **Oversized VM SKU** — VMs running on D8s_v3 or larger are candidates for
-   downsizing to the next smaller SKU tier, saving ~45 % of monthly cost.
-2. **Large AKS cluster** — Kubernetes clusters with ≥ 4 nodes are candidates
-   for a node-count reduction, saving ~35 % of monthly cost.
-
-Resources with monthly cost below ``_MIN_COST_THRESHOLD`` ($200) are skipped
-because the operational overhead of changing them exceeds the benefit.
-
-Resources above ``_HIGH_COST_THRESHOLD`` ($500) get MEDIUM urgency so they
-rise to the top of the human review queue.
+Microsoft Agent Framework tools (live mode)
+--------------------------------------------
+- ``query_resource_graph(kusto_query)`` — discover VMs and clusters
+- ``query_metrics(resource_id, metric_names, timespan)`` — actual CPU data
+- ``get_resource_details(resource_id)`` — full resource information
+- ``propose_action(...)`` — submit a validated ProposedAction
 """
 
 import json
@@ -52,49 +50,49 @@ _DEFAULT_RESOURCES_PATH = (
     Path(__file__).parent.parent.parent / "data" / "seed_resources.json"
 )
 
-# Only worth analysing resources that cost more than this per month.
+# Rule-based fallback thresholds (unchanged from Phase 8)
 _MIN_COST_THRESHOLD: float = 200.0
-
-# Resources costing more than this receive MEDIUM urgency.
 _HIGH_COST_THRESHOLD: float = 500.0
-
-# Estimated monthly savings when downsizing a VM (e.g. D8s → D4s).
-# In practice the ratio is ~48 %; we use 45 % as a conservative estimate.
 _VM_DOWNSIZE_SAVINGS_RATE: float = 0.45
-
-# Propose AKS scale-down only when node count is at or above this value.
 _AKS_SCALE_DOWN_NODE_THRESHOLD: int = 4
-
-# Estimated monthly savings when reducing AKS node count by 2.
 _AKS_SCALE_DOWN_SAVINGS_RATE: float = 0.35
-
-# SKUs considered oversized for general-purpose workloads.
 _OVERSIZED_SKUS: set[str] = {
     "Standard_D8s_v3",
     "Standard_D16s_v3",
     "Standard_D32s_v3",
 }
-
-# Suggested replacement SKU for each oversized tier.
 _DOWNSIZE_MAP: dict[str, str] = {
     "Standard_D8s_v3": "Standard_D4s_v3",
     "Standard_D16s_v3": "Standard_D8s_v3",
     "Standard_D32s_v3": "Standard_D16s_v3",
 }
 
-# System instructions for the framework agent (live mode only).
+# System instructions for the framework agent — drives two-layer intelligence.
 _AGENT_INSTRUCTIONS = """\
-You are SentinelLayer's FinOps Optimization Agent — a specialist in cloud
-cost management and resource right-sizing.
+You are a Senior FinOps Engineer at a cloud company with expertise in Azure cost
+optimisation. Your mission: identify WASTED cloud spend by investigating ACTUAL
+resource utilisation — not just resource size.
 
-Your job:
-1. Call the `scan_cost_opportunities` tool to analyse the resource topology.
-2. Receive the list of cost-saving proposals from the deterministic scan.
-3. Write a brief 2-3 sentence FinOps summary explaining what opportunities
-   were found and the total estimated savings potential.
-   Do NOT restate individual resource names; give the overall picture.
+Investigation workflow
+1. Call query_resource_graph to discover VMs and AKS clusters in the environment.
+   Use: "Resources | where type in ('microsoft.compute/virtualmachines', \
+'microsoft.containerservice/managedclusters') | project id, name, type, \
+location, resourceGroup, tags, sku"
+2. For each resource worth investigating, call query_metrics to get the 7-day
+   average CPU utilisation ("Percentage CPU").
+3. Resources with avg CPU < 20% are right-sizing candidates.
+   Resources with avg CPU < 5% are strong deletion or deep-downsize candidates.
+4. Call get_resource_details for each candidate to confirm the SKU and cost.
+5. For each wasteful resource, call propose_action with your evidence-backed
+   recommendation.
 
-Always call the tool first before providing any commentary.
+Proposal rules
+- Reason MUST include actual metric values (e.g. "7-day avg CPU: 3.2%, peak 14.8%").
+- Do NOT propose deleting resources tagged 'disaster-recovery: true' unless
+  CPU evidence is overwhelmingly clear (< 2% avg).
+- For VMs: prefer scale_down (right-size SKU) before delete_resource.
+- For AKS: propose scale_down (reduce node count) if cluster avg CPU < 40%.
+- projected_savings_monthly: estimate 45% savings for one VM SKU tier reduction.
 """
 
 
@@ -104,21 +102,24 @@ Always call the tool first before providing any commentary.
 
 
 class CostOptimizationAgent:
-    """Scans a resource topology and proposes cost-saving actions.
+    """Scans the Azure environment and proposes cost-saving actions.
 
-    Loads resource metadata from ``data/seed_resources.json`` (mock for
-    Azure Cost Management + Resource Graph), then applies heuristic rules
-    to identify overprovisioned or idle resources.
+    In live mode (USE_LOCAL_MOCKS=false) the Microsoft Agent Framework drives
+    GPT-4.1 to investigate real utilisation data via generic Azure tools before
+    submitting evidence-backed proposals.
 
-    In live mode the Microsoft Agent Framework drives GPT-4.1 to call the
-    deterministic tool and synthesise a FinOps commentary.
+    In mock mode only the deterministic ``_scan_rules()`` runs — seed data,
+    heuristics, no network calls.  This is the safe offline/CI path.
 
     Usage::
 
         agent = CostOptimizationAgent()
-        proposals: list[ProposedAction] = agent.scan()
+        proposals: list[ProposedAction] = await agent.scan()
         for p in proposals:
-            print(p.action_type.value, p.target.resource_id, p.projected_savings_monthly)
+            print(p.action_type.value, p.target.resource_id)
+
+        # Target a specific resource group in live mode:
+        proposals = await agent.scan(target_resource_group="my-rg")
     """
 
     def __init__(
@@ -142,22 +143,25 @@ class CostOptimizationAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    async def scan(self) -> list[ProposedAction]:
-        """Scan all resources and return cost-optimisation proposals.
+    async def scan(
+        self,
+        target_resource_group: str | None = None,
+    ) -> list[ProposedAction]:
+        """Investigate the Azure environment and return cost-saving proposals.
 
-        Routes to the Microsoft Agent Framework agent in live mode, or to the
-        deterministic rule-based scanner in mock mode.
+        Args:
+            target_resource_group: Optional resource group name to scope the
+                investigation.  When ``None`` the agent scans the entire
+                subscription visible to its credentials.
 
         Returns:
-            A list of :class:`~src.core.models.ProposedAction` objects,
-            one per resource that triggered a detection rule.
-            Returns an empty list if no optimisation opportunities are found.
+            List of :class:`~src.core.models.ProposedAction` objects.
         """
         if not self._use_framework:
             return self._scan_rules()
 
         try:
-            return await self._scan_with_framework()
+            return await self._scan_with_framework(target_resource_group)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "CostOptimizationAgent: framework call failed (%s) — falling back to rules.", exc
@@ -168,12 +172,19 @@ class CostOptimizationAgent:
     # Microsoft Agent Framework path (live mode)
     # ------------------------------------------------------------------
 
-    async def _scan_with_framework(self) -> list[ProposedAction]:
-        """Run the framework agent with GPT-4.1 driving the tool call."""
+    async def _scan_with_framework(
+        self, target_resource_group: str | None
+    ) -> list[ProposedAction]:
+        """Run GPT-4.1 with investigation tools to produce evidence-backed proposals."""
         from openai import AsyncAzureOpenAI
         from azure.identity import DefaultAzureCredential, get_bearer_token_provider
         import agent_framework as af
         from agent_framework.openai import OpenAIResponsesClient
+        from src.infrastructure.azure_tools import (
+            query_resource_graph,
+            query_metrics,
+            get_resource_details,
+        )
 
         credential = DefaultAzureCredential()
         token_provider = get_bearer_token_provider(
@@ -182,45 +193,148 @@ class CostOptimizationAgent:
         azure_openai = AsyncAzureOpenAI(
             azure_endpoint=self._cfg.azure_openai_endpoint,
             azure_ad_token_provider=token_provider,
-            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+            api_version="2025-03-01-preview",
         )
         client = OpenAIResponsesClient(
             async_client=azure_openai,
             model_id=self._cfg.azure_openai_deployment,
         )
 
-        proposals_holder: list[list[ProposedAction]] = []
+        proposals_holder: list[ProposedAction] = []
 
         @af.tool(
-            name="scan_cost_opportunities",
+            name="query_resource_graph",
             description=(
-                "Scan the infrastructure resource topology for cost optimisation "
-                "opportunities. Applies rule-based heuristics (oversized VMs, "
-                "over-provisioned AKS clusters) and returns a JSON array of "
-                "ProposedAction objects representing cost-saving recommendations."
+                "Query Azure Resource Graph with a Kusto (KQL) query to discover "
+                "resources in the Azure environment. Returns a JSON array of resource "
+                "objects with id, name, type, location, resourceGroup, tags, sku."
             ),
         )
-        def scan_cost_opportunities() -> str:
-            """Identify idle or overprovisioned resources that can be cost-optimised."""
-            proposals = self._scan_rules()
-            proposals_holder.append(proposals)
-            return json.dumps([p.model_dump() for p in proposals], default=str)
+        def tool_query_resource_graph(kusto_query: str) -> str:
+            """Discover Azure resources via Resource Graph KQL query."""
+            results = query_resource_graph(kusto_query)
+            return json.dumps(results, default=str)
+
+        @af.tool(
+            name="query_metrics",
+            description=(
+                "Query Azure Monitor metrics for a resource. Returns average, max, and "
+                "min values for the requested metrics over the specified timespan. "
+                "metric_names is a comma-separated list (e.g. 'Percentage CPU,Network In'). "
+                "timespan uses ISO 8601 duration format (e.g. 'P7D' for 7 days)."
+            ),
+        )
+        def tool_query_metrics(
+            resource_id: str,
+            metric_names: str,
+            timespan: str = "P7D",
+        ) -> str:
+            """Get actual utilisation metrics for a resource."""
+            names = [m.strip() for m in metric_names.split(",")]
+            results = query_metrics(resource_id, names, timespan)
+            return json.dumps(results, default=str)
+
+        @af.tool(
+            name="get_resource_details",
+            description=(
+                "Get full details for a specific Azure resource by its ARM resource ID "
+                "or short name. Returns SKU, tags, cost, location, and other properties."
+            ),
+        )
+        def tool_get_resource_details(resource_id: str) -> str:
+            """Retrieve full resource details including SKU and tags."""
+            details = get_resource_details(resource_id)
+            return json.dumps(details, default=str)
+
+        @af.tool(
+            name="propose_action",
+            description=(
+                "Submit a governance proposal for a resource. Call this when you have "
+                "metric evidence that a resource is wasted or over-provisioned. "
+                "action_type must be one of: scale_down, delete_resource, scale_up, "
+                "update_config, modify_nsg, create_resource, restart_service. "
+                "urgency must be one of: low, medium, high."
+            ),
+        )
+        def tool_propose_action(
+            resource_id: str,
+            action_type: str,
+            reason: str,
+            urgency: str = "medium",
+            current_sku: str = "",
+            proposed_sku: str = "",
+            projected_savings_monthly: float = 0.0,
+            resource_type: str = "",
+            resource_group: str = "",
+        ) -> str:
+            """Validate parameters and record a ProposedAction."""
+            try:
+                action_type_enum = ActionType(action_type.lower())
+            except ValueError:
+                valid = [e.value for e in ActionType]
+                return f"ERROR: Invalid action_type '{action_type}'. Valid: {valid}"
+            try:
+                urgency_enum = Urgency(urgency.lower())
+            except ValueError:
+                urgency_enum = Urgency.MEDIUM
+
+            # Parse resource_group and resource_type from the ARM resource ID.
+            if not resource_group and "/" in resource_id:
+                parts = resource_id.split("/")
+                if len(parts) > 4 and parts[3].lower() == "resourcegroups":
+                    resource_group = parts[4]
+            if not resource_type and "/" in resource_id:
+                parts = resource_id.split("/")
+                if len(parts) > 7:
+                    resource_type = f"{parts[6]}/{parts[7]}"
+
+            proposal = ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=action_type_enum,
+                target=ActionTarget(
+                    resource_id=resource_id,
+                    resource_type=resource_type or "Microsoft.Resources/unknown",
+                    resource_group=resource_group or None,
+                    current_sku=current_sku or None,
+                    proposed_sku=proposed_sku or None,
+                ),
+                reason=reason,
+                urgency=urgency_enum,
+                projected_savings_monthly=(
+                    projected_savings_monthly if projected_savings_monthly > 0 else None
+                ),
+            )
+            proposals_holder.append(proposal)
+            name = resource_id.split("/")[-1]
+            logger.info("CostAgent: proposal submitted — %s on %s", action_type, name)
+            return f"Proposal submitted: {action_type} on {name}"
 
         agent = client.as_agent(
             name="cost-optimizer",
             instructions=_AGENT_INSTRUCTIONS,
-            tools=[scan_cost_opportunities],
+            tools=[
+                tool_query_resource_graph,
+                tool_query_metrics,
+                tool_get_resource_details,
+                tool_propose_action,
+            ],
         )
 
+        rg_scope = (
+            f"in resource group '{target_resource_group}'"
+            if target_resource_group
+            else "across the Azure environment"
+        )
         await agent.run(
-            "Scan the infrastructure for cost optimisation opportunities and "
-            "provide a FinOps summary."
+            f"Investigate and identify cost optimisation opportunities {rg_scope}. "
+            "Use query_resource_graph to discover VMs and clusters, then check actual "
+            "CPU utilisation with query_metrics before proposing any action."
         )
 
-        return proposals_holder[-1] if proposals_holder else self._scan_rules()
+        return proposals_holder if proposals_holder else self._scan_rules()
 
     # ------------------------------------------------------------------
-    # Deterministic rule-based scan
+    # Deterministic rule-based scan (fallback / mock mode)
     # ------------------------------------------------------------------
 
     def _scan_rules(self) -> list[ProposedAction]:
@@ -239,63 +353,36 @@ class CostOptimizationAgent:
         return proposals
 
     # ------------------------------------------------------------------
-    # Private helpers
+    # Private helpers (rule-based path)
     # ------------------------------------------------------------------
 
     def _analyze_resource(self, resource: dict) -> ProposedAction | None:
-        """Apply detection rules to a single resource.
-
-        Returns a :class:`~src.core.models.ProposedAction` if the resource
-        triggers a rule, or ``None`` if no optimisation is warranted.
-        """
         monthly_cost: float | None = resource.get("monthly_cost")
-
-        # Skip free or cheap resources — not worth the operational overhead.
         if monthly_cost is None or monthly_cost < _MIN_COST_THRESHOLD:
             return None
 
         resource_type: str = resource.get("type", "")
-
-        # Rule 1 — Oversized VM SKU
         if "virtualMachines" in resource_type:
             return self._propose_vm_scale_down(resource, monthly_cost)
-
-        # Rule 2 — Large AKS cluster
         if "managedClusters" in resource_type:
             return self._propose_aks_scale_down(resource, monthly_cost)
-
         return None
 
     def _propose_vm_scale_down(
         self, resource: dict, monthly_cost: float
     ) -> ProposedAction | None:
-        """Propose a scale-down for an oversized VM.
-
-        Only triggers when the current SKU is in ``_OVERSIZED_SKUS``.
-        Returns ``None`` if the VM is already on a smaller SKU tier.
-        """
         sku: str = resource.get("sku", "")
         if sku not in _OVERSIZED_SKUS:
             return None
-
         proposed_sku = _DOWNSIZE_MAP[sku]
         savings = round(monthly_cost * _VM_DOWNSIZE_SAVINGS_RATE, 2)
         tags = resource.get("tags", {})
         is_idle = tags.get("purpose") == "disaster-recovery"
-
-        reason = (
-            f"VM '{resource['name']}' is running SKU {sku} at ${monthly_cost:.0f}/month. "
-        )
+        reason = f"VM '{resource['name']}' is running SKU {sku} at ${monthly_cost:.0f}/month. "
         if is_idle:
-            reason += (
-                "Tagged as disaster-recovery — expected to be idle most of the time. "
-            )
-        reason += (
-            f"Downsizing to {proposed_sku} is estimated to save ${savings:.0f}/month."
-        )
-
+            reason += "Tagged as disaster-recovery — expected to be idle most of the time. "
+        reason += f"Downsizing to {proposed_sku} is estimated to save ${savings:.0f}/month."
         urgency = Urgency.MEDIUM if monthly_cost >= _HIGH_COST_THRESHOLD else Urgency.LOW
-
         return ProposedAction(
             agent_id=_AGENT_ID,
             action_type=ActionType.SCALE_DOWN,
@@ -315,23 +402,16 @@ class CostOptimizationAgent:
     def _propose_aks_scale_down(
         self, resource: dict, monthly_cost: float
     ) -> ProposedAction | None:
-        """Propose a node-count reduction for an over-provisioned AKS cluster.
-
-        Only triggers when node count is at or above ``_AKS_SCALE_DOWN_NODE_THRESHOLD``.
-        """
         node_count: int = resource.get("node_count", 0)
         if node_count < _AKS_SCALE_DOWN_NODE_THRESHOLD:
             return None
-
         proposed_nodes = node_count - 2
         savings = round(monthly_cost * _AKS_SCALE_DOWN_SAVINGS_RATE, 2)
-
         reason = (
             f"AKS cluster '{resource['name']}' is running {node_count} nodes "
             f"at ${monthly_cost:.0f}/month. Reducing to {proposed_nodes} nodes "
             f"is estimated to save ${savings:.0f}/month."
         )
-
         return ProposedAction(
             agent_id=_AGENT_ID,
             action_type=ActionType.SCALE_DOWN,
