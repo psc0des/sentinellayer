@@ -4,9 +4,9 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-02-28 (Phase 11)
+**Last updated:** 2026-03-01 (Phase 12 planning)
 **Active branch:** `main`
-**Demo verdict:** All 3 A2A scenarios pass in mock mode (DENIED / APPROVED / ESCALATED)
+**Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
 ---
 
@@ -365,10 +365,93 @@ pytest tests/ -v
 
 ---
 
+## Known Limitations (Azure OpenAI Rate Limiting)
+
+**HTTP 429 — Too Many Requests:** All 5 agents hit Azure OpenAI's rate limit during
+`demo.py` and fall back to deterministic rules. This means the AI reasoning layer is
+not exercised in practice today.
+
+**Why it happens:** Azure OpenAI deployments have a **Tokens Per Minute (TPM)** and
+**Requests Per Minute (RPM)** quota. Running 5 governance agents × 3 scenarios = up to
+15 concurrent LLM calls exhausts even a generous quota in seconds. The `except Exception`
+fallback in each agent catches the 429 and silently continues with rule-based scoring.
+
+**Where to check:** Azure Portal → Azure OpenAI → your deployment → Quotas.
+Request a quota increase or add exponential back-off + retry logic in each agent's
+`_evaluate_with_framework()` before re-attempting the framework path.
+
+**Impact:** Governance scoring still works correctly (deterministic rules are the
+safety floor), but GPT-4.1's semantic reasoning — which should catch things like
+equivalent tag formats or novel risk patterns — is never reached.
+
+---
+
 ## What's Next (Suggested)
 
 These are ideas, not commitments. Pick up from here:
 
+### Phase 12 — Intelligent Ops Agents (Priority)
+
+The core insight: **SentinelLayer should be a second opinion, not the only intelligence.**
+Right now ops agents are "message senders" — they assemble hardcoded `ProposedAction`
+structs. A well-designed agent should reason before it proposes.
+
+**Two-layer intelligence model:**
+```
+Layer 1 — Ops Agent (pre-flight reasoning)
+  ├── Query real data (Azure Monitor metrics, Resource Graph tags)
+  ├── Understand blast radius of its own action before proposing
+  ├── Self-filter obviously dangerous proposals (e.g. detect disaster-recovery tag)
+  └── Submit a rich, evidence-backed ProposedAction
+
+Layer 2 — SentinelLayer (independent second opinion)
+  ├── Catches what the ops agent missed
+  ├── Enforces org-wide policy the agent may not know about
+  └── Escalates or denies based on composite SRI
+```
+
+**Why this matters — the tag example:** `POL-DR-001` today uses an exact string match
+(`disaster-recovery: true`). An intelligent ops agent with semantic understanding of
+resource tags would recognise a DR resource and either not propose the deletion or flag
+it explicitly in its reason — before SentinelLayer even sees it. The governance engine
+is the safety net, not the first line of defence.
+
+**Concrete next build — intelligent monitoring-agent:**
+```
+Real flow (buildable now):
+  Azure Monitor alert fires (vm-web-01 CPU > 80%)
+        ↓
+  Logic App webhook hits SentinelLayer API endpoint
+        ↓
+  monitoring-agent receives real alert payload
+        ↓
+  Agent queries Azure Monitor for actual metric value + duration
+        ↓
+  Agent reasons: "CPU at 89% sustained for 20 min — not a transient spike.
+                  B4ms will handle it without over-provisioning."
+        ↓
+  Submits ProposedAction with metric evidence attached
+        ↓
+  SentinelLayer evaluates → APPROVED with full audit trail
+```
+
+This is the end-to-end story: real alert → real reasoning → real governance.
+
+- [ ] **Wire Logic App webhook** — Azure Monitor alert → HTTP POST to
+  `POST /api/evaluate` or a new `/api/alert-trigger` endpoint
+- [ ] **Intelligent monitoring-agent** — queries real Azure Monitor API for metric
+  values; GPT-4.1 decides whether to propose scale-up and what SKU based on data
+- [ ] **Intelligent cost-agent** — queries Azure Monitor 30-day CPU history for all
+  VMs; GPT-4.1 reasons about idle vs standby vs DR before proposing deletion
+- [ ] **Semantic policy matching** — policy evaluation should use GPT-4.1 to match
+  resource tags semantically (not exact string) — a resource tagged `disaster-recovery:
+  true` or `purpose: disaster-recovery` or `dr-role: standby` should all trigger
+  `POL-DR-001`; exact string match is brittle against real-world tag drift
+- [ ] **Fix 429 rate limiting** — add exponential back-off + retry in
+  `_evaluate_with_framework()` across all agents; alternatively request TPM quota
+  increase in Azure Portal
+
+### Other Improvements
 - [ ] **Vector search** — deploy `text-embedding-3-small` in Foundry, add vector field
   to `incident-history` index, generate embeddings on seed + query
 - [ ] **Azure Function deployment** — wire `functions/function_app.py` for serverless

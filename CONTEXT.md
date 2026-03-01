@@ -137,14 +137,23 @@ Every proposed action gets scored across 4 dimensions:
 - Any critical policy violation → DENIED regardless of score
 
 ### Data Flow
+
+**Target architecture — two-layer intelligence:**
 ```
-Operational Agent proposes action (ProposedAction)
-    → SentinelLayer intercepts
+Operational Agent (Layer 1 — pre-flight reasoning)
+    ├── Queries real data: Azure Monitor metrics, Resource Graph tags
+    ├── Reasons about context before proposing (detects DR tags, blast radius)
+    └── Submits ProposedAction with evidence-backed reason
+            ↓
+SentinelLayer (Layer 2 — independent second opinion)
     → 4 governance agents evaluate in parallel
     → GovernanceDecisionEngine calculates SRI™ Composite
     → GovernanceVerdict returned (approved/escalated/denied)
     → Decision logged to audit trail
 ```
+
+**Current state:** Ops agents are simple rule-based proposal generators.
+The intelligence plan is Phase 12 — see STATUS.md for the roadmap.
 
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
@@ -164,7 +173,13 @@ Operational Agent proposes action (ProposedAction)
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 11 — Mini Production Environment (current)**
+**Phase 12 — Intelligent Ops Agents (planning)**
+
+The next major step is making the operational agents genuinely intelligent — not just
+rule-based proposal generators. See STATUS.md → "What's Next → Phase 12" for the full
+plan including the two-layer intelligence model and the intelligent monitoring-agent build.
+
+**Phase 11 — Mini Production Environment (complete)**
 
 - `infrastructure/terraform-prod/` — Terraform config that creates 5 real Azure resources in
   `sentinel-prod-rg` for live hackathon demos: `vm-dr-01` (DENIED scenario), `vm-web-01`

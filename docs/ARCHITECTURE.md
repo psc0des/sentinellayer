@@ -125,11 +125,15 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 ### Operational Agents (the governed — propose actions)
 
-| Agent | What it proposes |
-|---|---|
-| `CostOptimizationAgent` | VM downsizing, AKS node reduction |
-| `MonitoringAgent` | SRE anomaly remediation (unowned critical resources, circular deps, SPOFs) |
-| `DeployAgent` | NSG deny-all rules, lifecycle tag additions, observability resources |
+| Agent | What it proposes | Current state |
+|---|---|---|
+| `CostOptimizationAgent` | VM downsizing, idle resource deletion | Rule-based — hardcoded idle threshold |
+| `MonitoringAgent` | SRE anomaly remediation (circular deps, SPOFs, CPU spikes) | Rule-based — no real Azure Monitor query |
+| `DeployAgent` | NSG deny-all rules, lifecycle tag additions | Rule-based — no real deployment manifest |
+
+**Phase 12 target:** All three agents should query real Azure data sources and use
+GPT-4.1 to reason about context before proposing. See the Two-Layer Intelligence Model
+section below.
 
 ---
 
@@ -187,6 +191,83 @@ AgentRegistry.update_agent_stats()    DecisionTracker.record()
 
 All three paths — A2A, MCP, and direct Python — converge at
 `SentinelLayerPipeline.evaluate()`. No governance logic was duplicated.
+
+---
+
+## Two-Layer Intelligence Model (Phase 12 Design)
+
+SentinelLayer is a **second opinion**, not the only intelligence in the system. For the
+architecture to work well end-to-end, both layers need to be smart.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 1 — Ops Agent (pre-flight reasoning)                 │
+│                                                             │
+│  ● Query real data sources                                  │
+│    - Azure Monitor: actual metric values + duration         │
+│    - Resource Graph: real tags, dependencies, environment   │
+│                                                             │
+│  ● Reason before proposing                                  │
+│    - "This VM has disaster-recovery=true — not safe to delete"
+│    - "CPU has been > 80% for 20 min, not a transient spike" │
+│                                                             │
+│  ● Self-filter obviously dangerous proposals                │
+│  ● Submit evidence-backed ProposedAction                    │
+└────────────────────────┬────────────────────────────────────┘
+                         │  ProposedAction (with rich context)
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Layer 2 — SentinelLayer (independent second opinion)       │
+│                                                             │
+│  ● Catches what the ops agent missed                        │
+│  ● Enforces org-wide policy the agent may not know          │
+│  ● Applies SRI™ scoring across all 4 dimensions             │
+│  ● Escalates or denies based on composite risk              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why it matters — the tag example:**
+`POL-DR-001` uses exact string matching (`disaster-recovery: true`). An intelligent
+ops agent reading resource tags with semantic understanding would recognise a DR
+resource before proposing its deletion — and either skip the proposal or explicitly
+flag the risk in its reason. The exact-match policy is the safety net, not the
+first line of defence. A purely rule-based ops agent is a weak Layer 1.
+
+**Intelligent monitoring-agent — target end-to-end flow:**
+```
+Azure Monitor alert fires (vm-web-01 CPU > 80%)
+    ↓ Logic App webhook
+POST /api/evaluate  (or /api/alert-trigger)
+    ↓
+monitoring-agent queries Azure Monitor for real metric value + duration
+    ↓
+GPT-4.1 reasons: "CPU 89% sustained 20 min — not a spike.
+                  B4ms covers headroom without over-provisioning."
+    ↓
+ProposedAction submitted with metric evidence
+    ↓
+SentinelLayer: SRI 11.0 → APPROVED  ✅
+```
+
+---
+
+## Azure OpenAI Rate Limiting (HTTP 429)
+
+In live mode all 5 governance agents call Azure OpenAI concurrently. For 3 demo
+scenarios that is up to 15 LLM calls in a few seconds — which exhausts Azure OpenAI's
+**Tokens Per Minute (TPM)** and **Requests Per Minute (RPM)** quotas immediately.
+
+Every agent has an `except Exception` fallback that catches the 429 and continues with
+deterministic rule-based scoring. This means the GPT-4.1 reasoning layer is **not
+exercised** when the quota is exceeded — only the rule-based floor runs.
+
+**Symptoms:** `PolicyComplianceAgent: framework call failed (429 Too Many Requests) —
+falling back to rules.` in logs for every agent.
+
+**Fixes:**
+1. Request TPM quota increase: Azure Portal → Azure OpenAI → your deployment → Quotas
+2. Add exponential back-off + retry inside `_evaluate_with_framework()` in each agent
+3. Reduce parallelism: run governance agents sequentially when under quota pressure
 
 ---
 
