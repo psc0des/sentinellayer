@@ -181,6 +181,24 @@ and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
+**Phase 14 — Verification & Fixes (complete)**
+
+Comprehensive verification of Phase 12/13. Key fixes applied:
+
+- ``src/infrastructure/azure_tools.py``: live-mode exceptions now raise ``RuntimeError``
+  (descriptive message + "run az login" hint) instead of silently falling back to mock data.
+  ``get_resource_details`` and ``list_nsg_rules`` seed-data fallbacks are now gated behind
+  ``_use_mocks()`` — they never run in live mode.
+- All 3 ops agents: ``agent.run(prompt)`` wrapped in ``run_with_throttle`` (asyncio.Semaphore
+  + exponential back-off retry) — same throttling guarantee as the governance agents.
+- ``demo_live.py``: hardcoded ``"sentinel-prod-rg"`` replaced with ``--resource-group / -g``
+  CLI argument (``None`` default = scan whole subscription).
+- ``tests/test_agent_agnostic.py`` (NEW, 22 tests): verifies environment-agnosticism at SDK
+  level — no hardcoded resource names, KQL passes through unchanged, RuntimeError on Azure
+  failure, custom RG passed to framework, mock metrics returns structured dict.
+- **Test result: 420 passed, 10 xfailed, 0 failed** ✅
+- Commit: ``ee2c0fd``
+
 **Phase 13 — Agent Scan Triggers + Environment-Agnosticism Fixes (complete)**
 
 Five new scan endpoints (`POST /api/scan/cost|monitoring|deploy|all`, `GET /api/scan/{id}/status`)
@@ -196,8 +214,10 @@ Ops agents now use 5 generic Azure tools (``src/infrastructure/azure_tools.py``)
 investigate real data before proposing. GPT-4.1 discovers resources, checks actual CPU
 metrics, inspects NSG rules, and reviews activity logs — then calls ``propose_action``
 with evidence-backed reasons. ``POST /api/alert-trigger`` enables Azure Monitor webhook
-integration. Run ``python demo_live.py`` to see two-layer intelligence end-to-end.
-Note: live-mode failure now returns ``[]`` (not seed-data fallback) — see fixes above.
+integration. Run ``python demo_live.py --resource-group <rg>`` (or without flag to scan
+the whole subscription) to see two-layer intelligence end-to-end.
+Note: live-mode failure now raises ``RuntimeError`` and returns ``[]`` — never falls back
+to seed data. All ops agent framework calls are throttled via ``run_with_throttle``.
 
 **Phase 11 — Mini Production Environment (complete)**
 
@@ -209,7 +229,7 @@ Note: live-mode failure now returns ``[]`` (not seed-data fallback) — see fixe
 - `data/seed_resources.json` updated: real `sentinel-prod-rg` resource IDs added alongside
   legacy mock resources. Replace `YOUR-SUBSCRIPTION-ID` with your subscription ID after
   running `terraform apply` in `infrastructure/terraform-prod/`.
-- **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+- **Test result: 420 passed, 10 xfailed, 0 failed** ✅
 
 **Previous: Phase 10 — A2A Protocol + Bug Fixes**
 
@@ -253,7 +273,7 @@ Note: live-mode failure now returns ``[]`` (not seed-data fallback) — see fixe
   `os.environ.setdefault("USE_LOCAL_MOCKS", "true")` removed — demo now
   reads `USE_LOCAL_MOCKS` from `.env` like every other process (setdefault
   was silently overriding `.env` because it always ran before dotenv loading).
-- **Test result: 398 passed, 10 xfailed, 0 failed** ✅
+- **Test result: 420 passed, 10 xfailed, 0 failed** ✅
   (17 previously-xfailed dashboard tests promoted to passing after `_load_all`
   fix; 10 remaining xfails are `TestRecord` tests about `tracker._dir`.)
 - MCP and direct Python pipeline continue to work unchanged.

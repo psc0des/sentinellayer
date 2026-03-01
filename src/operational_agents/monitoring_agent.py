@@ -144,10 +144,7 @@ class MonitoringAgent:
 
         self._cfg = cfg or _default_settings
 
-        self._use_framework: bool = (
-            not self._cfg.use_local_mocks
-            and bool(self._cfg.azure_openai_endpoint)
-        )
+        self._use_framework: bool = bool(self._cfg.azure_openai_endpoint)
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,7 +170,11 @@ class MonitoringAgent:
             List of :class:`~src.core.models.ProposedAction` objects.
         """
         if not self._use_framework:
-            return self._scan_rules()
+            logger.info(
+                "MonitoringAgent: no Azure OpenAI endpoint configured — "
+                "returning no proposals (set AZURE_OPENAI_ENDPOINT to enable live scanning)."
+            )
+            return []
 
         try:
             return await self._scan_with_framework(alert_payload, target_resource_group)
@@ -203,6 +204,8 @@ class MonitoringAgent:
             query_metrics,
             get_resource_details,
             query_resource_graph,
+            query_activity_log,
+            list_nsg_rules,
         )
 
         credential = DefaultAzureCredential()
@@ -263,6 +266,36 @@ class MonitoringAgent:
             """Discover resources for proactive scanning."""
             results = query_resource_graph(kusto_query)
             return json.dumps(results, default=str)
+
+        @af.tool(
+            name="query_activity_log",
+            description=(
+                "Query Azure Monitor activity logs for a resource group. "
+                "Returns recent operations with timestamp, operation name, status "
+                "(Succeeded/Failed), caller, and resource type. "
+                "Use this to check for recent failed operations or suspicious changes "
+                "that may explain an active alert. "
+                "timespan uses ISO 8601 format (e.g. 'P7D' for last 7 days)."
+            ),
+        )
+        def tool_query_activity_log(resource_group: str, timespan: str = "P7D") -> str:
+            """Check recent changes that may correlate with reliability issues."""
+            entries = query_activity_log(resource_group, timespan)
+            return json.dumps(entries, default=str)
+
+        @af.tool(
+            name="list_nsg_rules",
+            description=(
+                "List the security rules for an Azure Network Security Group. "
+                "Returns JSON array of rules with name, port, access (Allow/Deny), "
+                "priority, and direction. Use this to check if NSG misconfigurations "
+                "may be contributing to network-related reliability issues."
+            ),
+        )
+        def tool_list_nsg_rules(nsg_resource_id: str) -> str:
+            """Inspect NSG rules when diagnosing network-layer incidents."""
+            rules = list_nsg_rules(nsg_resource_id)
+            return json.dumps(rules, default=str)
 
         @af.tool(
             name="propose_action",
@@ -350,6 +383,8 @@ class MonitoringAgent:
                 tool_query_metrics,
                 tool_get_resource_details,
                 tool_query_resource_graph,
+                tool_query_activity_log,
+                tool_list_nsg_rules,
                 tool_propose_action,
             ],
         )

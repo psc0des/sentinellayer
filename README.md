@@ -193,7 +193,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 398 passed, 10 xfailed, 0 failed
+# Expected: 420 passed, 10 xfailed, 0 failed
 pytest tests/ -v
 ```
 

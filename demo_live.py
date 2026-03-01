@@ -30,14 +30,37 @@ import argparse
 import asyncio
 import logging
 
+import uvicorn
+
 # Keep demo output clean — suppress library noise.
 logging.basicConfig(level=logging.WARNING)
 
+from src.a2a.sentinel_a2a_server import app as _a2a_app  # noqa: E402
 from src.core.decision_tracker import DecisionTracker  # noqa: E402
 from src.core.pipeline import SentinelLayerPipeline  # noqa: E402
 from src.operational_agents.cost_agent import CostOptimizationAgent  # noqa: E402
 from src.operational_agents.monitoring_agent import MonitoringAgent  # noqa: E402
 from src.operational_agents.deploy_agent import DeployAgent  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# A2A server lifecycle helpers
+# ---------------------------------------------------------------------------
+
+_a2a_server: uvicorn.Server | None = None
+
+
+async def _start_a2a_server() -> None:
+    """Run the SentinelLayer A2A server in the background on port 8001."""
+    global _a2a_server
+    config = uvicorn.Config(_a2a_app, host="0.0.0.0", port=8001, log_level="warning")
+    _a2a_server = uvicorn.Server(config)
+    await _a2a_server.serve()
+
+
+async def _stop_a2a_server() -> None:
+    """Signal the background A2A server to stop."""
+    if _a2a_server is not None:
+        _a2a_server.should_exit = True
 
 # ---------------------------------------------------------------------------
 # Display helpers
@@ -105,12 +128,13 @@ def _print_verdict(verdict) -> None:
 async def scenario_1_alert_driven_scaleup(
     pipeline: SentinelLayerPipeline,
     tracker: DecisionTracker,
-    resource_group: str = "sentinel-prod-rg",
+    resource_group: str | None = None,
 ) -> None:
     """Azure Monitor alert fires for a VM CPU → agent investigates → APPROVED scale-up."""
+    rg_label = resource_group or "whole subscription"
     _print_scenario_header(
         1,
-        f"CPU Alert: VM CPU > 80% in {resource_group} — monitoring agent investigates",
+        f"CPU Alert: VM CPU > 80% in {rg_label} — monitoring agent investigates",
         "MonitoringAgent (alert-driven)",
     )
 
@@ -243,12 +267,17 @@ async def main(resource_group: str | None = None) -> None:
     print("    > 60      → DENIED     (blocked)")
     print("    Critical policy violation → DENIED (always)")
     print()
+    print("  Starting A2A server on port 8001 ...")
+    a2a_task = asyncio.create_task(_start_a2a_server())
+    await asyncio.sleep(1)  # allow server to bind before scenarios begin
+    print("  A2A server ready.")
+
     print("  Initialising pipeline ...")
     pipeline = SentinelLayerPipeline()
     tracker = DecisionTracker()
     print("  Pipeline ready.")
 
-    await scenario_1_alert_driven_scaleup(pipeline, tracker, resource_group or "sentinel-prod-rg")
+    await scenario_1_alert_driven_scaleup(pipeline, tracker, resource_group)
     await asyncio.sleep(2)
 
     await scenario_2_cost_scan(pipeline, tracker, resource_group)
@@ -261,6 +290,14 @@ async def main(resource_group: str | None = None) -> None:
     print("  Check dashboard: python -m src.api.dashboard_api")
     print(_bar())
     print()
+
+    await _stop_a2a_server()
+    await asyncio.sleep(0.5)  # allow graceful shutdown
+    a2a_task.cancel()
+    try:
+        await a2a_task
+    except asyncio.CancelledError:
+        pass
 
 
 if __name__ == "__main__":

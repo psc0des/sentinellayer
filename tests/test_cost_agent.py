@@ -41,8 +41,7 @@ class TestCostOptimizationAgent:
 
     @pytest.fixture(scope="class")
     def proposals(self, agent):
-        import asyncio
-        return asyncio.run(agent.scan())
+        return agent._scan_rules()
 
     # ------------------------------------------------------------------
     # Return type and basic structure
@@ -204,8 +203,8 @@ class TestCostOptimizationAgent:
     # Custom resources path
     # ------------------------------------------------------------------
 
-    async def test_custom_resources_path_empty_returns_no_proposals(self):
-        """With no resources in the file, scan() returns an empty list."""
+    def test_custom_resources_path_empty_returns_no_proposals(self):
+        """With no resources in the file, _scan_rules() returns an empty list."""
         minimal = {"resources": [], "dependency_edges": []}
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".json", delete=False
@@ -214,9 +213,9 @@ class TestCostOptimizationAgent:
             tmp_path = f.name
 
         agent = CostOptimizationAgent(resources_path=tmp_path)
-        assert await agent.scan() == []
+        assert agent._scan_rules() == []
 
-    async def test_custom_resources_path_cheap_resource_returns_no_proposals(self):
+    def test_custom_resources_path_cheap_resource_returns_no_proposals(self):
         """Resources below the cost threshold produce no proposals."""
         data = {
             "resources": [
@@ -238,10 +237,10 @@ class TestCostOptimizationAgent:
             tmp_path = f.name
 
         agent = CostOptimizationAgent(resources_path=tmp_path)
-        assert await agent.scan() == []
+        assert agent._scan_rules() == []
 
-    async def test_custom_resources_path_oversized_vm_flagged(self):
-        """An oversized VM in a custom file should still be detected."""
+    def test_custom_resources_path_oversized_vm_flagged(self):
+        """An oversized VM in a custom file should still be detected by the rule engine."""
         data = {
             "resources": [
                 {
@@ -262,11 +261,11 @@ class TestCostOptimizationAgent:
             tmp_path = f.name
 
         agent = CostOptimizationAgent(resources_path=tmp_path)
-        proposals = await agent.scan()
+        proposals = agent._scan_rules()
         assert len(proposals) == 1
         assert proposals[0].action_type == ActionType.SCALE_DOWN
 
-    async def test_aks_below_node_threshold_not_flagged(self):
+    def test_aks_below_node_threshold_not_flagged(self):
         """AKS cluster with fewer nodes than the threshold should be skipped."""
         data = {
             "resources": [
@@ -289,4 +288,4 @@ class TestCostOptimizationAgent:
             tmp_path = f.name
 
         agent = CostOptimizationAgent(resources_path=tmp_path)
-        assert await agent.scan() == []
+        assert agent._scan_rules() == []

@@ -53,9 +53,10 @@ _DEFAULT_RESOURCES_PATH = (
 _SPARSE_TOPOLOGY_THRESHOLD: int = 3
 _NSG_RESOURCE_TYPE = "Microsoft.Network/networkSecurityGroups"
 # Tags used by the rule-based (mock/CI) path to detect lifecycle metadata.
-# These are organisation-specific examples from the SentinelLayer demo environment.
-# In production, replace with your org's actual lifecycle tag key names.
-_LIFECYCLE_TAGS: set[str] = {"backup", "disaster-recovery", "purpose"}
+# Classification tags (environment, criticality) are NOT lifecycle tags — they describe
+# what a resource is, not how it is managed.  Any tag beyond these indicates that
+# lifecycle management (backup, DR, owner, cost-centre, etc.) has been applied.
+_CLASSIFICATION_TAGS: frozenset[str] = frozenset({"environment", "criticality"})
 
 # System instructions for the framework agent.
 _AGENT_INSTRUCTIONS = """\
@@ -128,10 +129,7 @@ class DeployAgent:
 
         self._cfg = cfg or _default_settings
 
-        self._use_framework: bool = (
-            not self._cfg.use_local_mocks
-            and bool(self._cfg.azure_openai_endpoint)
-        )
+        self._use_framework: bool = bool(self._cfg.azure_openai_endpoint)
 
     # ------------------------------------------------------------------
     # Public API
@@ -151,7 +149,11 @@ class DeployAgent:
             List of :class:`~src.core.models.ProposedAction` objects.
         """
         if not self._use_framework:
-            return self._scan_rules()
+            logger.info(
+                "DeployAgent: no Azure OpenAI endpoint configured — "
+                "returning no proposals (set AZURE_OPENAI_ENDPOINT to enable live scanning)."
+            )
+            return []
 
         try:
             return await self._scan_with_framework(target_resource_group)
@@ -393,13 +395,17 @@ class DeployAgent:
             tags = resource.get("tags", {})
             if tags.get("environment") != "production":
                 continue
-            if any(k in tags for k in _LIFECYCLE_TAGS):
+            # A resource is considered adequately tagged if it has ANY tag beyond
+            # the classification keys (environment, criticality).  Organisation-
+            # specific lifecycle tag key names are intentionally not checked here.
+            has_lifecycle_tag = any(k not in _CLASSIFICATION_TAGS for k in tags)
+            if has_lifecycle_tag:
                 continue
             reason = (
                 f"Production resource '{resource['name']}' has no lifecycle "
-                "management tags (backup, disaster-recovery, or purpose). "
-                "Without these tags, automated backup policies and DR plans "
-                "cannot be applied by the governance engine. "
+                "management tags. Resources tagged only with classification keys "
+                "(environment, criticality) lack ownership and lifecycle context "
+                "(e.g. backup policy, DR designation, cost centre, owner). "
                 "Propose adding lifecycle metadata via config update."
             )
             proposals.append(

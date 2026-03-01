@@ -259,7 +259,9 @@ a `scan_id`; poll `GET /api/scan/{scan_id}/status` to track progress.
 ```json
 { "resource_group": "sentinel-prod-rg" }
 ```
-`resource_group` is optional — omit or send `null` to scan the whole subscription.
+`resource_group` is optional — omit or send `null` to use the `DEFAULT_RESOURCE_GROUP`
+config value (itself defaulting to `null` = whole subscription).
+Precedence: body `resource_group` → `DEFAULT_RESOURCE_GROUP` env var → whole subscription.
 Empty body `{}` is also accepted.
 
 **Common response:**

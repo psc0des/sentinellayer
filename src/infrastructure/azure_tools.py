@@ -252,6 +252,7 @@ def query_metrics(
                         "average": round(sum(values) / len(values), 2),
                         "maximum": round(max(values), 2),
                         "minimum": round(min(values), 2),
+                        "current": round(values[-1], 2),
                         "unit": metric.unit.value if metric.unit else "unknown",
                     }
             return output
@@ -300,27 +301,33 @@ def _mock_query_metrics(
         ml = metric_name.lower()
         if "cpu" in ml:
             metrics[metric_name] = {
-                "average": cpu_avg, "maximum": cpu_max, "minimum": cpu_min, "unit": "Percent",
+                "average": cpu_avg, "maximum": cpu_max, "minimum": cpu_min,
+                "current": cpu_avg, "unit": "Percent",
             }
         elif "network in" in ml:
             metrics[metric_name] = {
-                "average": 1_245_000.0, "maximum": 8_320_000.0, "minimum": 0.0, "unit": "Bytes",
+                "average": 1_245_000.0, "maximum": 8_320_000.0, "minimum": 0.0,
+                "current": 1_245_000.0, "unit": "Bytes",
             }
         elif "network out" in ml:
             metrics[metric_name] = {
-                "average": 892_000.0, "maximum": 4_210_000.0, "minimum": 0.0, "unit": "Bytes",
+                "average": 892_000.0, "maximum": 4_210_000.0, "minimum": 0.0,
+                "current": 892_000.0, "unit": "Bytes",
             }
         elif "disk" in ml:
             metrics[metric_name] = {
-                "average": 12.4, "maximum": 45.2, "minimum": 0.5, "unit": "MBps",
+                "average": 12.4, "maximum": 45.2, "minimum": 0.5,
+                "current": 12.4, "unit": "MBps",
             }
         elif "memory" in ml:
             metrics[metric_name] = {
-                "average": 65.0, "maximum": 89.5, "minimum": 40.2, "unit": "Percent",
+                "average": 65.0, "maximum": 89.5, "minimum": 40.2,
+                "current": 65.0, "unit": "Percent",
             }
         else:
             metrics[metric_name] = {
-                "average": 20.0, "maximum": 45.0, "minimum": 5.0, "unit": "Count",
+                "average": 20.0, "maximum": 45.0, "minimum": 5.0,
+                "current": 20.0, "unit": "Count",
             }
 
     return {"resource_id": resource_id, "timespan": timespan, "metrics": metrics}

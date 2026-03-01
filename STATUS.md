@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-01 (Phase 13 + environment-agnosticism fixes complete)
+**Last updated:** 2026-03-01 (Phase 15 validator contract fixes complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -116,12 +116,95 @@
 - [x] `src/core/pipeline.py` — added `DeployAgent` + new `scan_operational_agents()` method
 - [x] Auth pattern: `DefaultAzureCredential` + `get_bearer_token_provider` → `AsyncAzureOpenAI`
   (Responses API requires `api_version="2025-03-01-preview"`)
-- [x] Mock fallback preserved: `_use_framework = not use_local_mocks and bool(endpoint)`;
-  `except Exception` fallback catches live failures
+- [x] Mock fallback preserved in governance agents: `_use_framework = not use_local_mocks and bool(endpoint)`
+  (Phase 15 changed this for ops agents only — governance agent pattern is unchanged)
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 13 — Agent Scan Triggers + Dashboard Controls  ← LATEST
+### Phase 15 — Validator Contract Fixes  ← LATEST
+
+Second-pass audit against the Phase 12/13 prompt contract.  8 findings confirmed and fixed.
+
+**Ops agents — mock gate removed from `scan()`**
+- [x] `_use_framework` now gates only on `bool(azure_openai_endpoint)`. `USE_LOCAL_MOCKS` no longer
+  bypasses the framework — if the endpoint is set the live path always runs (with mock azure_tools
+  when `USE_LOCAL_MOCKS=true`). If no endpoint is configured, `scan()` returns `[]` + log.
+- [x] `_scan_rules()` remains as a private method for direct test access (CI rule-engine tests).
+- [x] `tests/test_cost_agent.py` + `tests/test_monitoring_agent.py` — fixtures and all
+  custom-resource-path tests updated to call `agent._scan_rules()` directly instead of
+  `await agent.scan()` (which now correctly returns `[]` without an endpoint configured).
+
+**All 5 generic tools registered in every ops agent**
+- [x] `CostOptimizationAgent` gained `query_activity_log` (check recent creates before flagging
+  waste) and `list_nsg_rules` (assess security posture alongside cost).
+- [x] `MonitoringAgent` gained `query_activity_log` (correlate recent changes with incidents) and
+  `list_nsg_rules` (diagnose network-layer reliability issues).
+- [x] `DeployAgent` already had all 5 — unchanged.
+- [x] All three agents now pass the full 5-tool array to `client.as_agent(tools=[...])`.
+
+**Deploy agent — generic lifecycle tag logic**
+- [x] `_LIFECYCLE_TAGS = {"backup","disaster-recovery","purpose"}` removed.  Replaced with
+  `_CLASSIFICATION_TAGS = frozenset({"environment","criticality"})`.  The rule-based
+  `_detect_missing_lifecycle_tags()` now flags resources that have ONLY classification tags
+  — any additional tag is treated as lifecycle metadata, regardless of key name.
+
+**Cost agent runtime prompt narrowing fixed**
+- [x] `_AGENT_INSTRUCTIONS` already instructs GPT to query all resource types.  The `agent.run()`
+  prompt previously overrode this with "discover VMs and clusters".  Shortened to a single
+  scoped sentence — instructions drive the agent fully.
+
+**API scan endpoints — config default resource group**
+- [x] `Settings` gained `default_resource_group: str = ""` (env var `DEFAULT_RESOURCE_GROUP`).
+- [x] All 4 scan endpoints (`/api/scan/cost|monitoring|deploy|all`) now compute
+  `rg = body.resource_group or settings.default_resource_group or None` before passing to
+  `_run_agent_scan` — body overrides config; config overrides whole-subscription scan.
+
+**Demo — A2A server auto-starts**
+- [x] `demo_live.py` now imports `app` from `src.a2a.sentinel_a2a_server` and starts it as a
+  background `asyncio.Task` on port 8001 before running scenarios.  Cleanly stopped with
+  `server.should_exit = True` + task cancellation after all scenarios complete.
+- [x] `scenario_1_alert_driven_scaleup` signature changed to `str | None = None`; hardcoded
+  `resource_group or "sentinel-prod-rg"` fallback removed — `None` = whole subscription.
+
+**`query_metrics` — `"current"` field added**
+- [x] Live path: `"current": round(values[-1], 2)` — most-recent data point per metric.
+- [x] Mock path: `"current": <avg_value>` added to every metric dict in `_mock_query_metrics`.
+
+**Test result: 420 passed, 10 xfailed, 0 failed** ✅ (no regression from Phase 14)
+
+### Phase 14 — Verification & Fixes (commit ee2c0fd)
+Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
+
+**`src/infrastructure/azure_tools.py`**
+- [x] Live-mode exceptions now raise `RuntimeError` (descriptive message + "run az login"
+  hint) instead of silently falling back to mock data.  Previously all 3 tools
+  (`query_resource_graph`, `query_metrics`, `query_activity_log`) swallowed the error and
+  returned seed-data responses — hiding connectivity problems.
+- [x] `get_resource_details` and `list_nsg_rules`: seed-data fallback code moved inside
+  `if _use_mocks():` guard — cannot execute in live mode even on exception.
+
+**Operational agents — throttling**
+- [x] `cost_agent.py`, `monitoring_agent.py`, `deploy_agent.py`: `agent.run(prompt)` now
+  called via `run_with_throttle()` — same asyncio.Semaphore + exponential back-off
+  protection that governance agents already had.
+
+**`demo_live.py`**
+- [x] Hardcoded `"sentinel-prod-rg"` replaced with argparse `--resource-group / -g` CLI
+  argument (`None` default → scans whole subscription).  All 3 scenarios parameterised.
+
+**`tests/test_agent_agnostic.py`** (NEW — 22 tests)
+- [x] `TestCostAgentAgnostic` (5) — KQL prompt covers all resource types, no seed import,
+  accepts any RG, no hardcoded names, returns `[]` on Azure failure
+- [x] `TestDeployAgentAgnostic` (5) — generic tag language, no hardcoded tag keys,
+  accepts any RG, no seed import, returns `[]` on failure
+- [x] `TestMonitoringAgentAgnostic` (4) — accepts arbitrary alert payload, any RG, `[]` on failure
+- [x] `TestAzureTools` (3) — RuntimeError on connection failure; KQL passes to SDK
+  unchanged (sys.modules injection); mock metrics returns structured dict
+- [x] `TestScanAPIEndpoints` (5) — scan_id returned, 3 scan_ids for /all, status endpoint,
+  custom RG passthrough, alert-trigger webhook
+- [x] **Test result: 420 passed, 10 xfailed, 0 failed** ✅ (was 398 before this phase)
+
+### Phase 13 — Agent Scan Triggers + Dashboard Controls
 - [x] `src/api/dashboard_api.py` — 5 new endpoints using FastAPI `BackgroundTasks`:
   - `POST /api/scan/cost` — triggers `CostOptimizationAgent` in background, returns `{scan_id}`
   - `POST /api/scan/monitoring` — triggers `MonitoringAgent` in background
@@ -582,15 +665,15 @@ through SentinelLayer automatically — fully autonomous cloud governance loop.
 | `src/governance_agents/policy_agent.py` | SRI:Policy — Agent Framework + `@tool` | Phase 8 |
 | `src/governance_agents/historical_agent.py` | SRI:Historical — Agent Framework + `@tool` | Phase 8 |
 | `src/governance_agents/financial_agent.py` | SRI:Cost — Agent Framework + `@tool` | Phase 8 |
-| `src/infrastructure/azure_tools.py` | 5 generic sync Azure tools (Resource Graph, metrics, NSG, activity log) | Phase 12 + agnosticism fix |
-| `src/operational_agents/cost_agent.py` | FinOps proposals — GPT-4.1 investigates real utilisation; `[]` on live failure | Phase 12 + agnosticism fix |
-| `src/operational_agents/monitoring_agent.py` | SRE anomaly detection — alert-driven + proactive scan; `[]` on live failure | Phase 12 + agnosticism fix |
-| `src/operational_agents/deploy_agent.py` | Security/config proposals — NSG rules + activity log; `[]` on live failure | Phase 12 + agnosticism fix |
+| `src/infrastructure/azure_tools.py` | 5 generic sync Azure tools; `"current"` field in metrics; RuntimeError on live failure | Phase 15 |
+| `src/operational_agents/cost_agent.py` | FinOps proposals — 5 tools; `scan()` framework-only; `_scan_rules()` for tests | Phase 15 |
+| `src/operational_agents/monitoring_agent.py` | SRE anomaly detection — 5 tools; `scan()` framework-only; `_scan_rules()` for tests | Phase 15 |
+| `src/operational_agents/deploy_agent.py` | Security/config proposals — 5 tools; generic lifecycle tag logic | Phase 15 |
 | `src/infrastructure/openai_client.py` | GPT-4.1 via Foundry (direct completions) | Phase 7 |
 | `src/infrastructure/cosmos_client.py` | Cosmos DB read/write | Phase 6 |
 | `src/infrastructure/search_client.py` | Azure AI Search + index seeding | Phase 7 |
 | `src/infrastructure/secrets.py` | Key Vault secret resolution | Phase 6 |
-| `src/config.py` | All env vars + SRI thresholds | Phase 1 |
+| `src/config.py` | All env vars + SRI thresholds + `default_resource_group` | Phase 15 |
 | `data/policies.json` | 6 governance policies | Phase 2 |
 | `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
@@ -598,8 +681,8 @@ through SentinelLayer automatically — fully autonomous cloud governance loop.
 | `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write; all TaskUpdater calls awaited | TaskUpdater fix |
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
-| `src/api/dashboard_api.py` | FastAPI REST — 12 endpoints incl. scan triggers + alert webhook | Phase 13 |
-| `demo_live.py` | Phase 12 two-layer intelligence demo — 3 scenarios | Phase 12 |
+| `src/api/dashboard_api.py` | FastAPI REST — 12 endpoints; scan endpoints use `default_resource_group` config | Phase 15 |
+| `demo_live.py` | Two-layer intelligence demo — A2A server auto-starts; no hardcoded RG fallback | Phase 15 |
 | `dashboard/src/components/AgentControls.jsx` | Scan control panel — per-agent buttons, polling, Run All | Phase 13 |
 | `dashboard/src/api.js` | Frontend fetch helpers incl. triggerScan, fetchScanStatus | Phase 13 |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |

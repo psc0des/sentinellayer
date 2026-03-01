@@ -62,7 +62,7 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: 398 passed, 10 xfailed, 0 failed
+# Expected: 420 passed, 10 xfailed, 0 failed
 
 # 7a. Start SentinelLayer — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
@@ -76,7 +76,8 @@ uvicorn src.api.dashboard_api:app --reload
 # 8. Run demos
 python demo.py        # direct Python pipeline demo (3 scenarios)
 python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
-python demo_live.py   # two-layer intelligence demo — ops agents investigate then SentinelLayer evaluates
+python demo_live.py                           # two-layer intelligence demo — starts A2A server + scans whole subscription
+python demo_live.py --resource-group sentinel-prod-rg  # scope to a specific resource group
 ```
 
 ## Optional: Deploy Mini Production Environment
@@ -130,3 +131,4 @@ See `infrastructure/terraform-prod/README.md` for full detail including cost est
 | `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container name |
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
 | `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
+| `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |

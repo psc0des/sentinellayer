@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # --- Default scan scope ---
+    # When POST /api/scan/* body omits resource_group, this value is used.
+    # Empty string = scan the whole subscription.
+    default_resource_group: str = ""
+
     # --- Mock vs Azure mode ---
     # True  → all infrastructure clients use local JSON files (default, safe offline)
     # False → clients use real Azure SDKs (requires credentials set above)

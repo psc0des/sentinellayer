@@ -510,8 +510,9 @@ async def trigger_cost_scan(
         "evaluations": [],
         "error": None,
     }
-    background_tasks.add_task(_run_agent_scan, scan_id, "cost", body.resource_group)
-    logger.info("scan %s (cost) started", scan_id[:8])
+    rg = body.resource_group or settings.default_resource_group or None
+    background_tasks.add_task(_run_agent_scan, scan_id, "cost", rg)
+    logger.info("scan %s (cost) started rg=%s", scan_id[:8], rg)
     return {"status": "started", "scan_id": scan_id, "agent_type": "cost"}
 
 
@@ -539,8 +540,9 @@ async def trigger_monitoring_scan(
         "evaluations": [],
         "error": None,
     }
-    background_tasks.add_task(_run_agent_scan, scan_id, "monitoring", body.resource_group)
-    logger.info("scan %s (monitoring) started", scan_id[:8])
+    rg = body.resource_group or settings.default_resource_group or None
+    background_tasks.add_task(_run_agent_scan, scan_id, "monitoring", rg)
+    logger.info("scan %s (monitoring) started rg=%s", scan_id[:8], rg)
     return {"status": "started", "scan_id": scan_id, "agent_type": "monitoring"}
 
 
@@ -568,8 +570,9 @@ async def trigger_deploy_scan(
         "evaluations": [],
         "error": None,
     }
-    background_tasks.add_task(_run_agent_scan, scan_id, "deploy", body.resource_group)
-    logger.info("scan %s (deploy) started", scan_id[:8])
+    rg = body.resource_group or settings.default_resource_group or None
+    background_tasks.add_task(_run_agent_scan, scan_id, "deploy", rg)
+    logger.info("scan %s (deploy) started rg=%s", scan_id[:8], rg)
     return {"status": "started", "scan_id": scan_id, "agent_type": "deploy"}
 
 
@@ -592,6 +595,7 @@ async def trigger_all_scans(
 
         {"resource_group": "sentinel-prod-rg"}
     """
+    rg = body.resource_group or settings.default_resource_group or None
     scan_ids: list[str] = []
     for agent_type in ("cost", "monitoring", "deploy"):
         scan_id = str(uuid.uuid4())
@@ -603,9 +607,9 @@ async def trigger_all_scans(
             "evaluations": [],
             "error": None,
         }
-        background_tasks.add_task(_run_agent_scan, scan_id, agent_type, body.resource_group)
+        background_tasks.add_task(_run_agent_scan, scan_id, agent_type, rg)
         scan_ids.append(scan_id)
-        logger.info("scan %s (%s) started via /scan/all", scan_id[:8], agent_type)
+        logger.info("scan %s (%s) started via /scan/all rg=%s", scan_id[:8], agent_type, rg)
 
     return {"status": "started", "scan_ids": scan_ids}
 

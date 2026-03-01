@@ -147,10 +147,7 @@ class CostOptimizationAgent:
         self._resources: list[dict] = data.get("resources", [])
         self._cfg = cfg or _default_settings
 
-        self._use_framework: bool = (
-            not self._cfg.use_local_mocks
-            and bool(self._cfg.azure_openai_endpoint)
-        )
+        self._use_framework: bool = bool(self._cfg.azure_openai_endpoint)
 
     # ------------------------------------------------------------------
     # Public API
@@ -171,7 +168,11 @@ class CostOptimizationAgent:
             List of :class:`~src.core.models.ProposedAction` objects.
         """
         if not self._use_framework:
-            return self._scan_rules()
+            logger.info(
+                "CostOptimizationAgent: no Azure OpenAI endpoint configured — "
+                "returning no proposals (set AZURE_OPENAI_ENDPOINT to enable live scanning)."
+            )
+            return []
 
         try:
             return await self._scan_with_framework(target_resource_group)
@@ -199,6 +200,8 @@ class CostOptimizationAgent:
             query_resource_graph,
             query_metrics,
             get_resource_details,
+            query_activity_log,
+            list_nsg_rules,
         )
 
         credential = DefaultAzureCredential()
@@ -260,6 +263,35 @@ class CostOptimizationAgent:
             """Retrieve full resource details including SKU and tags."""
             details = get_resource_details(resource_id)
             return json.dumps(details, default=str)
+
+        @af.tool(
+            name="query_activity_log",
+            description=(
+                "Query Azure Monitor activity logs for a resource group. "
+                "Returns recent operations with timestamp, operation name, status "
+                "(Succeeded/Failed), caller, and resource type. "
+                "Use this to check whether a resource was recently created or modified — "
+                "newly created resources should not be flagged as waste. "
+                "timespan uses ISO 8601 format (e.g. 'P7D' for last 7 days)."
+            ),
+        )
+        def tool_query_activity_log(resource_group: str, timespan: str = "P7D") -> str:
+            """Check recent resource changes before flagging waste."""
+            entries = query_activity_log(resource_group, timespan)
+            return json.dumps(entries, default=str)
+
+        @af.tool(
+            name="list_nsg_rules",
+            description=(
+                "List the security rules for an Azure Network Security Group. "
+                "Returns JSON array of rules with name, port, access (Allow/Deny), "
+                "priority, and direction. Use this to check security posture alongside cost."
+            ),
+        )
+        def tool_list_nsg_rules(nsg_resource_id: str) -> str:
+            """Inspect NSG security rules when reviewing network-related cost items."""
+            rules = list_nsg_rules(nsg_resource_id)
+            return json.dumps(rules, default=str)
 
         @af.tool(
             name="propose_action",
@@ -331,6 +363,8 @@ class CostOptimizationAgent:
                 tool_query_resource_graph,
                 tool_query_metrics,
                 tool_get_resource_details,
+                tool_query_activity_log,
+                tool_list_nsg_rules,
                 tool_propose_action,
             ],
         )
@@ -343,9 +377,7 @@ class CostOptimizationAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(
             agent.run,
-            f"Investigate and identify cost optimisation opportunities {rg_scope}. "
-            "Use query_resource_graph to discover VMs and clusters, then check actual "
-            "CPU utilisation with query_metrics before proposing any action.",
+            f"Investigate and identify cost optimisation opportunities {rg_scope}.",
         )
 
         # Empty proposals means GPT found no waste — that is a valid outcome.

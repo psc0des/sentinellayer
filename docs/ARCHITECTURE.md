@@ -127,15 +127,15 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 | Agent | What it proposes | Current state |
 |---|---|---|
-| `CostOptimizationAgent` | VM downsizing, idle resource deletion | GPT-4.1 intelligent — queries Resource Graph for all cost-significant resources, reasons about utilisation before proposing |
-| `MonitoringAgent` | SRE anomaly remediation (circular deps, SPOFs, CPU spikes) | GPT-4.1 intelligent — queries Azure Monitor metrics, reasons about anomaly context before proposing |
-| `DeployAgent` | NSG deny-all rules, lifecycle tag additions | GPT-4.1 intelligent — checks activity log and resource tags, reasons about topology before proposing |
+| `CostOptimizationAgent` | VM downsizing, idle resource deletion | GPT-4.1 — all 5 azure_tools; `scan()` framework-only (returns `[]` when no endpoint); `_scan_rules()` for CI tests |
+| `MonitoringAgent` | SRE anomaly remediation (circular deps, SPOFs, CPU spikes) | GPT-4.1 — all 5 azure_tools; alert-driven + proactive scan modes |
+| `DeployAgent` | NSG deny-all rules, lifecycle tag additions | GPT-4.1 — all 5 azure_tools; generic lifecycle tag logic (no org-specific key names) |
 
-**Phase 12 (complete):** All three agents query real Azure data sources (Resource Graph,
-Azure Monitor, Activity Log) via `azure_tools.py` and use GPT-4.1 via
-`agent-framework-core` to reason about context before proposing. Environment-agnostic:
-no hardcoded resource names, tag keys, or org-specific assumptions. See the
-Two-Layer Intelligence Model section below.
+**Phase 12 + Phase 15 (complete):** All three agents query real Azure data sources via all
+5 tools in `azure_tools.py` and use GPT-4.1 via `agent-framework-core` to reason about
+context before proposing. `scan()` is framework-only — `_scan_rules()` exists for direct
+test access only.  Environment-agnostic: no hardcoded resource names, tag keys, or
+org-specific assumptions. See the Two-Layer Intelligence Model section below.
 
 ---
 
@@ -255,20 +255,25 @@ SentinelLayer: SRI 11.0 → APPROVED  ✅
 
 ## Azure OpenAI Rate Limiting (HTTP 429)
 
-In live mode all 5 governance agents call Azure OpenAI concurrently. For 3 demo
-scenarios that is up to 15 LLM calls in a few seconds — which exhausts Azure OpenAI's
-**Tokens Per Minute (TPM)** and **Requests Per Minute (RPM)** quotas immediately.
+In live mode all 7 agents (4 governance + 3 operational) call Azure OpenAI concurrently.
+For 3 demo scenarios that is up to 21 LLM calls in a few seconds — which exhausts Azure
+OpenAI's **Tokens Per Minute (TPM)** and **Requests Per Minute (RPM)** quotas immediately.
 
-Every agent has an `except Exception` fallback that catches the 429 and continues with
-deterministic rule-based scoring. This means the GPT-4.1 reasoning layer is **not
-exercised** when the quota is exceeded — only the rule-based floor runs.
+**Throttle wrapper — `src/infrastructure/llm_throttle.py`:** All 7 agents call `agent.run()`
+via `run_with_throttle()`, which wraps the call in an `asyncio.Semaphore` (limits concurrent
+calls) and adds exponential back-off retry on HTTP 429. Both governance agents and operational
+agents use this wrapper.
+
+Governance agents additionally have an `except Exception` fallback that catches any remaining
+429 and continues with deterministic rule-based scoring. Operational agents return `[]` on
+live-mode failure (no seed-data fallback — that would produce false positives on real Azure).
 
 **Symptoms:** `PolicyComplianceAgent: framework call failed (429 Too Many Requests) —
-falling back to rules.` in logs for every agent.
+falling back to rules.` in logs for governance agents; ops agents silently return no proposals.
 
 **Fixes:**
 1. Request TPM quota increase: Azure Portal → Azure OpenAI → your deployment → Quotas
-2. Add exponential back-off + retry inside `_evaluate_with_framework()` in each agent
+2. The `run_with_throttle` retry already applies exponential back-off — increase retry count/delay in `llm_throttle.py` if needed
 3. Reduce parallelism: run governance agents sequentially when under quota pressure
 
 ---
