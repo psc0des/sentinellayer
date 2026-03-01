@@ -5,13 +5,13 @@ SRI breakdown and governance verdict for each.
 
 Scenarios
 ---------
-1. Cost agent proposes deleting disaster-recovery VM vm-23
+1. Cost agent proposes deleting disaster-recovery VM vm-dr-01
    -> Expected: DENIED  (critical policy violation + SRI > 60)
 
-2. SRE agent proposes scaling web-tier D4 -> D8 for a traffic event
+2. SRE agent proposes scaling vm-web-01 B2ls_v2 -> B4ms for a CPU spike
    -> Expected: APPROVED  (SRI < 25, low blast radius, good precedent)
 
-3. Deploy agent proposes opening port 8080 on nsg-east
+3. Deploy agent proposes opening port 8080 on nsg-east-prod
    -> Expected: ESCALATED  (SRI 26-60, high-severity policy + historical match)
 
 Run from the project root:
@@ -109,18 +109,19 @@ async def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
         action_type=ActionType.DELETE_RESOURCE,
         target=ActionTarget(
             resource_id=(
-                "/subscriptions/demo/resourceGroups/prod"
-                "/providers/Microsoft.Compute/virtualMachines/vm-23"
+                "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
+                "/resourceGroups/sentinel-prod-rg"
+                "/providers/Microsoft.Compute/virtualMachines/vm-dr-01"
             ),
             resource_type="Microsoft.Compute/virtualMachines",
-            current_monthly_cost=847.0,
+            current_monthly_cost=36.0,
         ),
         reason=(
-            "VM vm-23 has had near-zero CPU utilisation for 30 consecutive days. "
-            "Estimated monthly savings: $847."
+            "VM vm-dr-01 has had near-zero CPU utilisation for 30 consecutive days. "
+            "Estimated monthly savings: $36."
         ),
         urgency=Urgency.HIGH,
-        projected_savings_monthly=847.0,
+        projected_savings_monthly=36.0,
     )
     verdict = await pipeline.evaluate(action)
     tracker.record(verdict)
@@ -133,23 +134,24 @@ async def scenario_1(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
 
 
 async def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
-    """SRE agent scales web tier D4 to D8 for traffic event. Expect: APPROVED."""
+    """SRE agent scales vm-web-01 B2ls_v2 to B4ms for CPU spike. Expect: APPROVED."""
     action = ProposedAction(
         agent_id="monitoring-agent",
         action_type=ActionType.SCALE_UP,
         target=ActionTarget(
             resource_id=(
-                "/subscriptions/demo/resourceGroups/prod"
-                "/providers/Microsoft.Compute/virtualMachines/web-tier-01"
+                "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
+                "/resourceGroups/sentinel-prod-rg"
+                "/providers/Microsoft.Compute/virtualMachines/vm-web-01"
             ),
             resource_type="Microsoft.Compute/virtualMachines",
-            current_sku="Standard_D4s_v3",
-            proposed_sku="Standard_D8s_v3",
-            current_monthly_cost=420.0,
+            current_sku="Standard_B2ls_v2",
+            proposed_sku="Standard_B4ms",
+            current_monthly_cost=36.0,
         ),
         reason=(
-            "Web tier CPU averaging 78% over the past hour. "
-            "Pre-scaling from D4 to D8 for upcoming marketing campaign."
+            "vm-web-01 CPU averaging 87% over the past 15 minutes (Azure Monitor alert fired). "
+            "Scaling from B2ls_v2 to B4ms to restore headroom."
         ),
         urgency=Urgency.MEDIUM,
     )
@@ -157,27 +159,28 @@ async def scenario_2(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) 
     tracker.record(verdict)
     _print_verdict(
         2,
-        "SRE agent scales web-tier D4 -> D8       ->  expect  APPROVED",
+        "SRE agent scales vm-web-01 B2ls_v2->B4ms ->  expect  APPROVED",
         action,
         verdict,
     )
 
 
 async def scenario_3(pipeline: SentinelLayerPipeline, tracker: DecisionTracker) -> None:
-    """Deploy agent opens port 8080 on nsg-east. Expect: ESCALATED."""
+    """Deploy agent opens port 8080 on nsg-east-prod. Expect: ESCALATED."""
     action = ProposedAction(
         agent_id="deploy-agent",
         action_type=ActionType.MODIFY_NSG,
         target=ActionTarget(
             resource_id=(
-                "/subscriptions/demo/resourceGroups/prod"
-                "/providers/Microsoft.Network/networkSecurityGroups/nsg-east"
+                "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
+                "/resourceGroups/sentinel-prod-rg"
+                "/providers/Microsoft.Network/networkSecurityGroups/nsg-east-prod"
             ),
             resource_type="Microsoft.Network/networkSecurityGroups",
         ),
         reason=(
             "New microservice deployment requires inbound access on port 8080 "
-            "through nsg-east to reach the internal API subnet."
+            "through nsg-east-prod to reach the internal API subnet."
         ),
         urgency=Urgency.MEDIUM,
     )

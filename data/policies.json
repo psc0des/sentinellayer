@@ -5,7 +5,7 @@
     "description": "Resources tagged 'disaster-recovery' cannot be deleted or downsized without VP approval",
     "severity": "critical",
     "conditions": {
-      "tags_match": {"purpose": "disaster-recovery"},
+      "tags_match": {"disaster-recovery": "true"},
       "blocked_actions": ["delete_resource", "scale_down"]
     },
     "override_requires": "vp_approval",

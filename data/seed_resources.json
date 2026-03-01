@@ -126,6 +126,7 @@
       "monthly_cost": 847.00,
       "tags": {
         "purpose": "disaster-recovery",
+        "disaster-recovery": "true",
         "environment": "production",
         "criticality": "high",
         "owner": "platform-team",

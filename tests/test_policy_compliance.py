@@ -111,7 +111,7 @@ class TestPolicyComplianceAgent:
         )
         result = await agent.evaluate(
             action,
-            resource_metadata={"tags": {"purpose": "disaster-recovery"}, "environment": "production"},
+            resource_metadata={"tags": {"disaster-recovery": "true"}, "environment": "production"},
             now=_WEDNESDAY_NOON,
         )
 
@@ -124,7 +124,7 @@ class TestPolicyComplianceAgent:
         action = _make_action(action_type=ActionType.SCALE_DOWN)
         result = await agent.evaluate(
             action,
-            resource_metadata={"tags": {"purpose": "disaster-recovery"}},
+            resource_metadata={"tags": {"disaster-recovery": "true"}},
             now=_WEDNESDAY_NOON,
         )
         assert any(v.policy_id == "POL-DR-001" for v in result.violations)
@@ -134,7 +134,7 @@ class TestPolicyComplianceAgent:
         action = _make_action(action_type=ActionType.SCALE_UP)
         result = await agent.evaluate(
             action,
-            resource_metadata={"tags": {"purpose": "disaster-recovery"}},
+            resource_metadata={"tags": {"disaster-recovery": "true"}},
             now=_WEDNESDAY_NOON,
         )
         assert not any(v.policy_id == "POL-DR-001" for v in result.violations)
@@ -143,7 +143,7 @@ class TestPolicyComplianceAgent:
         action = _make_action(action_type=ActionType.DELETE_RESOURCE)
         result = await agent.evaluate(
             action,
-            resource_metadata={"tags": {"purpose": "disaster-recovery"}},
+            resource_metadata={"tags": {"disaster-recovery": "true"}},
             now=_WEDNESDAY_NOON,
         )
         dr_violation = next(v for v in result.violations if v.policy_id == "POL-DR-001")
@@ -385,7 +385,7 @@ class TestPolicyComplianceAgent:
         action = _make_action(action_type=ActionType.DELETE_RESOURCE)
         result = await agent.evaluate(
             action,
-            resource_metadata={"tags": {"purpose": "disaster-recovery"}},
+            resource_metadata={"tags": {"disaster-recovery": "true"}},
             now=_WEDNESDAY_NOON,
         )
         # POL-DR-001 (critical=40) only — dev environment, no cost data
@@ -398,7 +398,7 @@ class TestPolicyComplianceAgent:
         result = await agent.evaluate(
             action,
             resource_metadata={
-                "tags": {"purpose": "disaster-recovery", "criticality": "critical"}
+                "tags": {"disaster-recovery": "true", "criticality": "critical"}
             },
             now=_WEDNESDAY_NOON,
         )
@@ -421,7 +421,7 @@ class TestPolicyComplianceAgent:
             action,
             resource_metadata={
                 "tags": {
-                    "purpose": "disaster-recovery",
+                    "disaster-recovery": "true",
                     "criticality": "critical",
                     "shared": "true",
                 },
@@ -451,7 +451,7 @@ class TestPolicyComplianceAgent:
         action = _make_action(action_type=ActionType.DELETE_RESOURCE)
         result = await agent.evaluate(
             action,
-            resource_metadata={"tags": {"purpose": "disaster-recovery"}},
+            resource_metadata={"tags": {"disaster-recovery": "true"}},
             now=_WEDNESDAY_NOON,
         )
         assert result.policies_passed + len(result.violations) == result.total_policies_checked
