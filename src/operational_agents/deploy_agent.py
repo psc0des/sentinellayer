@@ -322,10 +322,12 @@ class DeployAgent:
             if target_resource_group
             else "across the Azure environment"
         )
-        await agent.run(
+        from src.infrastructure.llm_throttle import run_with_throttle
+        await run_with_throttle(
+            agent.run,
             f"Conduct a security and configuration review {rg_scope}. "
             "Discover NSGs and check their security rules, review recent activity "
-            "logs for failed operations, and identify any configuration gaps."
+            "logs for failed operations, and identify any configuration gaps.",
         )
 
         # Empty proposals means GPT found no security gaps — a valid outcome.

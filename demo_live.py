@@ -26,6 +26,7 @@ For mock mode (no Azure credentials needed):
     USE_LOCAL_MOCKS=true python demo_live.py
 """
 
+import argparse
 import asyncio
 import logging
 
@@ -104,26 +105,22 @@ def _print_verdict(verdict) -> None:
 async def scenario_1_alert_driven_scaleup(
     pipeline: SentinelLayerPipeline,
     tracker: DecisionTracker,
+    resource_group: str = "sentinel-prod-rg",
 ) -> None:
-    """Azure Monitor alert fires for vm-web-01 CPU → agent investigates → APPROVED scale-up."""
+    """Azure Monitor alert fires for a VM CPU → agent investigates → APPROVED scale-up."""
     _print_scenario_header(
         1,
-        "CPU Alert: vm-web-01 CPU > 80% — monitoring agent investigates",
+        f"CPU Alert: VM CPU > 80% in {resource_group} — monitoring agent investigates",
         "MonitoringAgent (alert-driven)",
     )
 
     alert_payload = {
-        "resource_id": (
-            "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
-            "/resourceGroups/sentinel-prod-rg"
-            "/providers/Microsoft.Compute/virtualMachines/vm-web-01"
-        ),
         "metric": "Percentage CPU",
         "value": 95.0,
         "threshold": 80.0,
         "severity": "3",
-        "resource_group": "sentinel-prod-rg",
-        "alert_name": "HighCPU-vm-web-01",
+        "resource_group": resource_group,
+        "alert_name": "HighCPU-alert",
     }
 
     print(f"\n  Alert received: CPU {alert_payload['value']}% > threshold {alert_payload['threshold']}%")
@@ -152,11 +149,13 @@ async def scenario_1_alert_driven_scaleup(
 async def scenario_2_cost_scan(
     pipeline: SentinelLayerPipeline,
     tracker: DecisionTracker,
+    resource_group: str | None = None,
 ) -> None:
-    """CostOptimizationAgent discovers idle vm-dr-01 → proposes right-sizing."""
+    """CostOptimizationAgent scans for idle or over-provisioned resources."""
+    rg_label = resource_group or "whole subscription"
     _print_scenario_header(
         2,
-        "FinOps Scan: CostOptimizationAgent scans sentinel-prod-rg",
+        f"FinOps Scan: CostOptimizationAgent scans {rg_label}",
         "CostOptimizationAgent (proactive scan)",
     )
 
@@ -164,7 +163,7 @@ async def scenario_2_cost_scan(
     print("  Querying Resource Graph + Azure Monitor metrics ...\n")
 
     agent = CostOptimizationAgent()
-    proposals = await agent.scan(target_resource_group="sentinel-prod-rg")
+    proposals = await agent.scan(target_resource_group=resource_group)
 
     if not proposals:
         print("  [No cost optimisation proposals — no wasteful resources found]")
@@ -188,11 +187,13 @@ async def scenario_2_cost_scan(
 async def scenario_3_security_review(
     pipeline: SentinelLayerPipeline,
     tracker: DecisionTracker,
+    resource_group: str | None = None,
 ) -> None:
-    """DeployAgent audits NSG rules and configuration in sentinel-prod-rg."""
+    """DeployAgent audits NSG rules and configuration in the target environment."""
+    rg_label = resource_group or "whole subscription"
     _print_scenario_header(
         3,
-        "Security Review: DeployAgent audits nsg-east-prod",
+        f"Security Review: DeployAgent audits NSGs in {rg_label}",
         "DeployAgent (security scan)",
     )
 
@@ -200,7 +201,7 @@ async def scenario_3_security_review(
     print("  Querying Resource Graph + NSG rules + activity log ...\n")
 
     agent = DeployAgent()
-    proposals = await agent.scan(target_resource_group="sentinel-prod-rg")
+    proposals = await agent.scan(target_resource_group=resource_group)
 
     if not proposals:
         print("  [No proposals — security configuration looks good]")
@@ -221,7 +222,7 @@ async def scenario_3_security_review(
 # ---------------------------------------------------------------------------
 
 
-async def main() -> None:
+async def main(resource_group: str | None = None) -> None:
     print()
     print(_header())
     print("  SentinelLayer — Phase 12: Two-Layer AI Governance Demo")
@@ -232,6 +233,9 @@ async def main() -> None:
     print("           and submit EVIDENCE-BACKED proposals.")
     print("  Layer 2: SentinelLayer INDEPENDENTLY evaluates each proposal")
     print("           with its four-agent SRI pipeline.")
+    print()
+    rg_display = resource_group or "whole subscription (no --resource-group specified)"
+    print(f"  Target: {rg_display}")
     print()
     print("  SRI Thresholds:")
     print("    <= 25     → APPROVED   (auto-execute)")
@@ -244,13 +248,13 @@ async def main() -> None:
     tracker = DecisionTracker()
     print("  Pipeline ready.")
 
-    await scenario_1_alert_driven_scaleup(pipeline, tracker)
+    await scenario_1_alert_driven_scaleup(pipeline, tracker, resource_group or "sentinel-prod-rg")
     await asyncio.sleep(2)
 
-    await scenario_2_cost_scan(pipeline, tracker)
+    await scenario_2_cost_scan(pipeline, tracker, resource_group)
     await asyncio.sleep(2)
 
-    await scenario_3_security_review(pipeline, tracker)
+    await scenario_3_security_review(pipeline, tracker, resource_group)
 
     print(f"\n{_bar()}")
     print("  Demo complete — 3 scenarios evaluated.")
@@ -260,4 +264,17 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(
+        description="SentinelLayer Phase 12 two-layer intelligence demo"
+    )
+    parser.add_argument(
+        "--resource-group",
+        "-g",
+        default=None,
+        help=(
+            "Azure resource group to scope all three agent scans to. "
+            "Omit to scan the whole subscription."
+        ),
+    )
+    args = parser.parse_args()
+    asyncio.run(main(resource_group=args.resource_group))

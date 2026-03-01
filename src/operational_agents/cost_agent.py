@@ -340,10 +340,12 @@ class CostOptimizationAgent:
             if target_resource_group
             else "across the Azure environment"
         )
-        await agent.run(
+        from src.infrastructure.llm_throttle import run_with_throttle
+        await run_with_throttle(
+            agent.run,
             f"Investigate and identify cost optimisation opportunities {rg_scope}. "
             "Use query_resource_graph to discover VMs and clusters, then check actual "
-            "CPU utilisation with query_metrics before proposing any action."
+            "CPU utilisation with query_metrics before proposing any action.",
         )
 
         # Empty proposals means GPT found no waste — that is a valid outcome.

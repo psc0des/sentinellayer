@@ -354,7 +354,8 @@ class MonitoringAgent:
             ],
         )
 
-        await agent.run(prompt)
+        from src.infrastructure.llm_throttle import run_with_throttle
+        await run_with_throttle(agent.run, prompt)
 
         # Empty proposals means GPT found no reliability risks — a valid outcome.
         # Falling back to seed-data rules would produce false positives in any

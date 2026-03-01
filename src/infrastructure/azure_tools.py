@@ -88,6 +88,10 @@ def query_resource_graph(kusto_query: str, subscription_id: str = "") -> list[di
         List of resource dicts in Azure Resource Graph format.
         Each dict includes: id, name, type, location, resourceGroup,
         subscriptionId, tags, properties.
+
+    Raises:
+        RuntimeError: In live mode when the Azure Resource Graph call fails.
+            Includes the query attempted and a suggestion to run ``az login``.
     """
     if not _use_mocks():
         try:
@@ -105,10 +109,13 @@ def query_resource_graph(kusto_query: str, subscription_id: str = "") -> list[di
             )
             result = client.resources(request)
             return [dict(row) for row in (result.data or [])]
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "azure_tools.query_resource_graph: Azure call failed (%s) — using mock.", exc
-            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"azure_tools.query_resource_graph failed. "
+                f"Query attempted: {kusto_query!r}. "
+                f"Error: {exc}. "
+                "Run 'az login' and ensure AZURE_SUBSCRIPTION_ID is configured."
+            ) from exc
 
     return _mock_query_resource_graph(kusto_query)
 
@@ -248,10 +255,13 @@ def query_metrics(
                         "unit": metric.unit.value if metric.unit else "unknown",
                     }
             return output
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "azure_tools.query_metrics: Azure call failed (%s) — using mock.", exc
-            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"azure_tools.query_metrics failed for resource {resource_id!r} "
+                f"(metrics: {metric_names}, timespan: {timespan}). "
+                f"Error: {exc}. "
+                "Run 'az login' and ensure the resource ID is a valid ARM ID."
+            ) from exc
 
     return _mock_query_metrics(resource_id, metric_names, timespan)
 
@@ -332,6 +342,9 @@ def get_resource_details(resource_id: str) -> dict:
 
     Returns:
         Resource detail dict. Empty dict if not found.
+
+    Raises:
+        RuntimeError: In live mode when the underlying Resource Graph call fails.
     """
     # Delegate to query_resource_graph (which handles live/mock routing).
     safe_id = resource_id.replace("'", "''")
@@ -339,11 +352,12 @@ def get_resource_details(resource_id: str) -> dict:
     if results:
         return results[0]
 
-    # Secondary match: search by name (handles short names like "vm-web-01").
-    name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
-    for r in _seed().get("resources", []):
-        if r.get("name", "").lower() == name.lower():
-            return r
+    if _use_mocks():
+        # Secondary match: search by name in seed data (mock/CI mode only).
+        name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+        for r in _seed().get("resources", []):
+            if r.get("name", "").lower() == name.lower():
+                return r
 
     return {}
 
@@ -374,11 +388,12 @@ def query_activity_log(resource_group: str, timespan: str = "P7D") -> list[dict]
             from azure.monitor.query import LogsQueryClient, LogsQueryStatus
             from src.config import settings
 
-            if not settings.log_analytics_workspace_id:
-                logger.warning(
-                    "azure_tools.query_activity_log: LOG_ANALYTICS_WORKSPACE_ID not set — mock."
+            workspace_id = settings.log_analytics_workspace_id
+            if not workspace_id:
+                raise ValueError(
+                    "LOG_ANALYTICS_WORKSPACE_ID is not configured. "
+                    "Set this environment variable to the Log Analytics workspace ID."
                 )
-                return _mock_activity_log(resource_group)
 
             credential = DefaultAzureCredential()
             client = LogsQueryClient(credential)
@@ -391,7 +406,7 @@ def query_activity_log(resource_group: str, timespan: str = "P7D") -> list[dict]
                 "Caller, ResourceType, Resource, Level"
             )
             result = client.query_workspace(
-                workspace_id=settings.log_analytics_workspace_id,
+                workspace_id=workspace_id,
                 query=kql,
                 timespan=_parse_duration(timespan),
             )
@@ -408,10 +423,14 @@ def query_activity_log(resource_group: str, timespan: str = "P7D") -> list[dict]
                         "level": str(row[6]),
                     })
                 return rows
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "azure_tools.query_activity_log: Azure call failed (%s) — using mock.", exc
-            )
+            return []
+        except Exception as exc:
+            raise RuntimeError(
+                f"azure_tools.query_activity_log failed for resource group {resource_group!r} "
+                f"(timespan: {timespan}). "
+                f"Error: {exc}. "
+                "Run 'az login' and ensure LOG_ANALYTICS_WORKSPACE_ID is set."
+            ) from exc
 
     return _mock_activity_log(resource_group)
 
@@ -511,14 +530,15 @@ def list_nsg_rules(nsg_resource_id: str) -> list[dict]:
     if seed_rules:
         return seed_rules
 
-    # Last resort: scan seed by name substring
-    name = nsg_resource_id.split("/")[-1] if "/" in nsg_resource_id else nsg_resource_id
-    for r in _seed().get("resources", []):
-        if (
-            r.get("name", "").lower() == name.lower()
-            and "networkSecurityGroups" in r.get("type", "")
-        ):
-            return r.get("rules", [])
+    if _use_mocks():
+        # Last resort: scan seed by name substring (mock/CI mode only).
+        name = nsg_resource_id.split("/")[-1] if "/" in nsg_resource_id else nsg_resource_id
+        for r in _seed().get("resources", []):
+            if (
+                r.get("name", "").lower() == name.lower()
+                and "networkSecurityGroups" in r.get("type", "")
+            ):
+                return r.get("rules", [])
 
     return []
 
