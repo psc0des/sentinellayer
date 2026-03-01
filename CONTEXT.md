@@ -39,7 +39,8 @@ src/
 │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints (+ /api/agents Phase 10)
+│   └── dashboard_api.py         # FastAPI REST endpoints — 12 total (Phase 10 agents,
+│                                #   Phase 12 alert-trigger, Phase 13 scan triggers)
 └── config.py                    # Environment config with SRI thresholds
 ```
 
@@ -180,6 +181,15 @@ and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
+**Phase 13 — Agent Scan Triggers + Environment-Agnosticism Fixes (complete)**
+
+Five new scan endpoints (`POST /api/scan/cost|monitoring|deploy|all`, `GET /api/scan/{id}/status`)
+let judges trigger ops agent scans directly from the dashboard — no terminal required.
+`AgentControls.jsx` provides per-agent buttons with spinners and 2-second polling.
+Environment-agnosticism fixes: cost agent KQL broadened beyond VM+AKS; deploy agent
+no longer prescribes specific tag key names; all 3 agents return `[]` on live-mode failure
+instead of seed-data proposals; mock RG filter and default metrics fixed.
+
 **Phase 12 — Intelligent Ops Agents (complete)**
 
 Ops agents now use 5 generic Azure tools (``src/infrastructure/azure_tools.py``) to
@@ -187,6 +197,7 @@ investigate real data before proposing. GPT-4.1 discovers resources, checks actu
 metrics, inspects NSG rules, and reviews activity logs — then calls ``propose_action``
 with evidence-backed reasons. ``POST /api/alert-trigger`` enables Azure Monitor webhook
 integration. Run ``python demo_live.py`` to see two-layer intelligence end-to-end.
+Note: live-mode failure now returns ``[]`` (not seed-data fallback) — see fixes above.
 
 **Phase 11 — Mini Production Environment (complete)**
 

@@ -182,6 +182,7 @@ uvicorn src.api.dashboard_api:app --reload
 # Run demos
 python demo.py        # direct pipeline demo (3 scenarios)
 python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
+python demo_live.py   # two-layer intelligence demo — ops agents investigate + SentinelLayer evaluates
 
 # Run React dashboard (in separate terminal)
 cd dashboard
@@ -192,7 +193,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 381 passed, 27 xfailed, 0 failed
+# Expected: 398 passed, 10 xfailed, 0 failed
 pytest tests/ -v
 ```
 
@@ -225,13 +226,14 @@ sentinellayer/
 │   ├── mcp_server/             # SentinelLayer as MCP provider
 │   │   └── server.py
 │   ├── infrastructure/         # Azure service clients (mock fallback)
+│   │   ├── azure_tools.py           # 5 generic sync tools: Resource Graph, metrics, NSG, activity log
 │   │   ├── resource_graph.py
 │   │   ├── cosmos_client.py
 │   │   ├── search_client.py
 │   │   ├── openai_client.py
 │   │   └── secrets.py               # Key Vault secret resolver
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 6 endpoints incl. /api/agents
+│       └── dashboard_api.py         # 12 endpoints incl. scan triggers + alert webhook
 ├── dashboard/                  # React + Vite governance dashboard
 ├── functions/                  # Azure Functions triggers
 ├── data/                       # Seed data for demo
@@ -242,6 +244,7 @@ sentinellayer/
 │   └── policies.json
 ├── demo.py                     # Direct pipeline demo (3 scenarios)
 ├── demo_a2a.py                 # A2A protocol demo (Phase 10)
+├── demo_live.py                # Two-layer intelligence demo (Phase 12)
 ├── tests/
 ├── docs/
 └── scripts/

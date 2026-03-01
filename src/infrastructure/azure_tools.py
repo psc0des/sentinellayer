@@ -417,52 +417,65 @@ def query_activity_log(resource_group: str, timespan: str = "P7D") -> list[dict]
 
 
 def _mock_activity_log(resource_group: str) -> list[dict]:
-    """Return realistic fabricated activity log entries for the resource group."""
+    """Return realistic fabricated activity log entries scoped to the given resource group.
+
+    Entries use the resource_group parameter so they are generic and do not
+    reference resources specific to any one environment.  The caller field uses
+    a placeholder domain so no real identity is implied.
+    """
     now = datetime.now(timezone.utc)
+    rg = resource_group or "unknown-rg"
+    # Derive plausible short names from the resource group name rather than
+    # hardcoding environment-specific resource names.
+    rg_short = rg.split("-rg")[0] if "-rg" in rg else rg
+    vm_name  = f"vm-{rg_short}"
+    nsg_name = f"nsg-{rg_short}"
+    sa_name  = f"sa{rg_short.replace('-', '')}"[:24]  # storage account name constraints
+
     return [
         {
             "timestamp": (now - timedelta(hours=2)).isoformat(),
             "operation": "Microsoft.Compute/virtualMachines/start/action",
             "status": "Succeeded",
-            "caller": "terraform-service-principal@tenant.com",
+            "caller": "automation-principal@org.example.com",
             "resource_type": "Microsoft.Compute/virtualMachines",
-            "resource": "vm-web-01",
+            "resource": vm_name,
             "level": "Informational",
         },
         {
             "timestamp": (now - timedelta(hours=6)).isoformat(),
             "operation": "Microsoft.Network/networkSecurityGroups/securityRules/write",
             "status": "Succeeded",
-            "caller": "deploy-agent@sentinellayer",
+            "caller": "automation-principal@org.example.com",
             "resource_type": "Microsoft.Network/networkSecurityGroups",
-            "resource": "nsg-east-prod",
+            "resource": nsg_name,
             "level": "Informational",
         },
         {
             "timestamp": (now - timedelta(days=1)).isoformat(),
             "operation": "Microsoft.Compute/virtualMachines/extensions/write",
             "status": "Succeeded",
-            "caller": "terraform-service-principal@tenant.com",
+            "caller": "automation-principal@org.example.com",
             "resource_type": "Microsoft.Compute/virtualMachines",
-            "resource": "vm-dr-01",
+            "resource": vm_name,
             "level": "Informational",
         },
         {
             "timestamp": (now - timedelta(days=2)).isoformat(),
             "operation": "Microsoft.Storage/storageAccounts/write",
             "status": "Succeeded",
-            "caller": "terraform-service-principal@tenant.com",
+            "caller": "automation-principal@org.example.com",
             "resource_type": "Microsoft.Storage/storageAccounts",
-            "resource": "sentinelprodprod",
+            "resource": sa_name,
             "level": "Informational",
         },
         {
             "timestamp": (now - timedelta(days=3)).isoformat(),
             "operation": "Microsoft.Network/networkSecurityGroups/write",
             "status": "Failed",
-            "caller": "ops-team@company.com",
+            "caller": "ops-user@org.example.com",
             "resource_type": "Microsoft.Network/networkSecurityGroups",
-            "resource": "nsg-east-prod",
+            "resource": nsg_name,
             "level": "Warning",
         },
     ]
