@@ -1,4 +1,4 @@
-# SentinelLayer API Reference
+# RuriSkry API Reference
 
 ## MCP Tools
 
@@ -7,9 +7,9 @@ Start with: `python -m src.mcp_server.server`
 
 ---
 
-### `sentinel_evaluate_action`
+### `skry_evaluate_action`
 
-Evaluate a proposed infrastructure action through the full SentinelLayer governance pipeline.
+Evaluate a proposed infrastructure action through the full RuriSkry governance pipeline.
 Runs all 4 SRI™ agents concurrently (`asyncio.gather`), records the verdict, and returns it.
 
 **Input parameters (flat JSON — not nested):**
@@ -66,7 +66,7 @@ Runs all 4 SRI™ agents concurrently (`asyncio.gather`), records the verdict, a
 
 ---
 
-### `sentinel_query_history`
+### `skry_query_history`
 
 Return recent governance decisions from the audit trail (Cosmos DB in live mode, local JSON in mock mode).
 
@@ -98,7 +98,7 @@ Return recent governance decisions from the audit trail (Cosmos DB in live mode,
 
 ---
 
-### `sentinel_get_risk_profile`
+### `skry_get_risk_profile`
 
 Return an aggregated risk summary for a specific resource across all historical evaluations.
 
@@ -188,7 +188,7 @@ Added to `src/api/dashboard_api.py`.
 
 ### `GET /api/agents`
 
-List all operational agents connected to SentinelLayer via the A2A protocol,
+List all operational agents connected to RuriSkry via the A2A protocol,
 sorted by most-recently-seen first.
 
 **Response:**
@@ -240,7 +240,7 @@ Returns **404** if the agent is not registered.
 ### `POST /api/alert-trigger` (Phase 12)
 
 Webhook endpoint for Azure Monitor alert rules. When an Azure Monitor alert fires,
-a Logic App posts the alert payload here; SentinelLayer triggers the monitoring agent
+a Logic App posts the alert payload here; RuriSkry triggers the monitoring agent
 and evaluates any proposed remediation.
 
 **Request body:** Azure Monitor alert schema (passed through as `alert_data`).
@@ -262,7 +262,7 @@ a `scan_id`; poll `GET /api/scan/{scan_id}/status` to track progress.
 
 **Common request body (all POST scan endpoints):**
 ```json
-{ "resource_group": "sentinel-prod-rg" }
+{ "resource_group": "ruriskry-prod-rg" }
 ```
 `resource_group` is optional — omit or send `null` to use the `DEFAULT_RESOURCE_GROUP`
 config value (itself defaulting to `null` = whole subscription).
@@ -294,7 +294,7 @@ Poll a background scan started by one of the scan trigger endpoints.
   "scan_id": "b3e7c1a2-...",
   "status": "running",
   "agent_type": "cost",
-  "resource_group": "sentinel-prod-rg",
+  "resource_group": "ruriskry-prod-rg",
   "started_at": "2026-03-01T10:00:00+00:00"
 }
 ```
@@ -305,7 +305,7 @@ Poll a background scan started by one of the scan trigger endpoints.
   "scan_id": "b3e7c1a2-...",
   "status": "complete",
   "agent_type": "cost",
-  "resource_group": "sentinel-prod-rg",
+  "resource_group": "ruriskry-prod-rg",
   "started_at": "2026-03-01T10:00:00+00:00",
   "completed_at": "2026-03-01T10:00:12+00:00",
   "proposals_count": 2,
@@ -415,6 +415,55 @@ violation — identical format to real governance notifications.
 
 ---
 
+### `GET /api/evaluations/{evaluation_id}/explanation` (Phase 18)
+
+Return a full `DecisionExplanation` for one governance evaluation. The dashboard drilldown
+calls this endpoint when a row in the Live Activity Feed is clicked.
+
+**Path parameter:**
+- `evaluation_id` — the `action_id` UUID from the governance verdict.
+
+**Response:**
+```json
+{
+  "summary": "This action was DENIED due to a critical policy violation (POL-DR-001) combined with high infrastructure blast radius score of 65.0.",
+  "primary_factor": "Policy Compliance — critical policy violation POL-DR-001",
+  "contributing_factors": [
+    {
+      "dimension": "Policy Compliance",
+      "score": 95.0,
+      "weight": 0.25,
+      "weighted_contribution": 23.75,
+      "reasoning": "POL-DR-001 matched (critical); auto-deny triggered."
+    },
+    {
+      "dimension": "Infrastructure (Blast Radius)",
+      "score": 65.0,
+      "weight": 0.30,
+      "weighted_contribution": 19.5,
+      "reasoning": "Resource has 3 dependents; restart impact: high."
+    }
+  ],
+  "policy_violations": ["POL-DR-001: Disaster-recovery VMs must not be deleted"],
+  "risk_highlights": [
+    "Critical policy violation auto-denied this action.",
+    "3 dependent resources would be impacted."
+  ],
+  "counterfactuals": [
+    {
+      "change_description": "If the top policy violation were resolved",
+      "predicted_new_score": 53.1,
+      "predicted_new_verdict": "ESCALATED",
+      "explanation": "Removing the critical violation drops the policy score from 95 → 55. Composite falls below the 60-point deny threshold."
+    }
+  ]
+}
+```
+
+Returns `404` if the `evaluation_id` is not found in the audit trail.
+
+---
+
 ### `GET /api/agents/{agent_name}/last-run` (Phase 16)
 
 Return the most recent completed scan results for one agent. Prefers the durable scan store
@@ -444,8 +493,8 @@ Unknown agent names return an empty `no_data` response (not 404).
 
 ## A2A Protocol Endpoints (Phase 10)
 
-Served by `src/a2a/sentinel_a2a_server.py`.
-Start with: `uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000`
+Served by `src/a2a/ruriskry_a2a_server.py`.
+Start with: `uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000`
 (or set `A2A_SERVER_URL` env var for a custom URL).
 
 ### `GET /.well-known/agent-card.json`
@@ -454,7 +503,7 @@ Returns the A2A Agent Card — machine-readable capabilities advertisement.
 
 ```json
 {
-  "name": "SentinelLayer Governance Engine",
+  "name": "RuriSkry Governance Engine",
   "description": "AI Action Governance — evaluates proposed infrastructure actions using SRI™ scoring.",
   "version": "1.0.0",
   "url": "http://localhost:8000",
@@ -489,7 +538,7 @@ Send a `ProposedAction` JSON string as the message text using JSON-RPC
 
 ## Direct Python API
 
-For code that imports SentinelLayer directly (not via MCP):
+For code that imports RuriSkry directly (not via MCP):
 
 ```python
 from src.core.interception import ActionInterceptor
@@ -512,5 +561,5 @@ action = ProposedAction(
 # intercept() and intercept_from_dict() are both async — use await
 verdict = await interceptor.intercept(action)
 print(verdict.decision.value)          # "denied"
-print(verdict.sentinel_risk_index.sri_composite)   # 77.0
+print(verdict.skry_risk_index.sri_composite)   # 77.0
 ```

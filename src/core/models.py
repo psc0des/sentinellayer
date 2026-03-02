@@ -1,4 +1,4 @@
-"""SentinelLayer data models — Pydantic schemas for actions, SRI™, and verdicts."""
+"""RuriSkry data models — Pydantic schemas for actions, SRI™, and verdicts."""
 
 from datetime import datetime, timezone
 from enum import Enum
@@ -73,7 +73,7 @@ class ProposedAction(BaseModel):
 # ============================================
 
 class SRIBreakdown(BaseModel):
-    """Sentinel Risk Index — dimensional breakdown."""
+    """Skry Risk Index — dimensional breakdown."""
     sri_infrastructure: float = Field(
         ge=0, le=100,
         description="SRI:Infrastructure — blast radius impact score"
@@ -171,7 +171,7 @@ class GovernanceVerdict(BaseModel):
     action_id: str
     timestamp: datetime
     proposed_action: ProposedAction
-    sentinel_risk_index: SRIBreakdown
+    skry_risk_index: SRIBreakdown
     decision: SRIVerdict
     reason: str
     agent_results: dict = {}
@@ -179,6 +179,37 @@ class GovernanceVerdict(BaseModel):
         "auto_approve": 25,
         "human_review": 60,
     }
+
+
+# ============================================
+# Decision Explanation Models (Phase 17B)
+# ============================================
+
+class Factor(BaseModel):
+    """One SRI™ dimension's contribution to the composite score."""
+    dimension: str
+    score: float
+    weight: float
+    weighted_contribution: float
+    reasoning: str = ""
+
+
+class Counterfactual(BaseModel):
+    """A hypothetical change and its predicted effect on the verdict."""
+    change_description: str
+    predicted_new_score: float
+    predicted_new_verdict: str
+    explanation: str
+
+
+class DecisionExplanation(BaseModel):
+    """Full explainability report for a governance verdict."""
+    summary: str
+    primary_factor: str
+    contributing_factors: list[Factor] = []
+    policy_violations: list[str] = []
+    risk_highlights: list[str] = []
+    counterfactuals: list[Counterfactual] = []
 
 
 # ============================================
@@ -191,7 +222,7 @@ class AuditRecord(BaseModel):
     partition_key: str
     timestamp: datetime
     action_summary: str
-    sentinel_risk_index: SRIBreakdown
+    skry_risk_index: SRIBreakdown
     sri_composite: float
     decision: SRIVerdict
     reason: str

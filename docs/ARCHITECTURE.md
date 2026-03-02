@@ -1,20 +1,20 @@
-# SentinelLayer — Architecture
+# RuriSkry — Architecture
 
 ## System Overview
 
-SentinelLayer implements a **governance pipeline** pattern that intercepts AI agent infrastructure
-actions before they execute, scores them using the Sentinel Risk Index (SRI™), and returns a
+RuriSkry implements a **governance pipeline** pattern that intercepts AI agent infrastructure
+actions before they execute, scores them using the Skry Risk Index (SRI™), and returns a
 structured verdict.
 
 ```
 Operational Agent (proposes action)
     │
-    ├─── A2A HTTP (src/a2a/sentinel_a2a_server.py)
+    ├─── A2A HTTP (src/a2a/ruriskry_a2a_server.py)
     ├─── MCP stdio (src/mcp_server/server.py)
     └─── Direct Python (src/core/interception.py)
     │
     ▼ (all three paths converge here)
-SentinelLayerPipeline.evaluate(action)
+RuriSkryPipeline.evaluate(action)
     │
     ├─ asyncio.gather() ──────────────────────────────────┐
     │   ├── BlastRadiusAgent.evaluate()   → SRI:Infrastructure (weight 0.30)
@@ -40,23 +40,23 @@ GovernanceVerdict returned to caller
 
 ---
 
-## Three Ways to Call SentinelLayer
+## Three Ways to Call RuriSkry
 
-All three paths converge at `SentinelLayerPipeline.evaluate()` — same SRI™ scoring,
+All three paths converge at `RuriSkryPipeline.evaluate()` — same SRI™ scoring,
 same verdict, same Cosmos DB audit trail.
 
 ### 1. A2A (HTTP) — Enterprise / Multi-Service Pattern
 External AI agents running as separate services (microservices, Kubernetes pods).
-They discover SentinelLayer via the Agent Card, send `ProposedAction` tasks over HTTP,
+They discover RuriSkry via the Agent Card, send `ProposedAction` tasks over HTTP,
 and receive streaming `GovernanceVerdict` results via SSE.
 
-- **Entry point:** `src/a2a/sentinel_a2a_server.py`
-- **Start:** `uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000`
+- **Entry point:** `src/a2a/ruriskry_a2a_server.py`
+- **Start:** `uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000`
 - **Demo:** `python demo_a2a.py`
 
 ### 2. MCP (stdio) — Developer / IDE Pattern
 AI tools on the same machine (Claude Desktop, GitHub Copilot, any MCP host) call
-`sentinel_evaluate_action` as a structured MCP tool. Communication is via stdin/stdout
+`skry_evaluate_action` as a structured MCP tool. Communication is via stdin/stdout
 pipes — no network, no port, no deployment required.
 
 - **Entry point:** `src/mcp_server/server.py`
@@ -85,13 +85,13 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    `asyncio.gather()` so all 4 governance agents run concurrently without nested event loops.
    Safe under FastAPI, MCP server (FastMCP), and async test runners.
 
-2. **A2A as the network protocol layer** — `src/a2a/sentinel_a2a_server.py` exposes
-   SentinelLayer as an A2A-compliant HTTP server. Any A2A-capable agent discovers it via
+2. **A2A as the network protocol layer** — `src/a2a/ruriskry_a2a_server.py` exposes
+   RuriSkry as an A2A-compliant HTTP server. Any A2A-capable agent discovers it via
    `/.well-known/agent-card.json`, sends `ProposedAction` tasks, and receives streaming
    `GovernanceVerdict` results via SSE. Existing MCP and direct Python paths are unchanged.
 
-3. **MCP as interception layer** — `sentinel_evaluate_action` is a standard MCP tool; any
-   MCP-capable agent (Claude Desktop, Copilot, custom agents) can call SentinelLayer without
+3. **MCP as interception layer** — `skry_evaluate_action` is a standard MCP tool; any
+   MCP-capable agent (Claude Desktop, Copilot, custom agents) can call RuriSkry without
    SDK changes.
 
 4. **Microsoft Agent Framework** — in live mode, each agent is backed by GPT-4.1 (via
@@ -157,7 +157,7 @@ and in-memory logic — no cloud connection needed.
 
 ### Governed Resources (`infrastructure/terraform-prod/`)
 
-The resources that SentinelLayer **governs** in live demos. These are the targets of operational
+The resources that RuriSkry **governs** in live demos. These are the targets of operational
 agent actions — not the governance system itself.
 
 | Resource | Type | Governance Scenario |
@@ -166,14 +166,14 @@ agent actions — not the governance system itself.
 | `vm-web-01` | Linux VM (`var.vm_size`, default B2ls_v2) | APPROVED — safe CPU-triggered scale-up (cloud-init runs stress-ng cron) |
 | `payment-api-prod` | App Service B1 | Critical dependency (raises blast radius) |
 | `nsg-east-prod` | Network Security Group | ESCALATED — port 8080 open affects all governed VMs |
-| `sentinelprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |
+| `ruriskryprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |
 
 ---
 
 ## A2A Protocol Flow (Phase 10)
 
 ```
-Operational Agent (A2A Client)          SentinelLayer (A2A Server)
+Operational Agent (A2A Client)          RuriSkry (A2A Server)
        │                                        │
        │  GET /.well-known/agent-card.json      │
        │ ─────────────────────────────────────► │
@@ -194,13 +194,13 @@ AgentRegistry.update_agent_stats()    DecisionTracker.record()
 ```
 
 All three paths — A2A, MCP, and direct Python — converge at
-`SentinelLayerPipeline.evaluate()`. No governance logic was duplicated.
+`RuriSkryPipeline.evaluate()`. No governance logic was duplicated.
 
 ---
 
 ## Two-Layer Intelligence Model (Phase 12 Design)
 
-SentinelLayer is a **second opinion**, not the only intelligence in the system. For the
+RuriSkry is a **second opinion**, not the only intelligence in the system. For the
 architecture to work well end-to-end, both layers need to be smart.
 
 ```
@@ -221,7 +221,7 @@ architecture to work well end-to-end, both layers need to be smart.
                          │  ProposedAction (with rich context)
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2 — SentinelLayer (independent second opinion)       │
+│  Layer 2 — RuriSkry (independent second opinion)       │
 │                                                             │
 │  ● Catches what the ops agent missed                        │
 │  ● Enforces org-wide policy the agent may not know          │
@@ -250,7 +250,7 @@ GPT-4.1 reasons: "CPU 89% sustained 20 min — not a spike.
     ↓
 ProposedAction submitted with metric evidence
     ↓
-SentinelLayer: SRI 11.0 → APPROVED  ✅
+RuriSkry: SRI 11.0 → APPROVED  ✅
 ```
 
 ---
@@ -280,6 +280,79 @@ falling back to rules.` in logs for governance agents; ops agents silently retur
 
 ---
 
+## Teams Notification Layer (Phase 17)
+
+Every DENIED or ESCALATED verdict automatically triggers a Microsoft Teams Adaptive Card —
+no one needs to watch the dashboard 24/7.
+
+```
+RuriSkryPipeline.evaluate()
+    ↓ verdict
+asyncio.create_task(send_teams_notification(verdict, action))   ← fire-and-forget
+    ↓ runs concurrently, never blocks governance
+httpx.AsyncClient.post(TEAMS_WEBHOOK_URL, json=adaptive_card)
+```
+
+**Key design decisions:**
+
+- **Fire-and-forget via `asyncio.create_task()`** — the pipeline returns the verdict
+  immediately; the notification runs in the background. A slow Teams endpoint never delays
+  governance.
+- **Never raises** — `send_teams_notification` wraps everything in `except Exception`.
+  Notification failure is logged and swallowed; the governance decision is unaffected.
+- **APPROVED verdicts skipped** — only actionable alerts sent; no noise.
+- **Retry-once** — one retry after 2 s on network failure, then gives up cleanly.
+- **Zero-config default** — `TEAMS_WEBHOOK_URL=""` silently disables notifications.
+  No env var = no error, no Teams connection needed to run RuriSkry.
+
+**Adaptive Card payload** — contains: verdict badge (🚫/⚠️), resource + agent + action
+facts, SRI composite + 4-dimension breakdown, governance reason (≤300 chars), top policy
+violation if any, "View in Dashboard" button (configurable URL), timestamp.
+
+**Dashboard integration** — `GET /api/notification-status` drives the 🔔 pill in the header.
+`POST /api/test-notification` sends a realistic sample DENIED card for judges to verify the
+integration without running a full scan.
+
+---
+
+## Decision Explanation Engine (Phase 18)
+
+Every governance verdict now has a full explainability layer. Clicking any row in the Live
+Activity Feed opens a 6-section full-page drilldown.
+
+```
+GET /api/evaluations/{id}/explanation
+    ↓
+DecisionExplainer.explain(verdict, action)
+    ├── _build_factors()           → ranked Factor list (by weighted_contribution)
+    ├── _extract_policy_violations() → from agent_results["policy"]
+    ├── _build_risk_highlights()   → natural-language risk callouts
+    ├── _build_counterfactuals()   → 3 "what would change this?" scenarios per verdict type
+    └── _try_llm_summary()         → GPT-4.1 plain-English summary (template fallback in mock)
+    ↓
+DecisionExplanation (cached by action_id)
+```
+
+**Counterfactual analysis** — hypothetical score recalculation per verdict type:
+- DENIED → "if policy violation resolved → score drops to X → ESCALATED"
+- ESCALATED → "if cost reduced → score drops to Y → APPROVED"
+- APPROVED → "if tagged critical → score rises to Z → ESCALATED"
+
+**Frontend — EvaluationDrilldown.jsx (6 sections):**
+1. Verdict header — large badge, SRI composite score, resource/agent/timestamp
+2. SRI™ Dimensional Breakdown — 4 horizontal bars, ⭐ marks the primary factor
+3. Decision Explanation — GPT-4.1 summary, primary factor callout, risk highlights, policy violations
+4. Counterfactual Analysis — score-transition cards ("X.X → Y.Y → VERDICT pill")
+5. Agent Reasoning — proposing agent's reason + per-governance-agent assessments
+6. Audit Trail — UUID, timestamp, collapsible raw JSON
+
+**SRI data format note** — the stored tracker record uses a flat format (`sri_composite` +
+`sri_breakdown.{infrastructure,policy,historical,cost}`). The frontend maps this to the
+expected `{sri_composite, sri_infrastructure, sri_policy, ...}` shape via a fallback
+in `EvaluationDrilldown.jsx` line 71.
+
+---
+
 ## File Map
 
 ```
@@ -294,15 +367,15 @@ src/
 ├── governance_agents/         # 4 governors — all async def evaluate()
 ├── operational_agents/        # 3 governed agents — all async def scan()
 ├── a2a/                       # A2A Protocol layer (Phase 10)
-│   ├── sentinel_a2a_server.py # A2A server — AgentCard + SentinelAgentExecutor
+│   ├── ruriskry_a2a_server.py # A2A server — AgentCard + RuriSkryAgentExecutor
 │   ├── operational_a2a_clients.py # A2A client wrappers for 3 operational agents
 │   └── agent_registry.py     # Tracks connected agents + stats
-├── mcp_server/server.py       # FastMCP stdio — sentinel_evaluate_action (async)
+├── mcp_server/server.py       # FastMCP stdio — skry_evaluate_action (async)
 ├── notifications/             # Outbound alerting (Phase 17)
 │   └── teams_notifier.py      # Adaptive Card → Teams webhook on DENIED/ESCALATED; fire-and-forget
-├── api/dashboard_api.py       # FastAPI REST — 17 async endpoints (evaluations, agents,
+├── api/dashboard_api.py       # FastAPI REST — 18 async endpoints (evaluations, agents,
 │                              #   scan triggers, SSE stream, cancel, last-run,
-│                              #   notification-status, test-notification)
+│                              #   notification-status, test-notification, explanation)
 ├── infrastructure/            # Azure clients with mock fallback
 │   └── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
@@ -310,7 +383,9 @@ dashboard/
 └── src/components/
     ├── AgentControls.jsx      # Scan trigger panel: per-agent buttons, RG filter, 2 s polling, LiveLogPanel
     ├── LiveLogPanel.jsx        # SSE slide-out log panel: 9 event type styles, auto-scroll
-    └── ConnectedAgents.jsx    # Agent card grid: ⋮ action menu, scan/log/results/history/details panels
+    ├── ConnectedAgents.jsx    # Agent card grid: ⋮ action menu, scan/log/results/history/details panels
+    ├── EvaluationDrilldown.jsx # Full-page drilldown: SRI bars, explanation, counterfactuals, reasoning, JSON audit
+    └── LiveActivityFeed.jsx   # Real-time verdict feed; rows clickable → opens EvaluationDrilldown
 data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── decisions/                 # Governance verdict audit trail (mock mode)
@@ -328,8 +403,8 @@ dashboard/                     # Vite + React frontend
 
 `data/seed_resources.json` contains two groups of resources:
 
-1. **Mini prod resources** (sentinel-prod-rg) — `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
-   `nsg-east-prod`, `sentinelproddata`. These match `infrastructure/terraform-prod/` exactly.
+1. **Mini prod resources** (ruriskry-prod-rg) — `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
+   `nsg-east-prod`, `ruriskryproddata`. These match `infrastructure/terraform-prod/` exactly.
    After `terraform apply`, replace `YOUR-SUBSCRIPTION-ID` with your real subscription ID.
    Each has a specific governance scenario (DENIED / APPROVED / ESCALATED).
 

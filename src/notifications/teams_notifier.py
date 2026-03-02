@@ -152,7 +152,7 @@ def _build_adaptive_card(
     └──────────────────────────────────────────────┘
     """
     style = _VERDICT_STYLE.get(verdict.decision, _VERDICT_STYLE[SRIVerdict.DENIED])
-    sri = verdict.sentinel_risk_index
+    sri = verdict.skry_risk_index
 
     # Resource name — extract short name from Azure resource ID
     resource_name = action.target.resource_id.split("/")[-1] if "/" in action.target.resource_id else action.target.resource_id
@@ -162,7 +162,7 @@ def _build_adaptive_card(
 
     # Top policy violation (if any)
     agent_results = verdict.agent_results or {}
-    policy_data = agent_results.get("policy_compliance", {})
+    policy_data = agent_results.get("policy", {})
     violations = policy_data.get("violations", [])
     top_violation = None
     if violations:

@@ -1,10 +1,10 @@
-# SentinelLayer — Implementation Status
+# RuriSkry — Implementation Status
 
 > **Read this first** if you are an AI assistant (Claude, Codex, Gemini, etc.)
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-02 (Phase 17 Microsoft Teams notifications complete)
+**Last updated:** 2026-03-02 (Phase 18 Decision Explanation Engine complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -28,8 +28,10 @@
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
-| Dashboard API | ✅ Complete | FastAPI REST (17 endpoints; scan runs durable; SSE live log; Teams status + test) |
+| Dashboard API | ✅ Complete | FastAPI REST (18 endpoints; scan runs durable; SSE live log; Teams status + test; explanation engine) |
 | Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
+| Decision explanation engine (Phase 18) | ✅ Complete | `src/core/explanation_engine.py` — counterfactual analysis, per-dimension factors, LLM summary |
+| Evaluation drilldown (Phase 18) | ✅ Complete | `EvaluationDrilldown.jsx` — 6-section full-page drilldown: SRI bars, explanation, counterfactuals, reasoning |
 | Agent scan triggers (Phase 13) | ✅ Complete | POST /api/scan/cost\|monitoring\|deploy\|all + GET status |
 | AgentControls dashboard panel (Phase 13) | ✅ Complete | `dashboard/src/components/AgentControls.jsx` |
 | Scan run tracker (Phase 16) | ✅ Complete | `src/core/scan_run_tracker.py` — Cosmos DB / JSON; survives restarts |
@@ -51,7 +53,7 @@
 
 ### Phase 1 — Core Domain Models
 - [x] `src/core/models.py` — all Pydantic models: `ProposedAction`, `GovernanceVerdict`,
-  `SentinelRiskIndex`, `BlastRadiusResult`, `PolicyResult`, `HistoricalResult`,
+  `SkryRiskIndex`, `BlastRadiusResult`, `PolicyResult`, `HistoricalResult`,
   `FinancialResult`, `SimilarIncident`
 - [x] `src/config.py` — SRI thresholds + dimension weights via `pydantic-settings`
 - [x] Learning: `learning/01-policy-agent.md`, `learning/02-governance-engine.md`
@@ -125,7 +127,43 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 17 — Microsoft Teams Notifications  ← LATEST
+### Phase 18 — Decision Explanation Engine & Counterfactual Analysis  ← LATEST
+
+Every governance verdict now has a full explanability layer. Clicking any row in the Live
+Activity Feed opens a 6-section full-page drilldown: verdict header with SRI composite,
+4 weighted SRI bars (with primary-factor star), plain-English explanation, counterfactual
+"what would change this?" cards, per-governance-agent reasoning, and a collapsible raw JSON
+audit trail.
+
+**`src/core/explanation_engine.py`** (NEW)
+- [x] `DecisionExplainer.explain(verdict, action)` — async; returns `DecisionExplanation`.
+- [x] Builds ranked `Factor` list from all 4 SRI dimensions; identifies the primary factor.
+- [x] Extracts policy violations from `agent_results["policy"]`.
+- [x] Generates 3 `Counterfactual` scenarios per verdict type (what would change the outcome).
+- [x] `_try_llm_summary()` — GPT-4.1 natural-language summary via `run_with_throttle`; falls back to template string in mock mode.
+- [x] Module-level `_explanation_cache` — keyed by `action_id`; prevents redundant re-computation on repeated API calls.
+
+**`src/core/models.py`** — 3 new Pydantic models added
+- [x] `Factor(dimension, score, weight, weighted_contribution, reasoning)` — one SRI dimension.
+- [x] `Counterfactual(change_description, predicted_new_score, predicted_new_verdict, explanation)`.
+- [x] `DecisionExplanation(summary, primary_factor, contributing_factors, policy_violations, risk_highlights, counterfactuals)`.
+
+**`src/api/dashboard_api.py`** — 1 new endpoint (18 total)
+- [x] `GET /api/evaluations/{id}/explanation` — looks up stored record, reconstructs `GovernanceVerdict` handling both full Pydantic format and flat DecisionTracker format, calls `DecisionExplainer.explain()`, returns `DecisionExplanation.model_dump()`.
+
+**Frontend**
+- [x] `dashboard/src/components/EvaluationDrilldown.jsx` (NEW) — 6-section full-page drilldown. Section 1: verdict header + SRI composite. Section 2: 4 horizontal SRI bars with primary-factor ⭐. Section 3: explanation summary + primary factor callout + risk highlights + policy violations. Section 4: counterfactual analysis cards with score arrows. Section 5: proposing agent reason + governance agent assessments. Section 6: collapsible full JSON audit trail.
+- [x] `dashboard/src/components/LiveActivityFeed.jsx` — rows are now clickable (`cursor-pointer hover`); `onDrilldown` prop passed up to `App.jsx`.
+- [x] `dashboard/src/App.jsx` — `drilldownEval` state; `EvaluationDrilldown` renders in place of main dashboard when a row is clicked; Back button returns to overview.
+- [x] `dashboard/src/api.js` — `fetchExplanation(evaluationId)` helper.
+
+**Tests**
+- [x] `tests/test_explanation_engine.py` — 5 tests: denied/escalated/approved explanation shapes, factor ordering, API endpoint round-trip.
+- [x] **Test result: 434 passed, 10 xfailed, 0 failed** ✅ (was 429 before this phase)
+
+---
+
+### Phase 17 — Microsoft Teams Notifications
 
 DENIED and ESCALATED governance verdicts now trigger an instant Adaptive Card notification
 to a Microsoft Teams channel via Incoming Webhook — no one needs to watch the dashboard 24/7.
@@ -231,11 +269,11 @@ Second-pass audit against the Phase 12/13 prompt contract.  8 findings confirmed
   `_run_agent_scan` — body overrides config; config overrides whole-subscription scan.
 
 **Demo — A2A server auto-starts**
-- [x] `demo_live.py` now imports `app` from `src.a2a.sentinel_a2a_server` and starts it as a
+- [x] `demo_live.py` now imports `app` from `src.a2a.ruriskry_a2a_server` and starts it as a
   background `asyncio.Task` on port 8001 before running scenarios.  Cleanly stopped with
   `server.should_exit = True` + task cancellation after all scenarios complete.
 - [x] `scenario_1_alert_driven_scaleup` signature changed to `str | None = None`; hardcoded
-  `resource_group or "sentinel-prod-rg"` fallback removed — `None` = whole subscription.
+  `resource_group or "ruriskry-prod-rg"` fallback removed — `None` = whole subscription.
 
 **`query_metrics` — `"current"` field added**
 - [x] Live path: `"current": round(values[-1], 2)` — most-recent data point per metric.
@@ -260,7 +298,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
   protection that governance agents already had.
 
 **`demo_live.py`**
-- [x] Hardcoded `"sentinel-prod-rg"` replaced with argparse `--resource-group / -g` CLI
+- [x] Hardcoded `"ruriskry-prod-rg"` replaced with argparse `--resource-group / -g` CLI
   argument (`None` default → scans whole subscription).  All 3 scenarios parameterised.
 
 **`tests/test_agent_agnostic.py`** (NEW — 22 tests)
@@ -323,10 +361,10 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
     applies it to seed data; added 6 new resource type patterns (App Service, SQL, Cosmos,
     ACR, Azure Firewall, Log Analytics)
   - `_mock_activity_log` now uses `resource_group` parameter to derive resource names
-    rather than hardcoding `vm-web-01`/`nsg-east-prod`/`sentinelprodprod` — works for
+    rather than hardcoding `vm-web-01`/`nsg-east-prod`/`ruriskryprodprod` — works for
     any resource group name
 - [x] `dashboard/src/components/AgentControls.jsx` — default RG changed from
-  `'sentinel-prod-rg'` to `''` (empty → API sends `null` → agents scan whole subscription)
+  `'ruriskry-prod-rg'` to `''` (empty → API sends `null` → agents scan whole subscription)
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 - [x] Commit: `66cc5ee` — `fix(agents): address environment-agnosticism review findings`
 - [x] Learning: `learning/25-environment-agnosticism.md`
@@ -363,13 +401,13 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
   - Scenario 1: CPU alert → MonitoringAgent investigates vm-web-01 → SCALE_UP proposal
   - Scenario 2: FinOps scan → CostAgent discovers idle vm-dr-01 → SCALE_DOWN proposal
   - Scenario 3: Security review → DeployAgent audits nsg-east-prod → MODIFY_NSG proposal
-  - Each: shows GPT-4.1 reasoning (Layer 1) + SentinelLayer SRI verdict (Layer 2)
+  - Each: shows GPT-4.1 reasoning (Layer 1) + RuriSkry SRI verdict (Layer 2)
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 - [x] Commit: `af1bf28` — `feat(agents): environment-agnostic intelligent ops agents`
 - [x] Learning: `learning/23-intelligent-agents.md`
 
 ### Phase 11 — Mini Production Environment
-- [x] `infrastructure/terraform-prod/main.tf` — 14 Azure resources in `sentinel-prod-rg`:
+- [x] `infrastructure/terraform-prod/main.tf` — 14 Azure resources in `ruriskry-prod-rg`:
   - `vm-dr-01` (Standard_B1ms, Ubuntu) — idle DR VM; cost agent → `DELETE` → **DENIED**
     (tags: `disaster-recovery=true`, `environment=production`, `owner=platform-team`, `cost-center=infrastructure`)
   - `vm-web-01` (Standard_B1ms, Ubuntu) — active web server; SRE agent → `SCALE_UP` → **APPROVED**
@@ -378,7 +416,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
     dependency of vm-web-01 that raises blast radius for any web-tier action
   - `nsg-east-prod` (NSG, HTTP/HTTPS allow) — deploy agent → open port 8080 → **ESCALATED**
     (affects all workloads behind subnet gateway; tags: `managed-by=platform-team`)
-  - `sentinelprod{suffix}` (Storage LRS) — shared dependency for all three resources
+  - `ruriskryprod{suffix}` (Storage LRS) — shared dependency for all three resources
   - Auto-shutdown at 22:00 UTC on both VMs (saves ~$1/day between demo runs)
   - CPU metric alert on `vm-web-01` (>80%, 15-min window) — triggers monitoring agent
   - Heartbeat scheduled-query alert on `vm-dr-01` (no heartbeat in 15 min) — triggers cost agent
@@ -391,7 +429,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] `infrastructure/terraform-prod/terraform.tfvars.example` — template with all placeholders
 - [x] `infrastructure/terraform-prod/README.md` — governance scenario SRI score breakdowns,
   deploy/destroy commands, cost table (~$0.35/day with auto-shutdown), agent install note
-- [x] `data/seed_resources.json` — new `sentinel-prod-rg` resources added with real Azure ID paths
+- [x] `data/seed_resources.json` — new `ruriskry-prod-rg` resources added with real Azure ID paths
   (placeholder subscription ID until `terraform apply`). Legacy mock resources (`vm-23`,
   `api-server-03`, `nsg-east`, etc.) **kept** for test compatibility.
 - [x] `.gitignore` — `infrastructure/terraform-prod/` tfstate and tfvars entries added
@@ -437,7 +475,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
   the existing `nsg_allowed_source_cidr` so both effective values are visible after apply
 
 ### Phase 10 — A2A Protocol
-- [x] `src/a2a/sentinel_a2a_server.py` — `SentinelAgentExecutor(AgentExecutor)` routes
+- [x] `src/a2a/ruriskry_a2a_server.py` — `RuriSkryAgentExecutor(AgentExecutor)` routes
   tasks through the governance pipeline; streams progress via `TaskUpdater.new_agent_message()`;
   returns `GovernanceVerdict` as A2A artifact. Agent Card at `/.well-known/agent-card.json`
   with 3 skills: `evaluate_action`, `query_decision_history`, `get_resource_risk_profile`.
@@ -458,7 +496,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅
 
 ### Phase 10 Bug Fixes (commit 1fee7d1)
-- [x] `src/a2a/sentinel_a2a_server.py` — `DecisionTracker().record(verdict)` added after
+- [x] `src/a2a/ruriskry_a2a_server.py` — `DecisionTracker().record(verdict)` added after
   `pipeline.evaluate()`; A2A verdicts now written to Cosmos DB audit trail (were silently dropped).
 - [x] `infrastructure/terraform/main.tf` — `azurerm_cosmosdb_sql_container "governance_agents"`
   added with `partition_key_paths = ["/name"]`; container now exists in Terraform.
@@ -500,15 +538,15 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] Learning: `learning/19-dashboard-a2a.md`
 
 ### TaskUpdater Async Await Fix (commit 5094313)
-- [x] `src/a2a/sentinel_a2a_server.py` — Added `await` to all five `TaskUpdater`
-  calls in `SentinelAgentExecutor.execute()`. `submit()`, `start_work()`,
+- [x] `src/a2a/ruriskry_a2a_server.py` — Added `await` to all five `TaskUpdater`
+  calls in `RuriSkryAgentExecutor.execute()`. `submit()`, `start_work()`,
   `add_artifact()`, and `complete()` are all `async def` in the a2a-sdk. Calling
   them without `await` creates coroutine objects that Python silently discards
   (no error raised). The artifact was never enqueued → client stream received no
-  `TaskArtifactUpdateEvent` → `verdict_json` stayed `None` → `send_action_to_sentinel`
+  `TaskArtifactUpdateEvent` → `verdict_json` stayed `None` → `send_action_to_skry`
   returned `None` → `_update_registry()` never called → dashboard showed
   "No A2A agents connected yet" even after all previous fixes.
-- [x] `tests/test_a2a.py` — Updated 3 `TestSentinelAgentExecutor` tests from
+- [x] `tests/test_a2a.py` — Updated 3 `TestRuriSkryAgentExecutor` tests from
   `updater_instance = MagicMock()` to `AsyncMock()`. `MagicMock` objects cannot be
   `await`ed; `AsyncMock` supports both sync calls and `await` automatically.
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (20/20 A2A tests pass)
@@ -533,7 +571,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
   yields `SendStreamingMessageResponse` objects, not raw events. The actual
   `TaskStatusUpdateEvent` / `TaskArtifactUpdateEvent` is at `.root.result`.
   Previous code checked `isinstance(event.root, TaskArtifactUpdateEvent)` which
-  was always False → `verdict_json` never set → `send_action_to_sentinel` always
+  was always False → `verdict_json` never set → `send_action_to_skry` always
   returned `None` → `data/agents/` stayed empty → dashboard showed
   "No A2A agents connected yet". Fix: added `result = getattr(root, "result", root)`
   and switched isinstance checks to use `result`.
@@ -545,7 +583,7 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] `src/core/pipeline.py` — `ThreadPoolExecutor` replaced with `asyncio.gather()`
   (4 governance agents + 3 operational agents run concurrently in the same event loop)
 - [x] `src/core/interception.py` — `intercept()` and `intercept_from_dict()` → `async def`
-- [x] `src/mcp_server/server.py` — `sentinel_evaluate_action()` → `async def`
+- [x] `src/mcp_server/server.py` — `skry_evaluate_action()` → `async def`
 - [x] `demo.py` — `scenario_1/2/3()` and `main()` → `async def`, entry: `asyncio.run(main())`
 - [x] `src/api/dashboard_api.py` — all 4 endpoints → `async def`
 - [x] **Issue 2 — credentials**: `AzureCliCredential` → `DefaultAzureCredential` in all 7 agents
@@ -564,14 +602,14 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 
 ```
 USE_LOCAL_MOCKS=false                   ← live Azure is the default
-AZURE_OPENAI_ENDPOINT=https://sentinel-foundry-psc0des.cognitiveservices.azure.com/
+AZURE_OPENAI_ENDPOINT=https://ruriskry-foundry-psc0des.cognitiveservices.azure.com/
 AZURE_OPENAI_DEPLOYMENT=gpt-41
-AZURE_SEARCH_ENDPOINT=https://sentinel-search-psc0des.search.windows.net
+AZURE_SEARCH_ENDPOINT=https://ruriskry-search-psc0des.search.windows.net
 AZURE_SEARCH_INDEX=incident-history     ← seeded with 7 incidents
-COSMOS_ENDPOINT=https://sentinel-cosmos-psc0des.documents.azure.com:443/
-COSMOS_DATABASE=sentinellayer
+COSMOS_ENDPOINT=https://ruriskry-cosmos-psc0des.documents.azure.com:443/
+COSMOS_DATABASE=ruriskry
 COSMOS_CONTAINER_DECISIONS=governance-decisions
-AZURE_KEYVAULT_URL=https://sentinel-kv-psc0des.vault.azure.net/
+AZURE_KEYVAULT_URL=https://ruriskry-kv-psc0des.vault.azure.net/
 A2A_SERVER_URL=http://localhost:8000    ← A2A server base URL (Phase 10)
 ```
 
@@ -589,14 +627,14 @@ python scripts/seed_data.py
 # End-to-end governance demo — direct Python pipeline (3 scenarios)
 python demo.py
 
-# Phase 12 — two-layer intelligence demo (ops agents investigate + SentinelLayer evaluates)
+# Phase 12 — two-layer intelligence demo (ops agents investigate + RuriSkry evaluates)
 python demo_live.py
 
 # A2A protocol demo — server + 3 agent clients via A2A (Phase 10)
 python demo_a2a.py
 
-# SentinelLayer as A2A server (Phase 10)
-uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
+# RuriSkry as A2A server (Phase 10)
+uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 
 # FastAPI dashboard (includes /api/agents + alert-trigger endpoints)
 uvicorn src.api.dashboard_api:app --reload
@@ -666,7 +704,7 @@ Real flow:
         ↓
   GPT-4.1: "7-day avg CPU 82.5%, peak 100% — sustained load. Propose scale_up."
         ↓
-  SentinelLayer evaluates → APPROVED (SRI < 25, low blast radius)
+  RuriSkry evaluates → APPROVED (SRI < 25, low blast radius)
         ↓
   Verdict written to Cosmos DB, visible on dashboard
 ```
@@ -680,12 +718,12 @@ Real flow:
 
 Add a new dashboard panel showing the two-layer intelligence in real time:
 - Layer 1 card: which ops agent fired, what tools it called, the evidence it gathered
-- Layer 2 card: SentinelLayer's SRI breakdown and verdict
+- Layer 2 card: RuriSkry's SRI breakdown and verdict
 
 ### Phase 16 — Multi-Agent Orchestrator
 
 Build an orchestrator that runs all 3 ops agents on a schedule and pipes proposals
-through SentinelLayer automatically — fully autonomous cloud governance loop.
+through RuriSkry automatically — fully autonomous cloud governance loop.
 
 - [ ] **Wire Logic App webhook** — Azure Monitor alert → HTTP POST to
   `POST /api/evaluate` or a new `/api/alert-trigger` endpoint
@@ -749,25 +787,29 @@ through SentinelLayer automatically — fully autonomous cloud governance loop.
 | `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
-| `src/a2a/sentinel_a2a_server.py` | A2A server — AgentCard + SentinelAgentExecutor + audit trail write; all TaskUpdater calls awaited | TaskUpdater fix |
+| `src/a2a/ruriskry_a2a_server.py` | A2A server — AgentCard + RuriSkryAgentExecutor + audit trail write; all TaskUpdater calls awaited | TaskUpdater fix |
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/core/scan_run_tracker.py` | Durable scan-run store — Cosmos / JSON; upsert, get, get_latest_by_agent_type | Phase 16 |
-| `src/api/dashboard_api.py` | FastAPI REST — 17 endpoints; durable scan store; SSE live log; cancel; last-run; Teams status + test | Phase 17 |
+| `src/core/explanation_engine.py` | `DecisionExplainer` — factors, counterfactuals, LLM summary, module-level cache | Phase 18 |
+| `tests/test_explanation_engine.py` | 5 tests — denied/escalated/approved shapes, factor ordering, API endpoint round-trip | Phase 18 |
+| `src/api/dashboard_api.py` | FastAPI REST — 18 endpoints; durable scan store; SSE live log; cancel; last-run; Teams status + test; explanation | Phase 18 |
 | `src/notifications/teams_notifier.py` | Adaptive Card → Teams Incoming Webhook on DENIED/ESCALATED; fire-and-forget | Phase 17 |
 | `tests/test_teams_notification.py` | 5 tests — denied, escalated, approved skip, no-webhook skip, pipeline resilience | Phase 17 |
 | `demo_live.py` | Two-layer intelligence demo — A2A server auto-starts; no hardcoded RG fallback | Phase 15 |
 | `dashboard/src/components/AgentControls.jsx` | Scan control panel — per-agent buttons, polling, Run All, LiveLogPanel trigger | Phase 16 |
 | `dashboard/src/components/LiveLogPanel.jsx` | SSE slide-out panel — 9 event type styles, auto-scroll, EventSource cleanup | Phase 16 |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid — ⋮ action menu, per-agent scan/log/results/history/details panels | Phase 16 |
-| `dashboard/src/api.js` | Frontend fetch helpers incl. streamScanEvents, cancelScan, fetchAgentLastRun, fetchNotificationStatus | Phase 17 |
-| `dashboard/src/App.jsx` | Root component — 🔔 Teams pill with test-notification click handler | Phase 17 |
+| `dashboard/src/components/EvaluationDrilldown.jsx` | 6-section full-page drilldown — SRI bars, explanation, counterfactuals, reasoning, JSON audit trail | Phase 18 |
+| `dashboard/src/api.js` | Frontend fetch helpers incl. streamScanEvents, cancelScan, fetchAgentLastRun, fetchNotificationStatus, fetchExplanation | Phase 18 |
+| `dashboard/src/App.jsx` | Root component — 🔔 Teams pill, drilldown navigation via drilldownEval state | Phase 18 |
+| `dashboard/src/components/LiveActivityFeed.jsx` | Real-time feed — rows clickable, onDrilldown prop | Phase 18 |
 | `data/scans/` | Local JSON scan-run store (mock mode for ScanRunTracker) | Phase 16 |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
 | `infrastructure/terraform-prod/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |
 | `infrastructure/terraform-prod/outputs.tf` | Exports all resource IDs, names, tags, URLs | Phase 11 |
 | `infrastructure/terraform-prod/variables.tf` | Input variables incl. sensitive vm_admin_password | Phase 11 |
-| `data/seed_resources.json` | Azure resource topology — sentinel-prod-rg resources + legacy mocks | Phase 11 |
+| `data/seed_resources.json` | Azure resource topology — ruriskry-prod-rg resources + legacy mocks | Phase 11 |
 | `dashboard/src/App.jsx` | Root component — fetchAll, setInterval, ConnectedAgents, LiveActivityFeed | Runtime fixes |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid with online status + bar chart (NEW) | Runtime fixes |
 | `dashboard/src/components/LiveActivityFeed.jsx` | Real-time evaluation feed with relative timestamps (NEW) | Runtime fixes |

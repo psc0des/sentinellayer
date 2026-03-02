@@ -1,5 +1,5 @@
 /**
- * api.js — thin wrapper around the SentinelLayer FastAPI backend.
+ * api.js — thin wrapper around the RuriSkry FastAPI backend.
  *
  * All functions return parsed JSON or throw an Error with a human-readable
  * message that the UI can display.
@@ -158,5 +158,16 @@ export async function fetchNotificationStatus() {
 export async function testTeamsNotification() {
   const res = await fetch(`${BASE}/test-notification`, { method: 'POST' })
   if (!res.ok) throw new Error(`API error ${res.status}: failed to send test notification`)
+  return res.json()
+}
+
+/**
+ * Fetch the decision explanation (with counterfactual analysis) for one evaluation.
+ * @param {string} evaluationId - action_id UUID
+ * @returns {Promise<object>} DecisionExplanation
+ */
+export async function fetchExplanation(evaluationId) {
+  const res = await fetch(`${BASE}/evaluations/${encodeURIComponent(evaluationId)}/explanation`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch explanation`)
   return res.json()
 }

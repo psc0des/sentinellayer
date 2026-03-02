@@ -1,4 +1,4 @@
-# 🛡️ SentinelLayer — AI Action Governance & Simulation Engine
+# 🛡️ RuriSkry — AI Action Governance & Simulation Engine
 
 > **Because autonomous AI needs accountable AI.**
 
@@ -7,10 +7,10 @@
 [![Azure](https://img.shields.io/badge/cloud-Azure-0078D4.svg)](https://azure.microsoft.com)
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
-SentinelLayer intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a supervisory intelligence layer.
+RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a supervisory intelligence layer.
 
 <p align="center">
-  <img src="docs/architecture.png" alt="SentinelLayer Architecture" width="800">
+  <img src="docs/architecture.png" alt="RuriSkry Architecture" width="800">
 </p>
 
 ---
@@ -27,11 +27,11 @@ Today's tooling offers two options: **block actions with static rules** or **mon
 
 ## The Solution
 
-SentinelLayer is the missing governance layer. Before any agent action executes, it runs through four specialized simulation agents that produce a branded **Sentinel Risk Index (SRI™)**:
+RuriSkry is the missing governance layer. Before any agent action executes, it runs through four specialized simulation agents that produce a branded **Skry Risk Index (SRI™)**:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              SENTINEL RISK INDEX (SRI™)              │
+│              SKRY RISK INDEX (SRI™)              │
 │                                                     │
 │   SRI:Infrastructure ████████████░░░░░░░░  32/100   │
 │   SRI:Policy         ████████████████░░░░  40/100   │
@@ -81,9 +81,9 @@ flowchart LR
     MCP --> IN
     PY --> IN
 
-    subgraph CORE["SentinelLayer Core"]
+    subgraph CORE["RuriSkry Core"]
         direction TB
-        PIPE["SentinelLayerPipeline.evaluate()"]
+        PIPE["RuriSkryPipeline.evaluate()"]
 
         subgraph GOV["SRI Governance Agents"]
             direction TB
@@ -123,6 +123,34 @@ flowchart LR
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | Governance visualization + REST API |
 | Teams Notifications | Microsoft Teams Incoming Webhook (Adaptive Cards) | Real-time alerts for DENIED/ESCALATED verdicts |
+| Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
+
+---
+
+## Key Features
+
+### 🔔 Teams Notifications (Phase 17)
+DENIED and ESCALATED verdicts trigger an instant **Microsoft Teams Adaptive Card** via
+Incoming Webhook — no one needs to watch the dashboard. The card shows the verdict badge,
+resource and agent info, SRI composite + 4-dimension breakdown, governance reason, top
+policy violation, and a "View in Dashboard" button.
+
+- **Zero-config default** — leave `TEAMS_WEBHOOK_URL` empty to disable silently
+- **Fire-and-forget** — never blocks or delays a governance decision
+- **Test button** in the dashboard header sends a realistic sample card
+
+### 🔍 Decision Explanation & Counterfactual Drilldown (Phase 18)
+Click any row in the Live Activity Feed to open a **6-section full-page drilldown**:
+
+1. **Verdict header** — SRI composite score, resource, agent, timestamp
+2. **SRI™ Dimensional Breakdown** — 4 weighted bars; ⭐ marks the primary factor
+3. **Decision Explanation** — GPT-4.1 plain-English summary, risk highlights, policy violations
+4. **Counterfactual Analysis** — "what would change this outcome?" — 3 hypothetical scenarios
+   with score transitions (e.g. `77.0 → 53.1 → ESCALATED`)
+5. **Agent Reasoning** — proposing agent's rationale + per-governance-agent assessments
+6. **Audit Trail** — full raw JSON, collapsible
+
+No extra setup needed — the explanation engine works in both mock and live mode.
 
 ---
 
@@ -142,8 +170,8 @@ Detailed infra runbook: `infrastructure/deploy.md`
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/sentinellayer.git
-cd sentinellayer
+git clone https://github.com/<your-username>/ruriskry.git
+cd ruriskry
 
 # Create virtual environment
 python -m venv .venv
@@ -171,19 +199,19 @@ bash scripts/setup_env.sh
 # Seed demo data
 python scripts/seed_data.py
 
-# Run SentinelLayer — MCP stdio server (for Claude Desktop)
+# Run RuriSkry — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
 
-# Run SentinelLayer — A2A HTTP server (for agent-to-agent protocol)
-uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000
+# Run RuriSkry — A2A HTTP server (for agent-to-agent protocol)
+uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 
-# Run SentinelLayer — Dashboard REST API
+# Run RuriSkry — Dashboard REST API
 uvicorn src.api.dashboard_api:app --reload
 
 # Run demos
 python demo.py        # direct pipeline demo (3 scenarios)
 python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
-python demo_live.py   # two-layer intelligence demo — ops agents investigate + SentinelLayer evaluates
+python demo_live.py   # two-layer intelligence demo — ops agents investigate + RuriSkry evaluates
 
 # Run React dashboard (in separate terminal)
 cd dashboard
@@ -203,7 +231,7 @@ pytest tests/ -v
 ## Project Structure
 
 ```
-sentinellayer/
+ruriskry/
 ├── src/
 │   ├── operational_agents/     # The governed — propose actions
 │   │   ├── monitoring_agent.py
@@ -222,10 +250,10 @@ sentinellayer/
 │   │   ├── pipeline.py              # asyncio.gather() orchestration
 │   │   └── models.py               # Pydantic data models (read first)
 │   ├── a2a/                    # A2A Protocol layer (Phase 10)
-│   │   ├── sentinel_a2a_server.py   # A2A server + Agent Card
+│   │   ├── ruriskry_a2a_server.py   # A2A server + Agent Card
 │   │   ├── operational_a2a_clients.py  # A2A client wrappers
 │   │   └── agent_registry.py        # Connected agent tracking
-│   ├── mcp_server/             # SentinelLayer as MCP provider
+│   ├── mcp_server/             # RuriSkry as MCP provider
 │   │   └── server.py
 │   ├── infrastructure/         # Azure service clients (mock fallback)
 │   │   ├── azure_tools.py           # 5 generic sync tools: Resource Graph, metrics, NSG, activity log
@@ -237,7 +265,7 @@ sentinellayer/
 │   ├── notifications/          # Outbound alerting (Phase 17)
 │   │   └── teams_notifier.py        # Adaptive Card → Teams webhook on DENIED/ESCALATED
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 17 endpoints: scan triggers, SSE stream, cancel, last-run, alert webhook, Teams status/test
+│       └── dashboard_api.py         # 18 endpoints: scan triggers, SSE stream, cancel, last-run, alert webhook, Teams status/test, explanation
 ├── dashboard/                  # React + Vite governance dashboard
 ├── functions/                  # Azure Functions triggers
 ├── data/                       # Seed data for demo
@@ -263,7 +291,7 @@ Run `python demo.py` (direct pipeline) or `python demo_a2a.py` (A2A protocol).
 
 ### Scenario 1: Dangerous Action → DENIED
 **Cost Agent** proposes deleting `vm-23` (disaster-recovery VM, $847/mo).
-SentinelLayer detects the `purpose=disaster-recovery` tag → POL-DR-001 critical violation fires, overriding the numeric score.
+RuriSkry detects the `purpose=disaster-recovery` tag → POL-DR-001 critical violation fires, overriding the numeric score.
 **SRI™: 74.0 → ❌ DENIED** (critical policy override)
 
 ### Scenario 2: Safe Action → AUTO-APPROVED
@@ -293,5 +321,5 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 ---
 
 <p align="center">
-  <b>SentinelLayer: Because autonomous AI needs accountable AI. 🛡️</b>
+  <b>RuriSkry: Because autonomous AI needs accountable AI. 🛡️</b>
 </p>

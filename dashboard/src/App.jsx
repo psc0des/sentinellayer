@@ -1,5 +1,5 @@
 /**
- * App.jsx — root component of the SentinelLayer Governance Dashboard.
+ * App.jsx — root component of the RuriSkry Governance Dashboard.
  *
  * Layout (top to bottom):
  *   Header
@@ -22,6 +22,7 @@ import EvaluationDetail from './components/EvaluationDetail'
 import ConnectedAgents from './components/ConnectedAgents'
 import LiveActivityFeed from './components/LiveActivityFeed'
 import AgentControls from './components/AgentControls'
+import EvaluationDrilldown from './components/EvaluationDrilldown'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -71,6 +72,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [teamsStatus, setTeamsStatus] = useState(null)
   const [teamsBtnLabel, setTeamsBtnLabel] = useState('🔔 Teams Connected')
+  const [drilldownEval, setDrilldownEval] = useState(null)
 
   /**
    * fetchAll — fetches evaluations, metrics, and agents in parallel.
@@ -150,7 +152,7 @@ export default function App() {
             SL
           </div>
           <div>
-            <h1 className="text-lg font-bold leading-none">SentinelLayer</h1>
+            <h1 className="text-lg font-bold leading-none">RuriSkry</h1>
             <p className="text-xs text-slate-500 leading-none mt-0.5">AI Action Governance Dashboard</p>
           </div>
 
@@ -204,74 +206,84 @@ export default function App() {
       {/* ── Main content ── */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* ① Connected Agents — at the top as required */}
-        <ConnectedAgents agents={agents} />
+        {/* ── Drilldown view — replaces main dashboard when active ── */}
+        {drilldownEval ? (
+          <EvaluationDrilldown
+            evaluation={drilldownEval}
+            onBack={() => setDrilldownEval(null)}
+          />
+        ) : (
+          <>
+            {/* ① Connected Agents — at the top as required */}
+            <ConnectedAgents agents={agents} />
 
-        {/* ② Agent Controls — trigger scans from the dashboard */}
-        <AgentControls onScanComplete={fetchAll} />
+            {/* ② Agent Controls — trigger scans from the dashboard */}
+            <AgentControls onScanComplete={fetchAll} />
 
-        {metrics && <MetricsBar metrics={metrics} />}
+            {metrics && <MetricsBar metrics={metrics} />}
 
-        {/* ④ SRI Gauge + Decision table */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* ④ SRI Gauge + Decision table */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          {/* SRI Gauge panel — updated to show which agent triggered latest eval */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col items-center justify-center gap-4">
-            <h2 className="self-start text-xs font-semibold text-slate-400 uppercase tracking-widest">
-              Latest Evaluation
-            </h2>
+              {/* SRI Gauge panel — updated to show which agent triggered latest eval */}
+              <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col items-center justify-center gap-4">
+                <h2 className="self-start text-xs font-semibold text-slate-400 uppercase tracking-widest">
+                  Latest Evaluation
+                </h2>
 
-            <SRIGauge score={latestScore} />
+                <SRIGauge score={latestScore} />
 
-            {latestEval ? (
-              <div className="text-center space-y-0.5">
-                {/* Resource name */}
-                <p className="text-sm font-mono font-medium text-slate-300">
-                  {latestEval.resource_id?.split('/').filter(Boolean).pop()}
-                </p>
-                {/* Action type */}
-                <p className="text-xs text-slate-500">
-                  {latestEval.action_type?.replace(/_/g, ' ')}
-                </p>
-                {/* Triggering agent — NEW */}
-                {latestEval.agent_id && (
-                  <p className="text-xs text-blue-400 font-mono pt-0.5">
-                    via {latestEval.agent_id}
+                {latestEval ? (
+                  <div className="text-center space-y-0.5">
+                    {/* Resource name */}
+                    <p className="text-sm font-mono font-medium text-slate-300">
+                      {latestEval.resource_id?.split('/').filter(Boolean).pop()}
+                    </p>
+                    {/* Action type */}
+                    <p className="text-xs text-slate-500">
+                      {latestEval.action_type?.replace(/_/g, ' ')}
+                    </p>
+                    {/* Triggering agent — NEW */}
+                    {latestEval.agent_id && (
+                      <p className="text-xs text-blue-400 font-mono pt-0.5">
+                        via {latestEval.agent_id}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 text-center">
+                    No evaluations yet — run the demo to populate data.
                   </p>
                 )}
               </div>
-            ) : (
-              <p className="text-xs text-slate-500 text-center">
-                No evaluations yet — run the demo to populate data.
-              </p>
+
+              {/* Decision history table */}
+              <div className="lg:col-span-2 bg-slate-800 rounded-xl border border-slate-700">
+                <DecisionTable
+                  evaluations={evaluations}
+                  selected={selected}
+                  onSelect={(ev) => { setSelected(ev); setDrilldownEval(ev); }}
+                />
+              </div>
+            </div>
+
+            {/* ⑤ Live Activity Feed */}
+            <LiveActivityFeed evaluations={evaluations} onDrilldown={setDrilldownEval} />
+
+            {/* ⑥ Evaluation detail (shown when a row is selected) */}
+            {selected && (
+              <EvaluationDetail
+                evaluation={selected}
+                onClose={() => setSelected(null)}
+              />
             )}
-          </div>
 
-          {/* Decision history table */}
-          <div className="lg:col-span-2 bg-slate-800 rounded-xl border border-slate-700">
-            <DecisionTable
-              evaluations={evaluations}
-              selected={selected}
-              onSelect={setSelected}
-            />
-          </div>
-        </div>
-
-        {/* ⑤ Live Activity Feed */}
-        <LiveActivityFeed evaluations={evaluations} />
-
-        {/* ⑥ Evaluation detail (shown when a row is selected) */}
-        {selected && (
-          <EvaluationDetail
-            evaluation={selected}
-            onClose={() => setSelected(null)}
-          />
+            {/* Footer */}
+            <footer className="text-center text-xs text-slate-600 pb-4">
+              RuriSkry · SRI™ Governance Engine · {new Date().getFullYear()}
+            </footer>
+          </>
         )}
-
-        {/* Footer */}
-        <footer className="text-center text-xs text-slate-600 pb-4">
-          SentinelLayer · SRI™ Governance Engine · {new Date().getFullYear()}
-        </footer>
       </main>
     </div>
   )

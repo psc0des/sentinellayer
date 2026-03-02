@@ -59,9 +59,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="SentinelLayer Dashboard API",
+    title="RuriSkry Dashboard API",
     description=(
-        "Governance decision history and risk metrics for the SentinelLayer dashboard."
+        "Governance decision history and risk metrics for the RuriSkry dashboard."
     ),
     version="1.0.0",
 )
@@ -170,7 +170,7 @@ async def _run_agent_scan(
     agent_type:     One of ``"cost"``, ``"monitoring"``, or ``"deploy"``.
     resource_group: Optional Azure resource group to scope the scan to.
     """
-    from src.core.pipeline import SentinelLayerPipeline
+    from src.core.pipeline import RuriSkryPipeline
     from src.operational_agents.cost_agent import CostOptimizationAgent
     from src.operational_agents.deploy_agent import DeployAgent
     from src.operational_agents.monitoring_agent import MonitoringAgent
@@ -231,7 +231,7 @@ async def _run_agent_scan(
         )
 
         # --- Evaluate every proposal through the full governance pipeline ---
-        pipeline = SentinelLayerPipeline()
+        pipeline = RuriSkryPipeline()
         tracker = _get_tracker()
         evaluations: list[dict] = []
         approved = escalated = denied = 0
@@ -304,7 +304,7 @@ async def _run_agent_scan(
 
             verdict = await pipeline.evaluate(action)
             decision = verdict.decision.value
-            sri = verdict.sentinel_risk_index.sri_composite
+            sri = verdict.skry_risk_index.sri_composite
 
             logger.info(
                 "scan %s (%s): verdict for %s — %s (SRI %.1f)",
@@ -316,7 +316,7 @@ async def _run_agent_scan(
                 resource_id=resource_name,
                 decision=decision,
                 sri_composite=sri,
-                message=f"SentinelLayer verdict: {decision.upper()} (SRI {sri:.1f}) — {resource_name}",
+                message=f"RuriSkry verdict: {decision.upper()} (SRI {sri:.1f}) — {resource_name}",
             )
 
             tracker.record(verdict)
@@ -625,7 +625,7 @@ async def get_resource_risk(resource_id: str) -> dict:
 
 @app.get("/api/agents")
 async def list_agents() -> dict:
-    """Return all A2A agents registered with SentinelLayer.
+    """Return all A2A agents registered with RuriSkry.
 
     Each entry includes counters for approved, denied, and escalated
     proposals so the dashboard can show per-agent governance stats.
@@ -744,12 +744,12 @@ async def trigger_alert(alert: dict[str, Any]) -> dict:
 
     This endpoint acts as an Azure Monitor Action Group webhook target.
     When a metric alert fires (e.g. CPU > 80 % on vm-web-01), Azure POSTs
-    the alert details here.  SentinelLayer then:
+    the alert details here.  RuriSkry then:
 
     1. Passes the alert to the ``MonitoringAgent`` for investigation.
     2. The agent queries real metrics, confirms the alert, and produces
        evidence-backed ``ProposedAction`` objects.
-    3. Each proposal is evaluated by the full SentinelLayer governance
+    3. Each proposal is evaluated by the full RuriSkry governance
        pipeline (SRI scoring → APPROVED / ESCALATED / DENIED).
     4. All verdicts are returned and written to the audit trail.
 
@@ -761,7 +761,7 @@ async def trigger_alert(alert: dict[str, Any]) -> dict:
             "value": 95.0,
             "threshold": 80.0,
             "severity": "3",
-            "resource_group": "sentinel-prod-rg"
+            "resource_group": "ruriskry-prod-rg"
         }
 
     All fields are optional — the agent can work with minimal context.
@@ -771,14 +771,14 @@ async def trigger_alert(alert: dict[str, Any]) -> dict:
         governance verdicts (each with decision, SRI composite, and reason).
     """
     from src.operational_agents.monitoring_agent import MonitoringAgent
-    from src.core.pipeline import SentinelLayerPipeline
+    from src.core.pipeline import RuriSkryPipeline
 
     logger.info("alert-trigger: received alert — %s", alert)
 
     agent = MonitoringAgent()
     proposals = await agent.scan(alert_payload=alert)
 
-    pipeline = SentinelLayerPipeline()
+    pipeline = RuriSkryPipeline()
     tracker = _get_tracker()
     verdicts: list[dict] = []
 
@@ -846,7 +846,7 @@ async def trigger_cost_scan(
 
     Optional body::
 
-        {"resource_group": "sentinel-prod-rg"}
+        {"resource_group": "ruriskry-prod-rg"}
     """
     rg = body.resource_group or settings.default_resource_group or None
     scan_id, _ = _make_scan_record("cost", rg)
@@ -916,7 +916,7 @@ async def trigger_all_scans(
 
     Optional body::
 
-        {"resource_group": "sentinel-prod-rg"}
+        {"resource_group": "ruriskry-prod-rg"}
     """
     rg = body.resource_group or settings.default_resource_group or None
     scan_ids: list[str] = []
@@ -1121,7 +1121,7 @@ async def test_notification() -> dict:
             current_monthly_cost=847.0,
         ),
         reason="VM idle for 30 days — estimated savings $847/month. "
-               "This is a test notification from SentinelLayer.",
+               "This is a test notification from RuriSkry.",
         urgency=Urgency.HIGH,
     )
 
@@ -1129,7 +1129,7 @@ async def test_notification() -> dict:
         action_id="test-notification-001",
         timestamp=datetime.now(timezone.utc),
         proposed_action=sample_action,
-        sentinel_risk_index=SRIBreakdown(
+        skry_risk_index=SRIBreakdown(
             sri_infrastructure=65.0,
             sri_policy=100.0,
             sri_historical=62.0,
@@ -1156,6 +1156,85 @@ async def test_notification() -> dict:
 
     success = await send_teams_notification(sample_verdict, sample_action)
     return {"status": "sent" if success else "failed"}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint — Decision Explanation (Phase 17B)
+# ---------------------------------------------------------------------------
+
+_explainer = None
+
+
+def _get_explainer():
+    """Return the module-level DecisionExplainer singleton."""
+    global _explainer
+    if _explainer is None:
+        from src.core.explanation_engine import DecisionExplainer
+        _explainer = DecisionExplainer()
+    return _explainer
+
+
+@app.get("/api/evaluations/{evaluation_id}/explanation")
+async def get_evaluation_explanation(evaluation_id: str) -> dict:
+    """Return a full DecisionExplanation with counterfactual analysis.
+
+    Path parameter:
+    - **evaluation_id**: the ``action_id`` UUID from the governance verdict.
+
+    Returns 404 if the evaluation is not found.
+    """
+    # Lookup the evaluation record
+    record = None
+    for r in _get_tracker().get_recent(limit=10_000):
+        if r.get("action_id") == evaluation_id:
+            record = r
+            break
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Evaluation '{evaluation_id}' not found.",
+        )
+
+    # Reconstruct models from stored record (handles both full and flattened formats)
+    # SRI breakdown — try full format first, then flattened format from DecisionTracker
+    sri_data = record.get("skry_risk_index", {})
+    sri_flat = record.get("sri_breakdown", {})
+    sri_breakdown = SRIBreakdown(
+        sri_infrastructure=sri_data.get("sri_infrastructure", sri_flat.get("infrastructure", 0)),
+        sri_policy=sri_data.get("sri_policy", sri_flat.get("policy", 0)),
+        sri_historical=sri_data.get("sri_historical", sri_flat.get("historical", 0)),
+        sri_cost=sri_data.get("sri_cost", sri_flat.get("cost", 0)),
+        sri_composite=sri_data.get("sri_composite", record.get("sri_composite", 0)),
+    )
+
+    # Rebuild ProposedAction — try nested proposed_action first, fallback to flat fields
+    proposed = record.get("proposed_action", {})
+    target_data = proposed.get("target", {})
+    action = ProposedAction(
+        agent_id=proposed.get("agent_id", record.get("agent_id", "unknown")),
+        action_type=ActionType(proposed.get("action_type", record.get("action_type", "delete_resource"))),
+        target=ActionTarget(
+            resource_id=target_data.get("resource_id", record.get("resource_id", "")),
+            resource_type=target_data.get("resource_type", record.get("resource_type", "")),
+            resource_group=target_data.get("resource_group"),
+            current_monthly_cost=target_data.get("current_monthly_cost"),
+        ),
+        reason=proposed.get("reason", record.get("action_reason", record.get("verdict_reason", ""))),
+        urgency=Urgency(proposed.get("urgency", "low")),
+    )
+
+    verdict = GovernanceVerdict(
+        action_id=evaluation_id,
+        timestamp=datetime.fromisoformat(record["timestamp"]) if isinstance(record.get("timestamp"), str) else record.get("timestamp", datetime.now(timezone.utc)),
+        proposed_action=action,
+        skry_risk_index=sri_breakdown,
+        decision=SRIVerdict(record.get("decision", "approved")),
+        reason=record.get("verdict_reason", record.get("reason", "")),
+        agent_results=record.get("agent_results", record.get("full_evaluation", {})),
+    )
+
+    explanation = await _get_explainer().explain(verdict, action)
+    return explanation.model_dump()
 
 
 # ---------------------------------------------------------------------------

@@ -18,9 +18,9 @@ import React from 'react'
 
 /** Tailwind classes for each verdict type. */
 const VERDICT_STYLES = {
-  approved:  { text: 'text-green-400',  pill: 'bg-green-500/10 border-green-500/30' },
+  approved: { text: 'text-green-400', pill: 'bg-green-500/10 border-green-500/30' },
   escalated: { text: 'text-yellow-400', pill: 'bg-yellow-500/10 border-yellow-500/30' },
-  denied:    { text: 'text-red-400',    pill: 'bg-red-500/10 border-red-500/30' },
+  denied: { text: 'text-red-400', pill: 'bg-red-500/10 border-red-500/30' },
 }
 
 /** Map an SRI composite score to a Tailwind text-colour class. */
@@ -43,10 +43,10 @@ function shortResource(id) {
 function relativeTime(iso) {
   if (!iso) return ''
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 10)  return 'just now'
-  if (s < 60)  return `${s}s ago`
+  if (s < 10) return 'just now'
+  if (s < 60) return `${s}s ago`
   const m = Math.floor(s / 60)
-  if (m < 60)  return `${m}m ago`
+  if (m < 60) return `${m}m ago`
   return `${Math.floor(m / 60)}h ago`
 }
 
@@ -73,12 +73,16 @@ function VerdictBadge({ verdict }) {
  *     action_id, agent_id, action_type, resource_id, sri_composite,
  *     decision, timestamp
  */
-function FeedRow({ ev }) {
+function FeedRow({ ev, onDrilldown }) {
   // Shorten "cost-optimization-agent" → "cost-optimization" to save space
   const agentLabel = (ev.agent_id ?? 'unknown').replace(/-agent$/, '')
 
   return (
-    <div className="flex items-center gap-2 py-2.5 border-b border-slate-700/40 last:border-0 min-w-0 text-xs">
+    <div
+      className="flex items-center gap-2 py-2.5 border-b border-slate-700/40 last:border-0 min-w-0 text-xs cursor-pointer hover:bg-slate-700/30 transition-colors rounded"
+      onClick={() => onDrilldown?.(ev)}
+      title="Click for details"
+    >
 
       {/* Agent name — blue, monospace, fixed width */}
       <span
@@ -133,7 +137,7 @@ function FeedRow({ ev }) {
  *   evaluations — array of evaluation records (newest-first) from the parent.
  *                 Same data as DecisionTable; we show the newest 50 here.
  */
-export default function LiveActivityFeed({ evaluations }) {
+export default function LiveActivityFeed({ evaluations, onDrilldown }) {
   const items = (evaluations ?? []).slice(0, 50)
 
   return (
@@ -180,7 +184,7 @@ export default function LiveActivityFeed({ evaluations }) {
           {/* Scrollable feed — capped at 360 px so it never dominates the page */}
           <div className="overflow-y-auto max-h-72 pr-1">
             {items.map((ev) => (
-              <FeedRow key={ev.action_id ?? ev.timestamp} ev={ev} />
+              <FeedRow key={ev.action_id ?? ev.timestamp} ev={ev} onDrilldown={onDrilldown} />
             ))}
           </div>
         </>

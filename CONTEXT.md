@@ -1,8 +1,8 @@
-# CONTEXT.md — SentinelLayer Project Context
+# CONTEXT.md — RuriSkry Project Context
 > This file is the single source of truth for any AI coding agent working on this project.
 
 ## What Is This Project?
-SentinelLayer is an AI Action Governance & Simulation Engine for the Microsoft AI Dev Days Hackathon 2026. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Sentinel Risk Index (SRI™) before allowing execution.
+RuriSkry is an AI Action Governance & Simulation Engine for the Microsoft AI Dev Days Hackathon 2026. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
 
 ## Project Structure
 ```
@@ -25,7 +25,7 @@ src/
 ├── mcp_server/
 │   └── server.py                # Exposes governance tools via MCP
 ├── a2a/                         # A2A Protocol layer (Phase 10)
-│   ├── sentinel_a2a_server.py   # SentinelLayer as A2A server (AgentExecutor + AgentCard)
+│   ├── ruriskry_a2a_server.py   # RuriSkry as A2A server (AgentExecutor + AgentCard)
 │   ├── operational_a2a_clients.py  # Operational agent A2A client wrappers
 │   └── agent_registry.py        # Tracks connected A2A agents with stats
 ├── infrastructure/              # Azure service clients (live + mock fallback)
@@ -49,26 +49,26 @@ src/
 └── config.py                    # Environment config with SRI thresholds
 ```
 
-## How to Call SentinelLayer
+## How to Call RuriSkry
 
-SentinelLayer can be called in three ways. All three paths converge at the same
+RuriSkry can be called in three ways. All three paths converge at the same
 governance pipeline — same SRI™ scoring, same verdict, same audit trail.
 
 ### 1. A2A (HTTP) — Enterprise / Multi-Service Pattern
 
 **Who uses it:** External AI agents running as separate services (microservices, Kubernetes pods, cloud-deployed agents).
 
-**How it works:** The external agent downloads SentinelLayer's Agent Card from
+**How it works:** The external agent downloads RuriSkry's Agent Card from
 `/.well-known/agent-card.json`, then sends a `ProposedAction` as an A2A task over HTTP.
-SentinelLayer streams SSE progress updates and returns a `GovernanceVerdict` artifact.
+RuriSkry streams SSE progress updates and returns a `GovernanceVerdict` artifact.
 
-**Entry point:** `src/a2a/sentinel_a2a_server.py`
-**Start:** `uvicorn src.a2a.sentinel_a2a_server:app --host 0.0.0.0 --port 8000`
+**Entry point:** `src/a2a/ruriskry_a2a_server.py`
+**Start:** `uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000`
 **Demo:** `python demo_a2a.py`
 
 ```python
 # The external agent side (discovery + call)
-resolver = A2ACardResolver(httpx_client=http_client, base_url="http://sentinel:8000")
+resolver = A2ACardResolver(httpx_client=http_client, base_url="http://ruriskry:8000")
 agent_card = await resolver.get_agent_card()
 client = A2AClient(httpx_client=http_client, agent_card=agent_card)
 async for event in client.send_message_streaming(request):
@@ -78,10 +78,10 @@ async for event in client.send_message_streaming(request):
 ### 2. MCP (stdio) — Developer / IDE Pattern
 
 **Who uses it:** AI tools like Claude Desktop, GitHub Copilot, or any MCP-compatible
-agent running on the same machine as SentinelLayer.
+agent running on the same machine as RuriSkry.
 
-**How it works:** The MCP host (e.g. Claude Desktop) launches SentinelLayer as a child
-process over stdio and calls `sentinel_evaluate_action` as a structured tool. No network
+**How it works:** The MCP host (e.g. Claude Desktop) launches RuriSkry as a child
+process over stdio and calls `skry_evaluate_action` as a structured tool. No network
 required — communication is via stdin/stdout pipes.
 
 **Entry point:** `src/mcp_server/server.py`
@@ -90,7 +90,7 @@ required — communication is via stdin/stdout pipes.
 ```json
 // The MCP tool call (Claude Desktop sends this automatically)
 {
-  "tool": "sentinel_evaluate_action",
+  "tool": "skry_evaluate_action",
   "arguments": {
     "resource_id": "vm-23",
     "action_type": "delete_resource",
@@ -103,7 +103,7 @@ required — communication is via stdin/stdout pipes.
 ### 3. Direct Python — Local / Test Pattern
 
 **Who uses it:** Code inside the same codebase — `demo.py`, all unit tests,
-and any Python script that imports SentinelLayer directly.
+and any Python script that imports RuriSkry directly.
 
 **How it works:** Instantiate the pipeline or interceptor and `await` it directly.
 No network, no process boundary, minimal overhead.
@@ -112,9 +112,9 @@ No network, no process boundary, minimal overhead.
 **Demo:** `python demo.py`
 
 ```python
-from src.core.pipeline import SentinelLayerPipeline
+from src.core.pipeline import RuriSkryPipeline
 
-pipeline = SentinelLayerPipeline()
+pipeline = RuriSkryPipeline()
 verdict = await pipeline.evaluate(action)  # same verdict as A2A or MCP
 print(verdict.decision.value)              # "approved" | "escalated" | "denied"
 ```
@@ -134,7 +134,7 @@ print(verdict.decision.value)              # "approved" | "escalated" | "denied"
 
 ## Key Concepts
 
-### Sentinel Risk Index (SRI™)
+### Skry Risk Index (SRI™)
 Every proposed action gets scored across 4 dimensions:
 - **SRI:Infrastructure** (weight 0.30) — blast radius on dependent resources
 - **SRI:Policy** (weight 0.25) — governance policy violations
@@ -156,7 +156,7 @@ Operational Agent (Layer 1 — pre-flight reasoning)
     ├── Reasons about context before proposing (detects DR tags, blast radius)
     └── Submits ProposedAction with evidence-backed reason
             ↓
-SentinelLayer (Layer 2 — independent second opinion)
+RuriSkry (Layer 2 — independent second opinion)
     → 4 governance agents evaluate in parallel
     → GovernanceDecisionEngine calculates SRI™ Composite
     → GovernanceVerdict returned (approved/escalated/denied)
@@ -174,17 +174,32 @@ and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 3. `data/policies.json` — 6 governance policies for PolicyComplianceAgent.
 4. `data/seed_incidents.json` — 7 past incidents for HistoricalPatternAgent.
 5. `data/seed_resources.json` — Azure resource topology. Contains two sections:
-   - **Mini prod resources** (`sentinel-prod-rg`): `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
-     `nsg-east-prod`, `sentinelproddata` — matches `infrastructure/terraform-prod/` deployment.
+   - **Mini prod resources** (`ruriskry-prod-rg`): `vm-dr-01`, `vm-web-01`, `payment-api-prod`,
+     `nsg-east-prod`, `ruriskryproddata` — matches `infrastructure/terraform-prod/` deployment.
    - **Legacy mock resources**: `vm-23`, `api-server-03`, `nsg-east`, `aks-prod`, `storageshared01`
      — kept for test compatibility (all unit tests reference these names).
-6. `src/a2a/sentinel_a2a_server.py` — A2A entry point: `SentinelAgentExecutor` + `AgentCard`.
+6. `src/a2a/ruriskry_a2a_server.py` — A2A entry point: `RuriSkryAgentExecutor` + `AgentCard`.
 7. `src/a2a/agent_registry.py` — Agent registry: tracks connected agents and their stats.
 8. `infrastructure/terraform-prod/` — Mini production environment for live demos. Deploy these
-   resources so SentinelLayer governs real Azure VMs instead of purely mock data.
+   resources so RuriSkry governs real Azure VMs instead of purely mock data.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Phase 18 — Decision Explanation Engine (complete)**
+
+- `src/core/explanation_engine.py` (NEW) — `DecisionExplainer.explain(verdict, action)` returns a
+  `DecisionExplanation` with ranked `Factor` list, `Counterfactual` scenarios, policy violations,
+  risk highlights, and an LLM-generated summary (GPT-4.1 in live mode; template fallback in mock).
+  Module-level `_explanation_cache` keyed by `action_id` prevents redundant recomputation.
+- `src/core/models.py` — 3 new Pydantic models: `Factor`, `Counterfactual`, `DecisionExplanation`.
+- `src/api/dashboard_api.py` — 1 new endpoint: `GET /api/evaluations/{id}/explanation` (18 total).
+  Reconstructs `GovernanceVerdict` from the stored flat record, calls the explainer, returns JSON.
+- `dashboard/src/components/EvaluationDrilldown.jsx` (NEW) — 6-section full-page drilldown:
+  verdict header, SRI bars (with primary-factor ⭐), explanation, counterfactual cards, agent
+  reasoning, collapsible JSON audit trail. Opened by clicking any row in the Live Activity Feed.
+- `dashboard/src/App.jsx` — `drilldownEval` state drives navigation to/from the drilldown.
+- Test result: **434 passed, 10 xfailed, 0 failed** ✅
 
 **Phase 17 — Microsoft Teams Notifications (complete)**
 
@@ -217,7 +232,7 @@ Comprehensive verification of Phase 12/13. Key fixes applied:
   ``_use_mocks()`` — they never run in live mode.
 - All 3 ops agents: ``agent.run(prompt)`` wrapped in ``run_with_throttle`` (asyncio.Semaphore
   + exponential back-off retry) — same throttling guarantee as the governance agents.
-- ``demo_live.py``: hardcoded ``"sentinel-prod-rg"`` replaced with ``--resource-group / -g``
+- ``demo_live.py``: hardcoded ``"ruriskry-prod-rg"`` replaced with ``--resource-group / -g``
   CLI argument (``None`` default = scan whole subscription).
 - ``tests/test_agent_agnostic.py`` (NEW, 22 tests): verifies environment-agnosticism at SDK
   level — no hardcoded resource names, KQL passes through unchanged, RuntimeError on Azure
@@ -248,20 +263,20 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
 **Phase 11 — Mini Production Environment (complete)**
 
 - `infrastructure/terraform-prod/` — Terraform config that creates 5 real Azure resources in
-  `sentinel-prod-rg` for live hackathon demos: `vm-dr-01` (DENIED scenario), `vm-web-01`
+  `ruriskry-prod-rg` for live hackathon demos: `vm-dr-01` (DENIED scenario), `vm-web-01`
   (APPROVED scenario), `payment-api-prod` (critical dependency), `nsg-east-prod` (ESCALATED
-  scenario), shared storage `sentinelprod{suffix}`. Auto-shutdown at 22:00 UTC on both VMs.
+  scenario), shared storage `ruriskryprod{suffix}`. Auto-shutdown at 22:00 UTC on both VMs.
   Azure Monitor alerts: CPU >80% on `vm-web-01`, heartbeat on `vm-dr-01`.
-- `data/seed_resources.json` updated: real `sentinel-prod-rg` resource IDs added alongside
+- `data/seed_resources.json` updated: real `ruriskry-prod-rg` resource IDs added alongside
   legacy mock resources. Replace `YOUR-SUBSCRIPTION-ID` with your subscription ID after
   running `terraform apply` in `infrastructure/terraform-prod/`.
 - **Test result: 420 passed, 10 xfailed, 0 failed** ✅
 
 **Previous: Phase 10 — A2A Protocol + Bug Fixes**
 
-- `src/a2a/sentinel_a2a_server.py` — SentinelLayer exposed as an A2A-compliant
+- `src/a2a/ruriskry_a2a_server.py` — RuriSkry exposed as an A2A-compliant
   server using `agent-framework-a2a` + `a2a-sdk`. Agent Card at
-  `/.well-known/agent-card.json`. `SentinelAgentExecutor` routes tasks through
+  `/.well-known/agent-card.json`. `RuriSkryAgentExecutor` routes tasks through
   the existing governance pipeline, streaming SSE progress via `TaskUpdater`.
   `DecisionTracker().record(verdict)` called after every A2A evaluation so
   decisions appear in `/api/evaluations`, `/api/metrics`, and Cosmos DB.

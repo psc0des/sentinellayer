@@ -1,1 +1,1 @@
-"""SentinelLayer notifications — outbound alerting for governance verdicts."""
+"""RuriSkry notifications — outbound alerting for governance verdicts."""
