@@ -139,6 +139,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/agents` | List operational agents connected via A2A |
 | GET | `/api/agents/{agent_name}/history` | Recent decisions for one A2A agent |
 | GET | `/api/agents/{agent_name}/last-run` | Most recent completed scan for one agent |
+| GET | `/api/notification-status` | Teams webhook configuration status |
+| POST | `/api/test-notification` | Send a sample DENIED Adaptive Card to the configured Teams webhook |
 | POST | `/api/alert-trigger` | Webhook — trigger monitoring agent from Azure Monitor alert |
 | POST | `/api/scan/cost` | Start a background cost agent scan |
 | POST | `/api/scan/monitoring` | Start a background monitoring agent scan |
@@ -365,6 +367,51 @@ Returns **400** if the scan is not currently running.
 ```json
 { "status": "cancellation_requested", "scan_id": "b3e7c1a2-..." }
 ```
+
+---
+
+### `GET /api/notification-status` (Phase 17)
+
+Return the current Teams notification configuration status. The dashboard header uses this
+to render the 🔔 Teams indicator pill.
+
+**Response:**
+```json
+{
+  "teams_configured": true,
+  "teams_enabled": true
+}
+```
+
+`teams_configured` is `true` when `TEAMS_WEBHOOK_URL` is non-empty.
+`teams_enabled` reflects `TEAMS_NOTIFICATIONS_ENABLED` (default `true`).
+
+---
+
+### `POST /api/test-notification` (Phase 17)
+
+Send a sample DENIED Adaptive Card to the configured Teams webhook. Useful for judges to
+verify the Teams integration works without running a full governance evaluation.
+
+Returns immediately if no webhook is configured.
+
+**Response (sent):**
+```json
+{ "status": "sent" }
+```
+
+**Response (skipped):**
+```json
+{ "status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured" }
+```
+
+**Response (failed):**
+```json
+{ "status": "failed" }
+```
+
+The sample card shows a realistic DENIED verdict for `vm-dr-01` with SRI 77.0 and POL-DR-001
+violation — identical format to real governance notifications.
 
 ---
 

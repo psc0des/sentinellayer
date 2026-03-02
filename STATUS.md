@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-02 (Phase 16 scan durability + live log complete)
+**Last updated:** 2026-03-02 (Phase 17 Microsoft Teams notifications complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -28,7 +28,8 @@
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
-| Dashboard API | ✅ Complete | FastAPI REST (15 endpoints; scan runs durable; SSE live log) |
+| Dashboard API | ✅ Complete | FastAPI REST (17 endpoints; scan runs durable; SSE live log; Teams status + test) |
+| Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
 | Agent scan triggers (Phase 13) | ✅ Complete | POST /api/scan/cost\|monitoring\|deploy\|all + GET status |
 | AgentControls dashboard panel (Phase 13) | ✅ Complete | `dashboard/src/components/AgentControls.jsx` |
 | Scan run tracker (Phase 16) | ✅ Complete | `src/core/scan_run_tracker.py` — Cosmos DB / JSON; survives restarts |
@@ -124,7 +125,41 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 16 — Scan Durability, Live Log & Agent Action Menus  ← LATEST
+### Phase 17 — Microsoft Teams Notifications  ← LATEST
+
+DENIED and ESCALATED governance verdicts now trigger an instant Adaptive Card notification
+to a Microsoft Teams channel via Incoming Webhook — no one needs to watch the dashboard 24/7.
+
+**`src/notifications/teams_notifier.py`** (NEW)
+- [x] `send_teams_notification(verdict, proposed_action)` — async, fire-and-forget.
+- [x] Builds an Adaptive Card: verdict badge (🚫/⚠️), resource/agent/action facts, SRI composite + 4-dimension breakdown, reasoning (≤300 chars), top policy violation, "View in Dashboard" button, timestamp.
+- [x] APPROVED verdicts silently skipped. Empty `TEAMS_WEBHOOK_URL` silently skipped.
+- [x] Retries once after 2 s on network failure. Never raises — all exceptions logged.
+
+**`src/core/pipeline.py`**
+- [x] `asyncio.create_task(send_teams_notification(verdict, action))` after every verdict (fire-and-forget). Wrapped in `try/except` so notification errors never affect governance outcomes.
+
+**`src/config.py`**
+- [x] `teams_webhook_url: str = ""` — empty = disabled (zero-config default).
+- [x] `teams_notifications_enabled: bool = True` — master on/off switch.
+- [x] `dashboard_url: str = "http://localhost:5173"` — configurable "View in Dashboard" link in the card.
+
+**`src/api/dashboard_api.py`** — 2 new endpoints (17 total)
+- [x] `GET /api/notification-status` — returns `{teams_configured, teams_enabled}` for the dashboard indicator.
+- [x] `POST /api/test-notification` — sends a sample DENIED Adaptive Card; useful for judges to verify the integration without running a full scan.
+
+**Frontend**
+- [x] `dashboard/src/App.jsx` — 🔔 Teams pill in header: green clickable button when webhook configured (click sends test notification with live "Sending… → ✓ Sent!" feedback), grey static pill when not configured.
+- [x] `dashboard/src/api.js` — `fetchNotificationStatus()`, `testTeamsNotification()` helpers.
+
+**`.env.example`**
+- [x] New `TEAMS_WEBHOOK_URL`, `TEAMS_NOTIFICATIONS_ENABLED`, `DASHBOARD_URL` entries.
+
+**Tests**
+- [x] `tests/test_teams_notification.py` — 5 tests: denied sends, escalated sends, approved skips, no-webhook skips, notification failure does not block pipeline.
+- [x] **Test result: 429 passed, 10 xfailed, 0 failed** ✅ (was 424 before this phase)
+
+### Phase 16 — Scan Durability, Live Log & Agent Action Menus
 
 Five dashboard issues fixed; scan results now survive browser refresh and server restart.
 
@@ -718,12 +753,15 @@ through SentinelLayer automatically — fully autonomous cloud governance loop.
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/core/scan_run_tracker.py` | Durable scan-run store — Cosmos / JSON; upsert, get, get_latest_by_agent_type | Phase 16 |
-| `src/api/dashboard_api.py` | FastAPI REST — 15 endpoints; durable scan store; SSE live log; cancel; last-run | Phase 16 |
+| `src/api/dashboard_api.py` | FastAPI REST — 17 endpoints; durable scan store; SSE live log; cancel; last-run; Teams status + test | Phase 17 |
+| `src/notifications/teams_notifier.py` | Adaptive Card → Teams Incoming Webhook on DENIED/ESCALATED; fire-and-forget | Phase 17 |
+| `tests/test_teams_notification.py` | 5 tests — denied, escalated, approved skip, no-webhook skip, pipeline resilience | Phase 17 |
 | `demo_live.py` | Two-layer intelligence demo — A2A server auto-starts; no hardcoded RG fallback | Phase 15 |
 | `dashboard/src/components/AgentControls.jsx` | Scan control panel — per-agent buttons, polling, Run All, LiveLogPanel trigger | Phase 16 |
 | `dashboard/src/components/LiveLogPanel.jsx` | SSE slide-out panel — 9 event type styles, auto-scroll, EventSource cleanup | Phase 16 |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid — ⋮ action menu, per-agent scan/log/results/history/details panels | Phase 16 |
-| `dashboard/src/api.js` | Frontend fetch helpers incl. streamScanEvents, cancelScan, fetchAgentLastRun | Phase 16 |
+| `dashboard/src/api.js` | Frontend fetch helpers incl. streamScanEvents, cancelScan, fetchAgentLastRun, fetchNotificationStatus | Phase 17 |
+| `dashboard/src/App.jsx` | Root component — 🔔 Teams pill with test-notification click handler | Phase 17 |
 | `data/scans/` | Local JSON scan-run store (mock mode for ScanRunTracker) | Phase 16 |
 | `infrastructure/terraform/main.tf` | Azure infra — Foundry, Search, Cosmos (2 containers), KV | Phase 10 bugfixes |
 | `infrastructure/terraform-prod/main.tf` | Mini prod env — 2 VMs, NSG, storage, App Service, monitor alerts | Phase 11 |

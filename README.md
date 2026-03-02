@@ -122,6 +122,7 @@ flowchart LR
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | Governance visualization + REST API |
+| Teams Notifications | Microsoft Teams Incoming Webhook (Adaptive Cards) | Real-time alerts for DENIED/ESCALATED verdicts |
 
 ---
 
@@ -193,7 +194,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 424 passed, 10 xfailed, 0 failed
+# Expected: 429 passed, 10 xfailed, 0 failed
 pytest tests/ -v
 ```
 
@@ -233,8 +234,10 @@ sentinellayer/
 │   │   ├── search_client.py
 │   │   ├── openai_client.py
 │   │   └── secrets.py               # Key Vault secret resolver
+│   ├── notifications/          # Outbound alerting (Phase 17)
+│   │   └── teams_notifier.py        # Adaptive Card → Teams webhook on DENIED/ESCALATED
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 15 endpoints: scan triggers, SSE stream, cancel, last-run, alert webhook
+│       └── dashboard_api.py         # 17 endpoints: scan triggers, SSE stream, cancel, last-run, alert webhook, Teams status/test
 ├── dashboard/                  # React + Vite governance dashboard
 ├── functions/                  # Azure Functions triggers
 ├── data/                       # Seed data for demo

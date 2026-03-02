@@ -298,11 +298,14 @@ src/
 │   ├── operational_a2a_clients.py # A2A client wrappers for 3 operational agents
 │   └── agent_registry.py     # Tracks connected agents + stats
 ├── mcp_server/server.py       # FastMCP stdio — sentinel_evaluate_action (async)
-├── api/dashboard_api.py       # FastAPI REST — 15 async endpoints (evaluations, agents,
-│                              #   scan triggers, SSE stream, cancel, last-run)
+├── notifications/             # Outbound alerting (Phase 17)
+│   └── teams_notifier.py      # Adaptive Card → Teams webhook on DENIED/ESCALATED; fire-and-forget
+├── api/dashboard_api.py       # FastAPI REST — 17 async endpoints (evaluations, agents,
+│                              #   scan triggers, SSE stream, cancel, last-run,
+│                              #   notification-status, test-notification)
 ├── infrastructure/            # Azure clients with mock fallback
 │   └── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
-└── config.py                  # SRI thresholds + env vars + DEMO_MODE
+└── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
 dashboard/
 └── src/components/
     ├── AgentControls.jsx      # Scan trigger panel: per-agent buttons, RG filter, 2 s polling, LiveLogPanel

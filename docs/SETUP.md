@@ -62,7 +62,7 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: 424 passed, 10 xfailed, 0 failed
+# Expected: 429 passed, 10 xfailed, 0 failed
 
 # 7a. Start SentinelLayer — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
@@ -131,6 +131,9 @@ See `infrastructure/terraform-prod/README.md` for full detail including cost est
 | `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container for verdict audit trail |
 | `COSMOS_CONTAINER_SCAN_RUNS` | Live only | `governance-scan-runs` | Container for scan-run records (auto-created) |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
+| `TEAMS_WEBHOOK_URL` | No | `""` | Microsoft Teams Incoming Webhook URL. Empty = notifications disabled (zero-config default). |
+| `TEAMS_NOTIFICATIONS_ENABLED` | No | `true` | Master on/off switch for Teams notifications. Has no effect if `TEAMS_WEBHOOK_URL` is empty. |
+| `DASHBOARD_URL` | No | `http://localhost:5173` | URL embedded in the "View in Dashboard" button on Teams Adaptive Cards. |
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
 | `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |

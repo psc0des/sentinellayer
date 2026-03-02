@@ -39,10 +39,13 @@ src/
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
 │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
+├── notifications/               # Outbound alerting ← NEW Phase 17
+│   └── teams_notifier.py        # send_teams_notification() — Adaptive Card to Teams webhook
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints — 15 total (Phase 10 agents,
+│   └── dashboard_api.py         # FastAPI REST endpoints — 17 total (Phase 10 agents,
 │                                #   Phase 12 alert-trigger, Phase 13 scan triggers,
-│                                #   Phase 16: SSE stream, cancel, last-run + durable store)
+│                                #   Phase 16: SSE stream, cancel, last-run + durable store,
+│                                #   Phase 17: notification-status + test-notification)
 └── config.py                    # Environment config with SRI thresholds
 ```
 
@@ -182,6 +185,16 @@ and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Phase 17 — Microsoft Teams Notifications (complete)**
+
+- `src/notifications/teams_notifier.py` (NEW) — async fire-and-forget Adaptive Card via Teams Incoming Webhook.
+  Triggered after every DENIED or ESCALATED verdict via `asyncio.create_task()` in `pipeline.py`.
+  APPROVED verdicts skipped. Empty webhook URL = silent no-op. Retries once; never raises.
+- `src/config.py` — 3 new settings: `teams_webhook_url`, `teams_notifications_enabled`, `dashboard_url`.
+- `src/api/dashboard_api.py` — 2 new endpoints: `GET /api/notification-status`, `POST /api/test-notification` (17 total).
+- Frontend: 🔔 Teams pill in header — green clickable button (sends test notification) when configured, grey static pill when not.
+- Test result: **429 passed, 10 xfailed, 0 failed** ✅
 
 **Phase 16 — Scan Durability, Live Log & Agent Action Menus (complete)**
 
