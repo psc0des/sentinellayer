@@ -40,7 +40,17 @@ from pydantic import BaseModel
 from src.a2a.agent_registry import AgentRegistry
 from src.config import settings
 from src.core.decision_tracker import DecisionTracker
+from src.core.models import (
+    ActionTarget,
+    ActionType,
+    GovernanceVerdict,
+    ProposedAction,
+    SRIBreakdown,
+    SRIVerdict,
+    Urgency,
+)
 from src.core.scan_run_tracker import ScanRunTracker
+from src.notifications.teams_notifier import send_teams_notification
 
 logger = logging.getLogger(__name__)
 
@@ -1094,17 +1104,6 @@ async def test_notification() -> dict:
     or ``{"status": "skipped", "reason": "..."}`` if the webhook is not
     configured.
     """
-    from src.notifications.teams_notifier import send_teams_notification
-    from src.core.models import (
-        ActionTarget,
-        ActionType,
-        GovernanceVerdict,
-        ProposedAction,
-        SRIBreakdown,
-        SRIVerdict,
-        Urgency,
-    )
-
     webhook_url = settings.teams_webhook_url
     if not webhook_url:
         return {"status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured"}

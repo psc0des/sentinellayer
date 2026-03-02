@@ -70,6 +70,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [teamsStatus, setTeamsStatus] = useState(null)
+  const [teamsBtnLabel, setTeamsBtnLabel] = useState('🔔 Teams Connected')
 
   /**
    * fetchAll — fetches evaluations, metrics, and agents in parallel.
@@ -159,22 +160,20 @@ export default function App() {
             {teamsStatus && (
               teamsStatus.teams_configured && teamsStatus.teams_enabled ? (
                 <button
-                  id="teams-test-btn"
                   onClick={async () => {
-                    const btn = document.getElementById('teams-test-btn')
-                    btn.textContent = '🔔 Sending…'
+                    setTeamsBtnLabel('🔔 Sending…')
                     try {
                       const res = await testTeamsNotification()
-                      btn.textContent = res.status === 'sent' ? '🔔 ✓ Sent!' : '🔔 ✗ Failed'
+                      setTeamsBtnLabel(res.status === 'sent' ? '🔔 ✓ Sent!' : '🔔 ✗ Failed')
                     } catch {
-                      btn.textContent = '🔔 ✗ Failed'
+                      setTeamsBtnLabel('🔔 ✗ Failed')
                     }
-                    setTimeout(() => { btn.textContent = '🔔 Teams Connected' }, 2000)
+                    setTimeout(() => setTeamsBtnLabel('🔔 Teams Connected'), 2000)
                   }}
                   className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
                   title="Click to send a test notification to Teams"
                 >
-                  🔔 Teams Connected
+                  {teamsBtnLabel}
                 </button>
               ) : (
                 <div
