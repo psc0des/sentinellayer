@@ -140,3 +140,23 @@ export async function fetchAgentHistory(agentName, limit = 20) {
   if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch history for "${agentName}"`)
   return res.json()
 }
+
+/**
+ * Fetch the Teams notification configuration status.
+ * @returns {{ teams_configured: boolean, teams_enabled: boolean }}
+ */
+export async function fetchNotificationStatus() {
+  const res = await fetch(`${BASE}/notification-status`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch notification status`)
+  return res.json()
+}
+
+/**
+ * Send a test notification to the configured Teams webhook.
+ * @returns {{ status: string, reason?: string }}
+ */
+export async function testTeamsNotification() {
+  const res = await fetch(`${BASE}/test-notification`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to send test notification`)
+  return res.json()
+}

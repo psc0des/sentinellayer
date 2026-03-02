@@ -14,14 +14,14 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { fetchEvaluations, fetchMetrics, fetchAgents } from './api'
-import MetricsBar        from './components/MetricsBar'
-import SRIGauge          from './components/SRIGauge'
-import DecisionTable     from './components/DecisionTable'
-import EvaluationDetail  from './components/EvaluationDetail'
-import ConnectedAgents   from './components/ConnectedAgents'
-import LiveActivityFeed  from './components/LiveActivityFeed'
-import AgentControls     from './components/AgentControls'
+import { fetchEvaluations, fetchMetrics, fetchAgents, fetchNotificationStatus, testTeamsNotification } from './api'
+import MetricsBar from './components/MetricsBar'
+import SRIGauge from './components/SRIGauge'
+import DecisionTable from './components/DecisionTable'
+import EvaluationDetail from './components/EvaluationDetail'
+import ConnectedAgents from './components/ConnectedAgents'
+import LiveActivityFeed from './components/LiveActivityFeed'
+import AgentControls from './components/AgentControls'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -64,11 +64,12 @@ function ErrorScreen({ message, onRetry }) {
 
 export default function App() {
   const [evaluations, setEvaluations] = useState([])
-  const [metrics,     setMetrics]     = useState(null)
-  const [agents,      setAgents]      = useState([])
-  const [selected,    setSelected]    = useState(null)
-  const [loading,     setLoading]     = useState(true)
-  const [error,       setError]       = useState(null)
+  const [metrics, setMetrics] = useState(null)
+  const [agents, setAgents] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [teamsStatus, setTeamsStatus] = useState(null)
 
   /**
    * fetchAll — fetches evaluations, metrics, and agents in parallel.
@@ -111,6 +112,13 @@ export default function App() {
   // Fetch data on first render
   useEffect(() => { load() }, [load])
 
+  // Fetch Teams notification status once on mount
+  useEffect(() => {
+    fetchNotificationStatus()
+      .then(setTeamsStatus)
+      .catch(() => setTeamsStatus(null))
+  }, [])
+
   /**
    * Silent background refresh every 5 seconds.
    * Errors are swallowed so a momentary network hiccup doesn't kill the UI.
@@ -125,9 +133,9 @@ export default function App() {
   }, [fetchAll])
 
   if (loading) return <LoadingScreen />
-  if (error)   return <ErrorScreen message={error} onRetry={load} />
+  if (error) return <ErrorScreen message={error} onRetry={load} />
 
-  const latestEval  = evaluations[0] ?? null
+  const latestEval = evaluations[0] ?? null
   const latestScore = latestEval?.sri_composite ?? 0
 
   return (
@@ -147,6 +155,36 @@ export default function App() {
 
           {/* Spacer */}
           <div className="ml-auto flex items-center gap-4">
+            {/* Teams notification indicator + test button */}
+            {teamsStatus && (
+              teamsStatus.teams_configured && teamsStatus.teams_enabled ? (
+                <button
+                  id="teams-test-btn"
+                  onClick={async () => {
+                    const btn = document.getElementById('teams-test-btn')
+                    btn.textContent = '🔔 Sending…'
+                    try {
+                      const res = await testTeamsNotification()
+                      btn.textContent = res.status === 'sent' ? '🔔 ✓ Sent!' : '🔔 ✗ Failed'
+                    } catch {
+                      btn.textContent = '🔔 ✗ Failed'
+                    }
+                    setTimeout(() => { btn.textContent = '🔔 Teams Connected' }, 2000)
+                  }}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                  title="Click to send a test notification to Teams"
+                >
+                  🔔 Teams Connected
+                </button>
+              ) : (
+                <div
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-slate-700/50 border-slate-600/30 text-slate-500"
+                  title="Teams webhook not configured — set TEAMS_WEBHOOK_URL in .env"
+                >
+                  🔔 Teams Not configured
+                </div>
+              )
+            )}
             {/* Live indicator */}
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />

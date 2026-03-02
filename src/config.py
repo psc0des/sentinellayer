@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     azure_keyvault_url: str = ""
     azure_managed_identity_client_id: str = ""
 
+    # --- Microsoft Teams Notifications ---
+    teams_webhook_url: str = ""
+    teams_notifications_enabled: bool = True
+    dashboard_url: str = "http://localhost:5173"
+
     # --- SRI™ Thresholds ---
     sri_auto_approve_threshold: int = 25
     sri_human_review_threshold: int = 60

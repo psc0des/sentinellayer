@@ -1064,6 +1064,102 @@ async def cancel_scan(scan_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Endpoint 16 — Teams notification status
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/notification-status")
+async def notification_status() -> dict:
+    """Return the current Teams notification configuration status.
+
+    The dashboard header uses this to show a 🔔 indicator.
+    """
+    return {
+        "teams_configured": bool(settings.teams_webhook_url),
+        "teams_enabled": settings.teams_notifications_enabled,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 17 — send a test Teams notification
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/test-notification")
+async def test_notification() -> dict:
+    """Send a sample DENIED notification to the configured Teams webhook.
+
+    Useful for judges to verify the Teams integration works without running
+    a full governance evaluation.  Returns ``{"status": "sent"}`` on success,
+    or ``{"status": "skipped", "reason": "..."}`` if the webhook is not
+    configured.
+    """
+    from src.notifications.teams_notifier import send_teams_notification
+    from src.core.models import (
+        ActionTarget,
+        ActionType,
+        GovernanceVerdict,
+        ProposedAction,
+        SRIBreakdown,
+        SRIVerdict,
+        Urgency,
+    )
+
+    webhook_url = settings.teams_webhook_url
+    if not webhook_url:
+        return {"status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured"}
+    if not settings.teams_notifications_enabled:
+        return {"status": "skipped", "reason": "TEAMS_NOTIFICATIONS_ENABLED is false"}
+
+    # Build a sample DENIED verdict
+    sample_action = ProposedAction(
+        agent_id="cost-optimization-agent",
+        action_type=ActionType.DELETE_RESOURCE,
+        target=ActionTarget(
+            resource_id="/subscriptions/demo/resourceGroups/prod"
+            "/providers/Microsoft.Compute/virtualMachines/vm-dr-01",
+            resource_type="Microsoft.Compute/virtualMachines",
+            current_monthly_cost=847.0,
+        ),
+        reason="VM idle for 30 days — estimated savings $847/month. "
+               "This is a test notification from SentinelLayer.",
+        urgency=Urgency.HIGH,
+    )
+
+    sample_verdict = GovernanceVerdict(
+        action_id="test-notification-001",
+        timestamp=datetime.now(timezone.utc),
+        proposed_action=sample_action,
+        sentinel_risk_index=SRIBreakdown(
+            sri_infrastructure=65.0,
+            sri_policy=100.0,
+            sri_historical=62.0,
+            sri_cost=45.0,
+            sri_composite=77.0,
+        ),
+        decision=SRIVerdict.DENIED,
+        reason="DENIED — Critical policy violation: POL-DR-001 "
+               "(disaster-recovery protected resource). "
+               "SRI Composite 77.0 exceeds threshold 60.",
+        agent_results={
+            "policy_compliance": {
+                "violations": [
+                    {
+                        "policy_id": "POL-DR-001",
+                        "name": "Disaster Recovery Protection",
+                        "rule": "Cannot delete disaster-recovery tagged resources",
+                        "severity": "critical",
+                    }
+                ]
+            }
+        },
+    )
+
+    success = await send_teams_notification(sample_verdict, sample_action)
+    return {"status": "sent" if success else "failed"}
+
+
+# ---------------------------------------------------------------------------
 # Entry point — run with: python -m src.api.dashboard_api
 # ---------------------------------------------------------------------------
 

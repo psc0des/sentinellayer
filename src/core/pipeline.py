@@ -71,6 +71,7 @@ from src.governance_agents.blast_radius_agent import BlastRadiusAgent
 from src.governance_agents.financial_agent import FinancialImpactAgent
 from src.governance_agents.historical_agent import HistoricalPatternAgent
 from src.governance_agents.policy_agent import PolicyComplianceAgent
+from src.notifications.teams_notifier import send_teams_notification
 from src.operational_agents.cost_agent import CostOptimizationAgent
 from src.operational_agents.deploy_agent import DeployAgent
 from src.operational_agents.monitoring_agent import MonitoringAgent
@@ -226,6 +227,19 @@ class SentinelLayerPipeline:
             financial_result.sri_cost,
             action.agent_id,
         )
+
+        # ------------------------------------------------------------------
+        # Fire-and-forget Teams notification (Phase 17)
+        # ------------------------------------------------------------------
+        # For DENIED or ESCALATED verdicts, send a Teams notification
+        # asynchronously.  The task runs in the background — the pipeline
+        # returns the verdict immediately.  Errors are caught inside
+        # send_teams_notification() so they never affect governance.
+        # ------------------------------------------------------------------
+        try:
+            asyncio.create_task(send_teams_notification(verdict, action))
+        except Exception:
+            logger.debug("Teams notification task could not be created.", exc_info=True)
 
         return verdict
 
