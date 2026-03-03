@@ -65,29 +65,25 @@ async def verdict(pipeline):
 
 
 class TestRecord:
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     def test_creates_json_file(self, tracker, verdict):
         tracker.record(verdict)
-        files = list(tracker._dir.glob("*.json"))
+        files = list(tracker._cosmos._decisions_dir.glob("*.json"))
         assert len(files) == 1
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     def test_filename_is_action_id(self, tracker, verdict):
         tracker.record(verdict)
-        files = list(tracker._dir.glob("*.json"))
+        files = list(tracker._cosmos._decisions_dir.glob("*.json"))
         assert files[0].stem == verdict.action_id
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     def test_json_is_valid(self, tracker, verdict):
         tracker.record(verdict)
-        path = tracker._dir / f"{verdict.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(data, dict)
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     def test_required_fields_present(self, tracker, verdict):
         tracker.record(verdict)
-        path = tracker._dir / f"{verdict.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         required = {
             "action_id", "timestamp", "decision", "sri_composite",
@@ -97,44 +93,38 @@ class TestRecord:
         }
         assert required.issubset(data.keys())
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     async def test_decision_value_is_string(self, tracker, verdict):
         tracker.record(verdict)
-        path = tracker._dir / f"{verdict.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["decision"] in ("approved", "escalated", "denied")
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     async def test_sri_composite_is_float(self, tracker, verdict):
         tracker.record(verdict)
-        path = tracker._dir / f"{verdict.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(data["sri_composite"], float)
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     async def test_sri_breakdown_has_four_dimensions(self, tracker, verdict):
         tracker.record(verdict)
-        path = tracker._dir / f"{verdict.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         bd = data["sri_breakdown"]
         assert set(bd.keys()) == {"infrastructure", "policy", "historical", "cost"}
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     async def test_violations_is_list(self, tracker, verdict):
         tracker.record(verdict)
-        path = tracker._dir / f"{verdict.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(data["violations"], list)
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     async def test_multiple_records_create_multiple_files(self, tracker, pipeline):
         for _ in range(3):
             v = await pipeline.evaluate(_make_action())
             tracker.record(v)
-        files = list(tracker._dir.glob("*.json"))
+        files = list(tracker._cosmos._decisions_dir.glob("*.json"))
         assert len(files) == 3
 
-    @pytest.mark.xfail(reason="Phase 7 Cosmos DB migration — tracker._dir removed", strict=False)
     async def test_denied_verdict_has_violations(self, tracker, pipeline):
         """A DELETE on vm-23 should be DENIED with POL-DR-001 listed."""
         action = _make_action(
@@ -150,7 +140,7 @@ class TestRecord:
         )
         v = await pipeline.evaluate(action)
         tracker.record(v)
-        path = tracker._dir / f"{v.action_id}.json"
+        path = tracker._cosmos._decisions_dir / f"{v.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["decision"] == "denied"
         assert len(data["violations"]) >= 1

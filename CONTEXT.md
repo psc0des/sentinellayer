@@ -34,7 +34,9 @@ src/
 │   │                            #   get_resource_details, query_activity_log,
 │   │                            #   list_nsg_rules — used by all ops agents
 │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff (Phase 12)
-│   ├── resource_graph.py        # Azure Resource Graph (mock: seed_resources.json)
+│   ├── resource_graph.py        # Azure Resource Graph — live: KQL + _azure_enrich_topology()
+│   │                            #   (tags + NSG topology + cost_lookup); mock: seed_resources.json
+│   ├── cost_lookup.py           # Azure Retail Prices REST API — SKU→monthly cost; no auth ← NEW Phase 19
 │   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
 │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
@@ -164,10 +166,12 @@ RuriSkry (Layer 2 — independent second opinion)
     → Decision logged to audit trail
 ```
 
-**Current state (Phase 12 complete):** Ops agents now genuinely investigate real Azure
-data with GPT-4.1 before proposing. Each agent uses 5 generic tools from
-``src/infrastructure/azure_tools.py`` to query Resource Graph, Monitor metrics, NSG rules,
-and activity logs. See STATUS.md for the complete Phase 12 breakdown.
+**Current state (Phase 19 complete):** Ops agents query real Azure data with GPT-4.1 before
+proposing (5 generic tools from `azure_tools.py`). Governance agents (`BlastRadiusAgent`,
+`FinancialImpactAgent`) now also query Azure live in production — `ResourceGraphClient`
+infers dependency topology from tags and KQL network joins; `cost_lookup.py` fetches real
+SKU pricing from Azure Retail Prices API. Mock mode (`USE_LOCAL_MOCKS=true`) is unchanged
+for all tests. See STATUS.md for full phase breakdown.
 
 ## Important Files to Read First
 1. `src/core/models.py` — ALL Pydantic models. Every agent uses these.
@@ -186,6 +190,28 @@ and activity logs. See STATUS.md for the complete Phase 12 breakdown.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Phase 19 — Live Azure Topology for Governance Agents (complete)**
+
+- `src/infrastructure/cost_lookup.py` (NEW) — `get_sku_monthly_cost(sku, location)`: public Azure
+  Retail Prices API, no auth. Returns monthly USD (min hourly price × 730). Module-level `_cache`.
+- `src/infrastructure/resource_graph.py` — `_azure_enrich_topology(resource)` enriches live
+  resources with tag-based deps (`depends-on`, `governs`), KQL VM→NSG network join, NSG→VM
+  governs join, reverse depends-on scan, and `monthly_cost` from `cost_lookup`.
+- `src/governance_agents/blast_radius_agent.py` — `__init__` branched on
+  `_live = not use_local_mocks and bool(subscription_id) and use_live_topology`. Live mode
+  skips JSON, uses `ResourceGraphClient`. `_find_resource()`, `_detect_spofs()`,
+  `_get_affected_zones()` all route to `_rg_client` in live mode.
+- `src/governance_agents/financial_agent.py` — same branch pattern. Live `monthly_cost` from
+  enriched ResourceGraphClient dict replaces static JSON value.
+- `infrastructure/terraform-prod/main.tf` — `depends-on` + `governs` tags on 4 resources.
+- `src/config.py` — `use_live_topology: bool = False` (env var `USE_LIVE_TOPOLOGY=true`).
+  Explicit opt-in required to activate live Azure topology; default `false` keeps tests safe
+  even when `USE_LOCAL_MOCKS=false` + `AZURE_SUBSCRIPTION_ID` are set.
+- `tests/test_live_topology.py` (NEW) — 16 tests covering all new live-mode paths.
+- `tests/test_decision_tracker.py` — 10 `@pytest.mark.xfail` markers removed from `TestRecord`;
+  `tracker._dir` → `tracker._cosmos._decisions_dir` (stale since Phase 7 Cosmos migration).
+- **Test result: 460 passed, 0 failed** ✅
 
 **Phase 18 — Decision Explanation Engine (complete)**
 
@@ -317,7 +343,8 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
   was silently overriding `.env` because it always ran before dotenv loading).
 - **Test result: 420 passed, 10 xfailed, 0 failed** ✅
   (17 previously-xfailed dashboard tests promoted to passing after `_load_all`
-  fix; 10 remaining xfails are `TestRecord` tests about `tracker._dir`.)
+  fix; 10 remaining xfails were `TestRecord` tests about `tracker._dir` —
+  fully fixed in Phase 19 post-work: `tracker._dir` → `tracker._cosmos._decisions_dir`.)
 - MCP and direct Python pipeline continue to work unchanged.
 
 **Previous: Phase 9 — Async-First Refactor**

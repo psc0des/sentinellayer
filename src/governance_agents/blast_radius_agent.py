@@ -141,17 +141,6 @@ class BlastRadiusAgent:
         resources_path: str | Path | None = None,
         cfg=None,
     ) -> None:
-        path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
-        with open(path, encoding="utf-8") as fh:
-            data: dict = json.load(fh)
-
-        # Fast lookup: resource name → resource dict
-        self._resources: dict[str, dict] = {
-            r["name"]: r for r in data.get("resources", [])
-        }
-        # Directed dependency edges from the JSON
-        self._edges: list[dict] = data.get("dependency_edges", [])
-
         self._cfg = cfg or _default_settings
 
         # Is the framework (live LLM) enabled?
@@ -159,6 +148,30 @@ class BlastRadiusAgent:
             not self._cfg.use_local_mocks
             and bool(self._cfg.azure_openai_endpoint)
         )
+
+        _live = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_subscription_id)
+            and getattr(self._cfg, "use_live_topology", False)
+        )
+        if not _live:
+            # Mock / JSON mode: load seed_resources.json — all tests pass unchanged.
+            path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
+            with open(path, encoding="utf-8") as fh:
+                data: dict = json.load(fh)
+            self._resources: dict[str, dict] = {
+                r["name"]: r for r in data.get("resources", [])
+            }
+            self._edges: list[dict] = data.get("dependency_edges", [])
+            self._rg_client = None
+        else:
+            # Live topology mode (USE_LIVE_TOPOLOGY=true): lazy Azure queries.
+            # Topology (dependencies, dependents, governs) comes from the
+            # enriched resource dict returned by ResourceGraphClient.
+            from src.infrastructure.resource_graph import ResourceGraphClient
+            self._rg_client = ResourceGraphClient(cfg=self._cfg)
+            self._resources = {}   # not used in live mode
+            self._edges = []       # topology comes from enriched resource dict
 
     # ------------------------------------------------------------------
     # Public API
@@ -318,6 +331,9 @@ class BlastRadiusAgent:
     def _find_resource(self, resource_id: str) -> dict | None:
         """Look up a resource by name or the last segment of its Azure resource ID.
 
+        In live mode, queries Azure Resource Graph (with enriched topology).
+        In mock mode, looks up the in-memory dict loaded from seed JSON.
+
         Azure resource IDs follow the pattern::
 
             /subscriptions/{sub}/resourceGroups/{rg}/providers/{type}/{name}
@@ -325,6 +341,10 @@ class BlastRadiusAgent:
         So we first try matching the full string as a resource name, then fall
         back to splitting on ``/`` and using the final segment.
         """
+        if self._rg_client is not None:
+            # Live mode: query Azure Resource Graph with topology enrichment.
+            return self._rg_client.get_resource(resource_id)
+        # Mock mode: existing in-memory lookup.
         if resource_id in self._resources:
             return self._resources[resource_id]
         name = resource_id.split("/")[-1]
@@ -398,7 +418,11 @@ class BlastRadiusAgent:
             spofs.append(resource["name"])
 
         for name in affected_resources:
-            r = self._resources.get(name)
+            # In live mode self._resources is empty; fall back to Azure query.
+            if self._rg_client is not None:
+                r = self._rg_client.get_resource(name)
+            else:
+                r = self._resources.get(name)
             if r and r.get("tags", {}).get("criticality") == "critical":
                 if name not in spofs:
                     spofs.append(name)
@@ -417,7 +441,10 @@ class BlastRadiusAgent:
                 zones.append(loc)
 
         for name in affected_resources:
-            r = self._resources.get(name)
+            if self._rg_client is not None:
+                r = self._rg_client.get_resource(name)
+            else:
+                r = self._resources.get(name)
             if r:
                 loc = r.get("location")
                 if loc and loc not in zones:

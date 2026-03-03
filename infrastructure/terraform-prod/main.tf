@@ -122,6 +122,8 @@ resource "azurerm_network_security_group" "prod" {
   tags = merge(local.common_tags, {
     environment = "production"
     managed-by  = "platform-team"
+    # governs: VMs protected by this NSG — used by blast radius topology inference
+    governs     = "vm-dr-01,vm-web-01"
   })
 
   security_rule {
@@ -276,6 +278,9 @@ resource "azurerm_linux_virtual_machine" "dr01" {
     environment       = "production"
     owner             = "platform-team"
     cost-center       = "infrastructure"
+    # depends-on: resources this VM relies on (storage + NSG)
+    # picked up by ResourceGraphClient._azure_enrich_topology()
+    depends-on        = "ruriskryprod${var.suffix},nsg-east-prod"
   })
 }
 
@@ -331,6 +336,8 @@ resource "azurerm_linux_virtual_machine" "web01" {
     environment = "production"
     owner       = "web-team"
     cost-center = "frontend"
+    # depends-on: payment API + shared storage + NSG
+    depends-on  = "payment-api-prod-${var.suffix},ruriskryprod${var.suffix},nsg-east-prod"
   })
 }
 
@@ -396,6 +403,8 @@ resource "azurerm_linux_web_app" "payment_api" {
     tier        = "api"
     environment = "production"
     critical    = "true"
+    # depends-on: shared storage account
+    depends-on  = "ruriskryprod${var.suffix}"
   })
 }
 

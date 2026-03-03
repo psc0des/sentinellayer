@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     # If False but credentials are missing, each client falls back to mock automatically.
     use_local_mocks: bool = True
 
+    # --- Live topology queries (Phase 19) ---
+    # True  → BlastRadiusAgent and FinancialImpactAgent query Azure Resource Graph for
+    #          real dependency topology and SKU cost instead of data/seed_resources.json.
+    # False → governance agents always use the local JSON snapshot (default, safe for tests).
+    # Only effective when use_local_mocks=False AND azure_subscription_id is set.
+    # Env var: USE_LIVE_TOPOLOGY=true
+    use_live_topology: bool = False
+
     # --- Demo Mode ---
     # True → ops agents return 1-2 hardcoded realistic ProposedActions so the
     # full pipeline (SRI scoring, governance engine, audit trail) can be tested

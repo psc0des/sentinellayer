@@ -117,7 +117,7 @@ flowchart LR
 | Agent Orchestration | Microsoft Agent Framework (`agent-framework-core`) | Multi-agent coordination + GPT-4.1 tool calls |
 | Model Intelligence | Azure OpenAI Foundry — GPT-4.1 | LLM reasoning for each governance agent |
 | MCP Interception | FastMCP stdio server | Intercept actions from Claude Desktop / MCP hosts |
-| Infrastructure Graph | Azure Resource Graph | Real-time resource dependency data |
+| Infrastructure Graph | Azure Resource Graph + Azure Retail Prices API | Real-time dependency topology (KQL + tags) and SKU cost data |
 | Incident Search | Azure AI Search (BM25) | Historical incident similarity |
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
@@ -222,7 +222,7 @@ npm run dev
 ### Run Tests
 
 ```bash
-# Expected: 434 passed, 10 xfailed, 0 failed
+# Expected: 460 passed, 0 failed
 pytest tests/ -v
 ```
 
@@ -257,7 +257,8 @@ ruriskry/
 │   │   └── server.py
 │   ├── infrastructure/         # Azure service clients (mock fallback)
 │   │   ├── azure_tools.py           # 5 generic sync tools: Resource Graph, metrics, NSG, activity log
-│   │   ├── resource_graph.py
+│   │   ├── resource_graph.py        # Live: KQL topology enrichment (tags + NSG join + cost)
+│   │   ├── cost_lookup.py           # Azure Retail Prices API — SKU→monthly cost (no auth)
 │   │   ├── cosmos_client.py
 │   │   ├── search_client.py
 │   │   ├── openai_client.py

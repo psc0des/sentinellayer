@@ -40,7 +40,7 @@ locals {
 # 1. Resource Group
 # =============================================================================
 
-resource "azurerm_resource_group" "skry" {
+resource "azurerm_resource_group" "ruriskry" {
   name     = var.resource_group_name
   location = var.location
   tags     = local.common_tags
@@ -50,7 +50,7 @@ resource "azurerm_resource_group" "skry" {
 # 2. Log Analytics Workspace
 # =============================================================================
 
-resource "azurerm_log_analytics_workspace" "skry" {
+resource "azurerm_log_analytics_workspace" "ruriskry" {
   name                = "ruriskry-log-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
@@ -63,7 +63,7 @@ resource "azurerm_log_analytics_workspace" "skry" {
 # 3. Azure Key Vault
 # =============================================================================
 
-resource "azurerm_key_vault" "skry" {
+resource "azurerm_key_vault" "ruriskry" {
   name                = "ruriskry-kv-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
@@ -145,7 +145,7 @@ resource "azurerm_cognitive_deployment" "foundry_primary" {
 # 5. Azure AI Search
 # =============================================================================
 
-resource "azurerm_search_service" "skry" {
+resource "azurerm_search_service" "ruriskry" {
   name                = "ruriskry-search-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
@@ -161,7 +161,7 @@ resource "azurerm_search_service" "skry" {
 # 6. Cosmos DB (SQL API)
 # =============================================================================
 
-resource "azurerm_cosmosdb_account" "skry" {
+resource "azurerm_cosmosdb_account" "ruriskry" {
   name                = "ruriskry-cosmos-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = var.cosmos_location

@@ -169,14 +169,14 @@ class ResourceGraphClient:
     # ------------------------------------------------------------------
 
     def _azure_get_resource(self, resource_id: str) -> dict | None:
-        """Query Resource Graph for a single resource by name."""
+        """Query Resource Graph for a single resource by name, then enrich topology."""
         from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
 
         name = resource_id.split("/")[-1]
         kql = (
             f"Resources"
-            f" | where name == '{name}'"
-            f" | project id, name, type, location, tags"
+            f" | where name =~ '{name}'"
+            f" | project id, name, type, location, tags, sku, resourceGroup"
         )
         request = QueryRequest(
             subscriptions=[self._cfg.azure_subscription_id],
@@ -186,17 +186,16 @@ class ResourceGraphClient:
             response = self._rg_client.resources(request)
             if response.data:
                 row = response.data[0]
-                return {
+                resource = {
                     "id": row.get("id"),
                     "name": row.get("name"),
                     "type": row.get("type"),
                     "location": row.get("location"),
                     "tags": row.get("tags") or {},
-                    # Dependency edges are not in Resource Graph — would be
-                    # stored in Cosmos DB or resource tags in production.
-                    "dependencies": [],
-                    "dependents": [],
+                    "sku": row.get("sku") or {},
+                    "resource_group": row.get("resourceGroup", ""),
                 }
+                return self._azure_enrich_topology(resource)
         except Exception as exc:  # noqa: BLE001
             logger.error("ResourceGraphClient: Azure query failed: %s", exc)
         return None
@@ -205,25 +204,170 @@ class ResourceGraphClient:
         """Query Resource Graph for all resources in the subscription (max 1 000)."""
         from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
 
-        kql = "Resources | project id, name, type, location, tags | limit 1000"
+        kql = (
+            "Resources"
+            " | project id, name, type, location, tags, sku, resourceGroup"
+            " | limit 1000"
+        )
         request = QueryRequest(
             subscriptions=[self._cfg.azure_subscription_id],
             query=kql,
         )
         try:
             response = self._rg_client.resources(request)
-            return [
-                {
+            results = []
+            for row in (response.data or []):
+                resource = {
                     "id": row.get("id"),
                     "name": row.get("name"),
                     "type": row.get("type"),
                     "location": row.get("location"),
                     "tags": row.get("tags") or {},
-                    "dependencies": [],
-                    "dependents": [],
+                    "sku": row.get("sku") or {},
+                    "resource_group": row.get("resourceGroup", ""),
                 }
-                for row in (response.data or [])
-            ]
+                results.append(self._azure_enrich_topology(resource))
+            return results
         except Exception as exc:  # noqa: BLE001
             logger.error("ResourceGraphClient: Azure list failed: %s", exc)
             return []
+
+    def _azure_enrich_topology(self, resource: dict) -> dict:
+        """Add inferred topology fields to a live Azure resource dict.
+
+        Runs up to 4 lightweight KQL queries per resource to infer:
+
+        * ``dependencies`` — from ``depends-on`` tag + VM→NSG network join.
+        * ``dependents`` — reverse lookup: which other resources tag
+          ``depends-on`` pointing at this resource.
+        * ``governs`` — from ``governs`` tag (for NSGs) + NIC→VM join for NSGs.
+        * ``monthly_cost`` — from Azure Retail Prices API via ``cost_lookup``.
+
+        All KQL queries are wrapped in individual try/except blocks so a
+        single failure does not prevent the resource from being returned.
+
+        Args:
+            resource: Partially-built resource dict (must contain ``name``,
+                ``type``, ``id``, ``tags``, ``resource_group``).
+
+        Returns:
+            The same dict, mutated in-place with topology fields added.
+        """
+        from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
+        from src.infrastructure.cost_lookup import get_sku_monthly_cost
+
+        name = resource.get("name", "")
+        tags = resource.get("tags", {})
+        rg = resource.get("resource_group", "")
+        rid = resource.get("id", "")
+        rtype = (resource.get("type") or "").lower()
+
+        # ── 1. depends-on tag → dependencies ─────────────────────────────
+        depends_on_tag = tags.get("depends-on", "")
+        dependencies: list[str] = (
+            [d.strip() for d in depends_on_tag.split(",") if d.strip()]
+            if depends_on_tag
+            else []
+        )
+
+        # ── 2. governs tag → governs ──────────────────────────────────────
+        governs_tag = tags.get("governs", "")
+        governs: list[str] = (
+            [g.strip() for g in governs_tag.split(",") if g.strip()]
+            if governs_tag
+            else []
+        )
+
+        # ── 3. Network topology KQL (VMs only) → adds NSG to dependencies ─
+        if "microsoft.compute/virtualmachines" in rtype and name:
+            try:
+                kql = f"""
+Resources
+| where name =~ '{name}'
+| extend nicIds = properties.networkProfile.networkInterfaces
+| mv-expand nic = nicIds
+| extend nicId = tolower(tostring(nic.id))
+| join kind=leftouter (
+    Resources
+    | where type =~ 'microsoft.network/networkinterfaces'
+    | extend nsgId = tolower(tostring(properties.networkSecurityGroup.id))
+    | project id, nsgId
+) on $left.nicId == $right.id
+| extend nsgName = tostring(split(nsgId, '/')[8])
+| where isnotempty(nsgName)
+| project nsgName
+"""
+                req = QueryRequest(
+                    subscriptions=[self._cfg.azure_subscription_id], query=kql
+                )
+                resp = self._rg_client.resources(req)
+                for row in (resp.data or []):
+                    nsg_name = row.get("nsgName", "")
+                    if nsg_name and nsg_name not in dependencies:
+                        dependencies.append(nsg_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("enrich_topology: NSG KQL failed for %s: %s", name, exc)
+
+        # ── 4. NSG governs — which VMs sit behind this NSG ────────────────
+        if "microsoft.network/networksecuritygroups" in rtype and rid:
+            try:
+                kql = f"""
+Resources
+| where type =~ 'microsoft.network/networkinterfaces'
+| where resourceGroup =~ '{rg}'
+| where properties.networkSecurityGroup.id =~ '{rid}'
+| extend vmId = tostring(properties.virtualMachine.id)
+| where isnotempty(vmId)
+| extend vmName = tostring(split(vmId, '/')[8])
+| project vmName
+"""
+                req = QueryRequest(
+                    subscriptions=[self._cfg.azure_subscription_id], query=kql
+                )
+                resp = self._rg_client.resources(req)
+                for row in (resp.data or []):
+                    vm_name = row.get("vmName", "")
+                    if vm_name and vm_name not in governs:
+                        governs.append(vm_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("enrich_topology: NSG-governs KQL failed for %s: %s", name, exc)
+
+        # ── 5. Reverse lookup → dependents (who tags depends-on: {name}) ──
+        dependents: list[str] = []
+        if name and rg:
+            try:
+                kql = f"""
+Resources
+| where resourceGroup =~ '{rg}'
+| where tags['depends-on'] contains '{name}'
+| project name
+"""
+                req = QueryRequest(
+                    subscriptions=[self._cfg.azure_subscription_id], query=kql
+                )
+                resp = self._rg_client.resources(req)
+                for row in (resp.data or []):
+                    dep_name = row.get("name", "")
+                    if dep_name and dep_name != name:
+                        dependents.append(dep_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "enrich_topology: reverse-lookup KQL failed for %s: %s", name, exc
+                )
+
+        # ── 6. Monthly cost from Azure Retail Prices API ──────────────────
+        sku_name = (resource.get("sku") or {}).get("name", "")
+        location = resource.get("location", "")
+        monthly_cost = get_sku_monthly_cost(sku_name, location)
+
+        resource.update(
+            {
+                "dependencies": dependencies,
+                "dependents": dependents,
+                "governs": governs,
+                "services_hosted": [],
+                "consumers": [],
+                "monthly_cost": monthly_cost,
+            }
+        )
+        return resource

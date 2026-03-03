@@ -118,10 +118,10 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 | Agent | SRI Dimension | Data Source |
 |---|---|---|
-| `BlastRadiusAgent` | Infrastructure (0.30) | `seed_resources.json` — dependency graph |
+| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` — KQL topology (tag + NSG join) · **Mock:** `seed_resources.json` |
 | `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 6 governance rules |
 | `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` |
-| `FinancialImpactAgent` | Cost (0.20) | `seed_resources.json` — monthly cost data |
+| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · **Mock:** `seed_resources.json` |
 
 ### Operational Agents (the governed — propose actions)
 
@@ -154,6 +154,10 @@ org-specific assumptions. See the Two-Layer Intelligence Model section below.
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files
 and in-memory logic — no cloud connection needed.
+
+To activate live Azure topology queries for governance agents (Phase 19), also set
+`USE_LIVE_TOPOLOGY=true`. This third flag is required alongside `USE_LOCAL_MOCKS=false` and
+`AZURE_SUBSCRIPTION_ID` — defaulting to `false` keeps tests safe even in live-mode environments.
 
 ### Governed Resources (`infrastructure/terraform-prod/`)
 
@@ -377,7 +381,9 @@ src/
 │                              #   scan triggers, SSE stream, cancel, last-run,
 │                              #   notification-status, test-notification, explanation)
 ├── infrastructure/            # Azure clients with mock fallback
-│   └── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
+│   ├── azure_tools.py         # 5 sync tools: Resource Graph, metrics, NSG, activity log; mock fallbacks
+│   ├── resource_graph.py      # Live: _azure_enrich_topology() — tags + KQL topology + cost_lookup
+│   └── cost_lookup.py         # Azure Retail Prices API — SKU→monthly cost; no auth; module-level cache
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
 dashboard/
 └── src/components/

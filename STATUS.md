@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-02 (Phase 18 Decision Explanation Engine complete)
+**Last updated:** 2026-03-03 (Phase 19 Live Azure Topology complete)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -17,9 +17,9 @@
 | Core models (`models.py`) | ✅ Complete | — |
 | Governance engine (SRI scoring) | ✅ Complete | — |
 | Policy agent | ✅ Complete + tested | `data/policies.json` |
-| Blast radius agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
+| Blast radius agent | ✅ Complete + LLM reasoning + live topology | Live: `ResourceGraphClient` (KQL + tags) + GPT-4.1 · Mock: `seed_resources.json` |
 | Historical agent | ✅ Complete + live search | Azure AI Search (BM25) + GPT-4.1 |
-| Financial agent | ✅ Complete + LLM reasoning | `data/seed_resources.json` + GPT-4.1 |
+| Financial agent | ✅ Complete + LLM reasoning + live cost | Live: `ResourceGraphClient` + Azure Retail Prices API · Mock: `seed_resources.json` |
 | Operational agent: deploy-agent | ✅ Complete | `data/seed_resources.json` + Resource Graph + NSG rules |
 | Generic Azure tools (`azure_tools.py`) | ✅ Complete | `src/infrastructure/azure_tools.py` |
 | Two-layer intelligence (Phase 12) | ✅ Complete | ops agents + GPT-4.1 investigation |
@@ -30,6 +30,7 @@
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
 | Dashboard API | ✅ Complete | FastAPI REST (18 endpoints; scan runs durable; SSE live log; Teams status + test; explanation engine) |
 | Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
+| Live Azure topology (Phase 19) | ✅ Complete | `ResourceGraphClient._azure_enrich_topology()` — tag-based + KQL network topology; `cost_lookup.py` — Azure Retail Prices API; `USE_LIVE_TOPOLOGY=true` opt-in flag |
 | Decision explanation engine (Phase 18) | ✅ Complete | `src/core/explanation_engine.py` — counterfactual analysis, per-dimension factors, LLM summary |
 | Evaluation drilldown (Phase 18) | ✅ Complete | `EvaluationDrilldown.jsx` — 6-section full-page drilldown: SRI bars, explanation, counterfactuals, reasoning |
 | Agent scan triggers (Phase 13) | ✅ Complete | POST /api/scan/cost\|monitoring\|deploy\|all + GET status |
@@ -127,7 +128,50 @@
 - [x] Commit: `6fac593` — `feat(framework): rebuild all agents on Microsoft Agent Framework SDK`
 - [x] Learning: `learning/16-microsoft-agent-framework.md`
 
-### Phase 18 — Decision Explanation Engine & Counterfactual Analysis  ← LATEST
+### Phase 19 — Live Azure Topology for Governance Agents  ← LATEST
+
+**Problem:** `BlastRadiusAgent` and `FinancialImpactAgent` loaded `data/seed_resources.json`
+at startup and evaluated every live action against a static snapshot. In live mode, governance
+must query Azure *right now* to know actual blast radius and real monthly cost.
+
+**Solution:**
+- `src/infrastructure/cost_lookup.py` (NEW) — `get_sku_monthly_cost(sku, location)`. Queries
+  the **Azure Retail Prices REST API** (public, no auth, `httpx` already installed). Converts
+  min retail hourly price × 730 → monthly USD. Module-level `_cache` prevents repeated calls.
+- `src/infrastructure/resource_graph.py` — added `_azure_enrich_topology(resource) -> dict`.
+  Runs per-resource KQL queries to infer dependency edges from Azure directly:
+  1. `depends-on` tag → `dependencies` list
+  2. `governs` tag → `governs` list
+  3. VM → NIC → NSG join → adds NSG to `dependencies`
+  4. NSG → NIC → VM join → populates `governs` with governed VMs
+  5. Reverse depends-on scan → `dependents` list
+  6. `cost_lookup.get_sku_monthly_cost()` → `monthly_cost` field
+  `_azure_get_resource()` and `_azure_list_all()` both call it. Every KQL query wrapped in
+  `try/except` — topology failure never crashes governance.
+- `src/governance_agents/blast_radius_agent.py` — `__init__` branched on
+  `_live = not use_local_mocks and bool(subscription_id) and use_live_topology`:
+  JSON load when not live (unchanged); live → `ResourceGraphClient(cfg)`, no JSON.
+  `_find_resource()`, `_detect_spofs()`, `_get_affected_zones()` all route to `_rg_client`
+  in live mode.
+- `src/governance_agents/financial_agent.py` — same branch pattern. `_find_resource()` in
+  live mode returns dict with `monthly_cost` already populated by `_azure_enrich_topology`.
+- `infrastructure/terraform-prod/main.tf` — added `depends-on` and `governs` tags to all
+  4 governed resources so live tag-based inference works immediately after `terraform apply`.
+- `src/config.py` — `use_live_topology: bool = False` (env var `USE_LIVE_TOPOLOGY=true`).
+  Third gate required alongside `USE_LOCAL_MOCKS=false` + `AZURE_SUBSCRIPTION_ID`. Default
+  `false` prevents tests from making real Azure calls when subscription is configured.
+- `.env` / `.env.example` — `USE_LIVE_TOPOLOGY=true` added in the Mock vs Azure section.
+- `tests/test_live_topology.py` (NEW) — 16 tests: `TestCostLookup` (6),
+  `TestResourceGraphLiveEnrichment` (4), `TestBlastRadiusAgentLiveMode` (3),
+  `TestFinancialAgentLiveMode` (3). All mock Azure SDK; no credentials needed.
+  (`MagicMock` cfg objects auto-return truthy for `use_live_topology` → live branch tested.)
+- `tests/test_decision_tracker.py` — removed all 10 `@pytest.mark.xfail` decorators from
+  `TestRecord`; fixed `tracker._dir` → `tracker._cosmos._decisions_dir` (8 occurrences).
+  These tests were xfailed since Phase 7 Cosmos migration; now fully passing.
+- `azure-mgmt-resourcegraph==8.0.1` installed in venv (was in requirements.txt but missing).
+- **Test result: 460 passed, 0 failed** ✅ (+16 new + 10 formerly-xfailed now passing)
+
+### Phase 18 — Decision Explanation Engine & Counterfactual Analysis
 
 Every governance verdict now has a full explanability layer. Clicking any row in the Live
 Activity Feed opens a 6-section full-page drilldown: verdict header with SRI composite,
@@ -774,6 +818,7 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `src/governance_agents/policy_agent.py` | SRI:Policy — Agent Framework + `@tool` | Phase 8 |
 | `src/governance_agents/historical_agent.py` | SRI:Historical — Agent Framework + `@tool` | Phase 8 |
 | `src/governance_agents/financial_agent.py` | SRI:Cost — Agent Framework + `@tool` | Phase 8 |
+| `src/infrastructure/cost_lookup.py` | `get_sku_monthly_cost(sku, location)` — Azure Retail Prices API; module-level cache; None on failure | Phase 19 |
 | `src/infrastructure/azure_tools.py` | 5 generic sync Azure tools; `"current"` field in metrics; RuntimeError on live failure | Phase 15 |
 | `src/operational_agents/cost_agent.py` | FinOps proposals — 5 tools; `scan()` framework-only; `_scan_rules()` for tests | Phase 15 |
 | `src/operational_agents/monitoring_agent.py` | SRE anomaly detection — 5 tools; `scan()` framework-only; `_scan_rules()` for tests | Phase 15 |
@@ -782,7 +827,7 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `src/infrastructure/cosmos_client.py` | Cosmos DB read/write | Phase 6 |
 | `src/infrastructure/search_client.py` | Azure AI Search + index seeding | Phase 7 |
 | `src/infrastructure/secrets.py` | Key Vault secret resolution | Phase 6 |
-| `src/config.py` | All env vars + SRI thresholds + `default_resource_group` | Phase 15 |
+| `src/config.py` | All env vars + SRI thresholds + `default_resource_group` + `use_live_topology` | Phase 19 |
 | `data/policies.json` | 6 governance policies | Phase 2 |
 | `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
@@ -791,6 +836,12 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/core/scan_run_tracker.py` | Durable scan-run store — Cosmos / JSON; upsert, get, get_latest_by_agent_type | Phase 16 |
+| `src/governance_agents/blast_radius_agent.py` | live-mode branch in `__init__` + `_find_resource()` / `_detect_spofs()` / `_get_affected_zones()` | Phase 19 |
+| `src/governance_agents/financial_agent.py` | live-mode branch in `__init__` + `_find_resource()` | Phase 19 |
+| `src/infrastructure/resource_graph.py` | `_azure_enrich_topology()` — 5-step KQL topology + cost_lookup; `_azure_get_resource()` + `_azure_list_all()` call it | Phase 19 |
+| `tests/test_live_topology.py` | 16 tests — cost_lookup, ResourceGraph enrichment, blast-radius + financial live mode | Phase 19 |
+| `tests/test_decision_tracker.py` | 10 xfail markers removed; `tracker._dir` → `tracker._cosmos._decisions_dir` | Phase 19 fix |
+| `infrastructure/terraform-prod/main.tf` | `depends-on` + `governs` tags on 4 governed resources | Phase 19 |
 | `src/core/explanation_engine.py` | `DecisionExplainer` — factors, counterfactuals, LLM summary, module-level cache | Phase 18 |
 | `tests/test_explanation_engine.py` | 5 tests — denied/escalated/approved shapes, factor ordering, API endpoint round-trip | Phase 18 |
 | `src/api/dashboard_api.py` | FastAPI REST — 18 endpoints; durable scan store; SSE live log; cancel; last-run; Teams status + test; explanation | Phase 18 |

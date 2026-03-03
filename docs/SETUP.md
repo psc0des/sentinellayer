@@ -62,7 +62,7 @@ python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
-# Expected: 434 passed, 10 xfailed, 0 failed
+# Expected: 460 passed, 0 failed
 
 # 7a. Start RuriSkry — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server
@@ -172,6 +172,7 @@ fully computed regardless of mode.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `USE_LOCAL_MOCKS` | No | `true` | `true` = JSON files; `false` = live Azure |
+| `USE_LIVE_TOPOLOGY` | No | `false` | `true` = governance agents query Azure Resource Graph for real dependency topology and SKU cost (Phase 19). Only effective when `USE_LOCAL_MOCKS=false` and `AZURE_SUBSCRIPTION_ID` is set. |
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-41` | Model deployment name |
 | `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |

@@ -158,21 +158,34 @@ class FinancialImpactAgent:
         resources_path: str | Path | None = None,
         cfg=None,
     ) -> None:
-        path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
-        with open(path, encoding="utf-8") as fh:
-            data: dict = json.load(fh)
-
-        # Fast name → resource dict lookup
-        self._resources: dict[str, dict] = {
-            r["name"]: r for r in data.get("resources", [])
-        }
-
         self._cfg = cfg or _default_settings
 
         self._use_framework: bool = (
             not self._cfg.use_local_mocks
             and bool(self._cfg.azure_openai_endpoint)
         )
+
+        _live = (
+            not self._cfg.use_local_mocks
+            and bool(self._cfg.azure_subscription_id)
+            and getattr(self._cfg, "use_live_topology", False)
+        )
+        if not _live:
+            # Mock / JSON mode: load seed_resources.json — all tests pass unchanged.
+            path = Path(resources_path) if resources_path else _DEFAULT_RESOURCES_PATH
+            with open(path, encoding="utf-8") as fh:
+                data: dict = json.load(fh)
+            self._resources: dict[str, dict] = {
+                r["name"]: r for r in data.get("resources", [])
+            }
+            self._rg_client = None
+        else:
+            # Live topology mode (USE_LIVE_TOPOLOGY=true): lazy Azure queries.
+            # monthly_cost is populated by ResourceGraphClient._azure_enrich_topology()
+            # via cost_lookup.
+            from src.infrastructure.resource_graph import ResourceGraphClient
+            self._rg_client = ResourceGraphClient(cfg=self._cfg)
+            self._resources = {}  # not used in live mode
 
     # ------------------------------------------------------------------
     # Public API
@@ -316,7 +329,16 @@ class FinancialImpactAgent:
     # ------------------------------------------------------------------
 
     def _find_resource(self, resource_id: str) -> dict | None:
-        """Look up a resource by name or the last segment of its Azure resource ID."""
+        """Look up a resource by name or the last segment of its Azure resource ID.
+
+        In live mode, queries Azure Resource Graph (with cost data populated
+        via ``cost_lookup`` inside ``ResourceGraphClient._azure_enrich_topology``).
+        In mock mode, looks up the in-memory dict loaded from seed JSON.
+        """
+        if self._rg_client is not None:
+            # Live mode: resource dict includes monthly_cost from Retail Prices API.
+            return self._rg_client.get_resource(resource_id)
+        # Mock mode: existing in-memory lookup.
         if resource_id in self._resources:
             return self._resources[resource_id]
         name = resource_id.split("/")[-1]
