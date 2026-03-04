@@ -605,8 +605,9 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 
 ### Phase 10 — A2A Protocol
 - [x] `src/a2a/ruriskry_a2a_server.py` — `RuriSkryAgentExecutor(AgentExecutor)` routes
-  tasks through the governance pipeline; streams progress via `TaskUpdater.new_agent_message()`;
-  returns `GovernanceVerdict` as A2A artifact. Agent Card at `/.well-known/agent-card.json`
+  tasks through the governance pipeline; streams progress via `updater.new_agent_message()` +
+  `await updater.update_status(TaskState.working, msg)`; returns `GovernanceVerdict` as A2A
+  artifact. Agent Card at `/.well-known/agent-card.json`
   with 3 skills: `evaluate_action`, `query_decision_history`, `get_resource_risk_profile`.
 - [x] `src/a2a/operational_a2a_clients.py` — `CostAgentA2AClient`, `MonitoringAgentA2AClient`,
   `DeployAgentA2AClient` — each wraps the corresponding operational agent, uses
@@ -667,9 +668,9 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
 - [x] Learning: `learning/19-dashboard-a2a.md`
 
 ### TaskUpdater Async Await Fix (commit 5094313)
-- [x] `src/a2a/ruriskry_a2a_server.py` — Added `await` to all five `TaskUpdater`
-  calls in `RuriSkryAgentExecutor.execute()`. `submit()`, `start_work()`,
-  `add_artifact()`, and `complete()` are all `async def` in the a2a-sdk. Calling
+- [x] `src/a2a/ruriskry_a2a_server.py` — Added `await` to `submit()`,
+  `start_work()`, `add_artifact()`, and `complete()` in `RuriSkryAgentExecutor.execute()`.
+  These are all `async def` in the a2a-sdk. Calling
   them without `await` creates coroutine objects that Python silently discards
   (no error raised). The artifact was never enqueued → client stream received no
   `TaskArtifactUpdateEvent` → `verdict_json` stayed `None` → `send_action_to_skry`
@@ -679,6 +680,19 @@ Comprehensive correctness audit of Phase 12 and Phase 13.  All findings fixed.
   `updater_instance = MagicMock()` to `AsyncMock()`. `MagicMock` objects cannot be
   `await`ed; `AsyncMock` supports both sync calls and `await` automatically.
 - [x] **Test result: 398 passed, 10 xfailed, 0 failed** ✅ (20/20 A2A tests pass)
+
+### A2A SDK new_agent_message Sync API Fix (commit 2e061cb)
+- [x] `src/a2a/ruriskry_a2a_server.py` — `new_agent_message()` in a2a-sdk 0.3.24 is
+  **synchronous** — it only creates a `Message` object and does not enqueue it. Previous
+  code called `await updater.new_agent_message(...)` which raised
+  `TypeError: 'Message' object can't be awaited` at runtime. Fixed to two-step pattern:
+  `msg = updater.new_agent_message([Part(...)])` (sync) then
+  `await updater.update_status(TaskState.working, message=msg)` (async enqueue).
+  Extracted `_progress()` inner async helper to avoid repeating the pattern 5 times.
+  Added `TaskState` to imports from `a2a.types`.
+- [x] `demo_a2a.py` — replaced box-drawing Unicode characters (`━` `═`) with plain ASCII
+  (`-` `=`) to fix `UnicodeEncodeError` on Windows cp1252 consoles.
+- [x] **Test result: 505 passed, 0 failed** ✅
 
 ### AgentRegistry Cosmos Key + Demo Mock Fix (commit 3534d0e)
 - [x] `src/a2a/agent_registry.py` — `cosmos_key` now resolved before the `_is_mock`
@@ -917,7 +931,7 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `data/seed_incidents.json` | 7 past incidents (also in Azure Search) | Phase 3 |
 | `data/seed_resources.json` | Azure resource topology mock | Phase 2 |
 | `scripts/seed_data.py` | Index seed_incidents into Azure Search | Phase 5 |
-| `src/a2a/ruriskry_a2a_server.py` | A2A server — AgentCard + RuriSkryAgentExecutor + audit trail write; all TaskUpdater calls awaited | TaskUpdater fix |
+| `src/a2a/ruriskry_a2a_server.py` | A2A server — AgentCard + RuriSkryAgentExecutor + audit trail write; progress via `new_agent_message()` + `update_status(TaskState.working)`; async calls awaited | SDK sync fix |
 | `src/a2a/operational_a2a_clients.py` | A2A client wrappers — `httpx_client=`; SSE `.root.result` unwrap | SSE fix |
 | `src/a2a/agent_registry.py` | Tracks connected A2A agents + governance stats; cosmos_key guard matches CosmosDecisionClient | Registry fix |
 | `src/core/scan_run_tracker.py` | Durable scan-run store — Cosmos / JSON; upsert, get, get_latest_by_agent_type | Phase 16 |

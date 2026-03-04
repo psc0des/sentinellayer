@@ -345,9 +345,13 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
   the existing governance pipeline, streaming SSE progress via `TaskUpdater`.
   `DecisionTracker().record(verdict)` called after every A2A evaluation so
   decisions appear in `/api/evaluations`, `/api/metrics`, and Cosmos DB.
-  **All `TaskUpdater` calls are `async def` and must be awaited**: `submit()`,
-  `start_work()`, `add_artifact()`, and `complete()` — calling without `await`
-  silently drops them (coroutine created but never executed), so the artifact
+  **`TaskUpdater` API (a2a-sdk 0.3.24):** `submit()`, `start_work()`,
+  `add_artifact()`, and `complete()` are `async` — must be awaited.
+  `new_agent_message()` is **sync** — it only *creates* a `Message` object and
+  does not enqueue it. To stream a progress event use the two-step pattern:
+  `msg = updater.new_agent_message([Part(...)])` then
+  `await updater.update_status(TaskState.working, message=msg)`.
+  Calling without `await` silently drops async calls (coroutine never executed), so the artifact
   is never enqueued and the client stream receives no verdict.
 - `src/a2a/operational_a2a_clients.py` — Three A2A client wrappers
   (`CostAgentA2AClient`, `MonitoringAgentA2AClient`, `DeployAgentA2AClient`)
