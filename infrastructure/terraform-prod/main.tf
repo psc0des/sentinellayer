@@ -344,7 +344,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
 # =============================================================================
 # 8. Auto-Shutdown Schedules (cost management)
 # =============================================================================
-# Both VMs auto-shutdown at 02:00 IST (India Standard Time) every day.
+# Both VMs auto-shutdown at 20:30 UTC (= 02:00 IST) every day.
 # This prevents overnight charges while the VMs sit idle between demo runs.
 # Hourly cost depends on var.vm_size and region pricing.
 
@@ -352,8 +352,8 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "dr01" {
   virtual_machine_id    = azurerm_linux_virtual_machine.dr01.id
   location              = azurerm_resource_group.prod.location
   enabled               = true
-  daily_recurrence_time = "0200"
-  timezone              = "India Standard Time"
+  daily_recurrence_time = "2030"
+  timezone              = "UTC"
 
   notification_settings {
     enabled = false
@@ -364,8 +364,8 @@ resource "azurerm_dev_test_global_vm_shutdown_schedule" "web01" {
   virtual_machine_id    = azurerm_linux_virtual_machine.web01.id
   location              = azurerm_resource_group.prod.location
   enabled               = true
-  daily_recurrence_time = "0200"
-  timezone              = "India Standard Time"
+  daily_recurrence_time = "2030"
+  timezone              = "UTC"
 
   notification_settings {
     enabled = false
