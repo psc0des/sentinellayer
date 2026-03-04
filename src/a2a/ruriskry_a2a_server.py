@@ -35,7 +35,7 @@ from a2a.server.apps import A2AFastAPIApplication
 from a2a.server.events import EventQueue, InMemoryQueueManager
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill, Part, TextPart
+from a2a.types import AgentCapabilities, AgentCard, AgentSkill, Part, TaskState, TextPart
 from a2a.utils import new_agent_text_message
 
 from src.core.decision_tracker import DecisionTracker
@@ -124,22 +124,19 @@ class RuriSkryAgentExecutor(AgentExecutor):
             return
 
         # ── Stream progress — these are sent to the client via SSE ─────────
-        # new_agent_message() enqueues a TaskStatusUpdateEvent. Clients that
-        # called send_message_streaming() will receive each of these in order.
-        # Must be awaited (same as add_artifact / complete) — unawaited calls
-        # silently drop the coroutine and the event is never enqueued.
-        await updater.new_agent_message(
-            [Part(root=TextPart(kind="text", text="Evaluating blast radius..."))]
-        )
-        await updater.new_agent_message(
-            [Part(root=TextPart(kind="text", text="Checking policy compliance..."))]
-        )
-        await updater.new_agent_message(
-            [Part(root=TextPart(kind="text", text="Querying historical incidents..."))]
-        )
-        await updater.new_agent_message(
-            [Part(root=TextPart(kind="text", text="Calculating financial impact..."))]
-        )
+        # new_agent_message() creates a Message object (sync, no await).
+        # update_status() enqueues it as a TaskStatusUpdateEvent (async, must await).
+        # Clients that called send_message_streaming() receive each in order.
+        async def _progress(text: str) -> None:
+            msg = updater.new_agent_message(
+                [Part(root=TextPart(kind="text", text=text))]
+            )
+            await updater.update_status(TaskState.working, message=msg)
+
+        await _progress("Evaluating blast radius...")
+        await _progress("Checking policy compliance...")
+        await _progress("Querying historical incidents...")
+        await _progress("Calculating financial impact...")
 
         # ── Run the full governance pipeline (async, all 4 agents in parallel) ─
         verdict: GovernanceVerdict = await self._pipeline.evaluate(action)
@@ -154,16 +151,7 @@ class RuriSkryAgentExecutor(AgentExecutor):
         decision = verdict.decision.value.upper()
 
         # ── Stream final SRI summary ─────────────────────────────────────
-        await updater.new_agent_message(
-            [
-                Part(
-                    root=TextPart(
-                        kind="text",
-                        text=f"SRI Composite: {sri:.1f} → {decision}",
-                    )
-                )
-            ]
-        )
+        await _progress(f"SRI Composite: {sri:.1f} -> {decision}")
 
         # ── Return full GovernanceVerdict as an artifact ──────────────────
         # add_artifact() attaches the result payload to the task.

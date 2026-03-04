@@ -238,17 +238,17 @@ def _print_verdict(label: str, verdict: Any) -> None:
     sri = verdict.skry_risk_index
     llm_used = "Agent Framework Analysis (GPT-4.1):" in verdict.reason
     llm_label = "[GPT-4.1 active]" if llm_used else "[rule-based fallback — GPT-4.1 not used]"
-    print(f"\n{'━' * 60}")
-    print(f"  {label} — {verdict.decision.value.upper()}")
+    print(f"\n{'-' * 60}")
+    print(f"  {label} -- {verdict.decision.value.upper()}")
     print(f"  Resource : {verdict.proposed_action.target.resource_id}")
     print(f"  LLM      : {llm_label}")
-    print(f"  SRI™ Composite  : {sri.sri_composite:.1f}")
-    print(f"  ├─ Infrastructure : {sri.sri_infrastructure:.1f}")
-    print(f"  ├─ Policy         : {sri.sri_policy:.1f}")
-    print(f"  ├─ Historical     : {sri.sri_historical:.1f}")
-    print(f"  └─ Cost           : {sri.sri_cost:.1f}")
+    print(f"  SRI Composite  : {sri.sri_composite:.1f}")
+    print(f"    Infrastructure : {sri.sri_infrastructure:.1f}")
+    print(f"    Policy         : {sri.sri_policy:.1f}")
+    print(f"    Historical     : {sri.sri_historical:.1f}")
+    print(f"    Cost           : {sri.sri_cost:.1f}")
     print(f"  Reason : {verdict.reason[:120]}")
-    print(f"{'━' * 60}\n")
+    print(f"{'-' * 60}\n")
 
 
 def _print_registry_summary() -> None:
@@ -256,9 +256,9 @@ def _print_registry_summary() -> None:
     registry = AgentRegistry()
     agents = registry.get_connected_agents()
 
-    print("\n" + "═" * 60)
+    print("\n" + "=" * 60)
     print("  CONNECTED A2A AGENTS SUMMARY")
-    print("═" * 60)
+    print("=" * 60)
     for agent in agents:
         total = agent.get("total_actions_proposed", 0)
         approved = agent.get("approval_count", 0)
@@ -268,7 +268,7 @@ def _print_registry_summary() -> None:
         print(f"  Seen    : {agent.get('last_seen', 'N/A')}")
         print(f"  Actions : {total} total  ({approved} approved / {denied} denied / {escalated} escalated)")
         print()
-    print("═" * 60 + "\n")
+    print("=" * 60 + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +285,9 @@ async def main() -> None:
     3. Run three scenarios sequentially.
     4. Print the agent registry summary.
     """
-    print("\n" + "═" * 60)
-    print("  RuriSkry — A2A Protocol Demo (Phase 10)")
-    print("═" * 60)
+    print("\n" + "=" * 60)
+    print("  RuriSkry -- A2A Protocol Demo (Phase 10)")
+    print("=" * 60)
 
     # ── Start A2A server in a background thread ───────────────────────
     print(f"\nStarting RuriSkry A2A server on {_A2A_SERVER_URL} ...")
