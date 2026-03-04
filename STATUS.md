@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-04 (Phase 20 Async End-to-End Migration complete)
+**Last updated:** 2026-03-04 (Phase 20 Async End-to-End Migration complete + post-audit credential/fallback fixes)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -171,6 +171,19 @@ making concurrent evaluation effectively sequential (~1,100ms per evaluation ins
 - `tests/test_live_topology.py` — updated 2 live-mode tests to use `AsyncMock` for
   `get_resource_async` (previously used sync `get_resource` mock, now fails to await).
 - **Test result: 500 passed, 0 failed** ✅ (+34 new tests)
+
+**Post-Phase-20 Audit Fixes (testing team deep audit):**
+- `resource_graph.py` + `azure_tools.py`: all async client instantiation sites changed from
+  `azure.identity.DefaultAzureCredential` (sync) to `azure.identity.aio.DefaultAzureCredential`
+  (async). Async SDK clients call `await credential.get_token()` — a sync credential raises
+  `TypeError` on first real auth call.
+- `blast_radius_agent.py:293` + `financial_agent.py:302`: framework "tool not called" fallback
+  changed from `return self._evaluate_rules(action)` (sync, blocks event loop) to
+  `return await self._evaluate_rules_async(action)`.
+- `resource_graph.py`: added `async def aclose(self)` — closes `_async_rg_client` and releases
+  the aiohttp connection pool. Call at application shutdown to silence `ResourceWarning`.
+- `.gitignore`: `data/scans/` added alongside `data/decisions/` — both are runtime-generated
+  directories that should never be committed.
 
 ### Phase 19 — Live Azure Topology for Governance Agents
 

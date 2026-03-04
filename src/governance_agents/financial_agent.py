@@ -299,7 +299,8 @@ class FinancialImpactAgent:
                 **{**base.model_dump(), "reasoning": enriched_reasoning}
             )
 
-        return self._evaluate_rules(action)
+        # Tool was never called — return plain rule-based result (async to avoid blocking)
+        return await self._evaluate_rules_async(action)
 
     # ------------------------------------------------------------------
     # Async rule-based evaluation (Phase 20 — used when rg_client is set)

@@ -149,6 +149,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
+| GET | `/api/evaluations/{evaluation_id}/explanation` | Full decision explanation with counterfactual analysis |
 
 ### Query parameters for `GET /api/evaluations`
 

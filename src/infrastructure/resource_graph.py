@@ -93,19 +93,34 @@ class ResourceGraphClient:
             self._async_rg_client = None
         else:
             from azure.identity import DefaultAzureCredential  # type: ignore[import]
+            from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential  # type: ignore[import]
             from azure.mgmt.resourcegraph import ResourceGraphClient as AzRGClient  # type: ignore[import]
             from azure.mgmt.resourcegraph.aio import ResourceGraphClient as AsyncAzRGClient  # type: ignore[import]
 
             credential = DefaultAzureCredential()
             self._rg_client = AzRGClient(credential)
-            # Async client — same credential works; token acquisition is a fast
-            # local operation handled by the credential object.
-            self._async_rg_client = AsyncAzRGClient(credential)
+            # Async client requires an AsyncTokenCredential — use the .aio variant.
+            self._async_rg_client = AsyncAzRGClient(AsyncDefaultAzureCredential())
             self._resources = {}
             logger.info(
                 "ResourceGraphClient: connected (subscription=%s)",
                 self._cfg.azure_subscription_id,
             )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Close the async Azure SDK client and release its connection pool.
+
+        Call this when the ResourceGraphClient is no longer needed (e.g., at
+        application shutdown) to avoid ``ResourceWarning: unclosed client session``
+        log noise from the underlying aiohttp/httpx transport.
+        """
+        if self._async_rg_client is not None:
+            await self._async_rg_client.close()
+            self._async_rg_client = None
 
     # ------------------------------------------------------------------
     # Public API — synchronous

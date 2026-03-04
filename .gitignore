@@ -69,6 +69,7 @@ infrastructure/terraform-prod/.terraform.lock.hcl
 
 # Runtime-generated data (not source code)
 data/decisions/
+data/scans/
 
 # AI Agent Context (private)
 CLAUDE.md

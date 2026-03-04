@@ -81,8 +81,10 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 ## Key Design Decisions
 
-1. **Async-first** — all agent `evaluate()` / `scan()` methods are `async def`. The pipeline uses
-   `asyncio.gather()` so all 4 governance agents run concurrently without nested event loops.
+1. **Async end-to-end** — all agent `evaluate()` / `scan()` methods, all `@af.tool` callbacks,
+   and all Azure SDK calls are `async def`. The pipeline uses `asyncio.gather()` so all 4
+   governance agents run truly in parallel — no thread pool, no event-loop blocking. Topology
+   enrichment fans out 4 concurrent KQL queries + 1 HTTP cost lookup via `asyncio.gather()`.
    Safe under FastAPI, MCP server (FastMCP), and async test runners.
 
 2. **A2A as the network protocol layer** — `src/a2a/ruriskry_a2a_server.py` exposes
@@ -98,8 +100,11 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    `agent-framework-core==1.0.0rc2`). The LLM calls a deterministic `@af.tool`, then synthesises
    a human-readable reasoning narrative. Mock mode bypasses the framework entirely (no Azure needed).
 
-5. **DefaultAzureCredential** — used in all 7 agents. Works with `az login` locally and Managed
-   Identity in Azure — no code changes between environments.
+5. **DefaultAzureCredential (sync vs async)** — sync clients use `azure.identity.DefaultAzureCredential`;
+   async clients (`.aio.*` packages) use `azure.identity.aio.DefaultAzureCredential`. Both resolve
+   credentials the same way (`az login` locally, Managed Identity in Azure) — no code changes
+   between environments. Using the wrong variant causes `TypeError` when the async SDK client
+   tries to `await credential.get_token()` on a sync credential.
 
 6. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
    configurable thresholds in `src/config.py`.
@@ -168,7 +173,7 @@ agent actions — not the governance system itself.
 |---|---|---|
 | `vm-dr-01` | Linux VM (`var.vm_size`, default B2ls_v2) | DENIED — `disaster-recovery=true` policy |
 | `vm-web-01` | Linux VM (`var.vm_size`, default B2ls_v2) | APPROVED — safe CPU-triggered scale-up (cloud-init runs stress-ng cron) |
-| `payment-api-prod` | App Service B1 | Critical dependency (raises blast radius) |
+| `payment-api-prod` | App Service F1 (free) | Critical dependency (raises blast radius) |
 | `nsg-east-prod` | Network Security Group | ESCALATED — port 8080 open affects all governed VMs |
 | `ruriskryprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |
 
@@ -256,6 +261,82 @@ ProposedAction submitted with metric evidence
     ↓
 RuriSkry: SRI 11.0 → APPROVED  ✅
 ```
+
+---
+
+## Live Azure Topology (Phase 19)
+
+In live mode (`USE_LIVE_TOPOLOGY=true`), governance agents query Azure Resource Graph in
+real-time instead of loading static `seed_resources.json` snapshots.
+
+```
+BlastRadiusAgent / FinancialImpactAgent
+    │
+    └── _find_resource_async(resource_id)
+            │
+            └── ResourceGraphClient._azure_enrich_topology_async(resource)
+                    │
+                    ├── asyncio.gather(                        ← 4 queries + 1 HTTP in parallel
+                    │     KQL: VM → NIC → NSG join,
+                    │     KQL: NSG → NIC → VM join,
+                    │     KQL: reverse depends-on scan,
+                    │     HTTP: Azure Retail Prices API (SKU → monthly cost)
+                    │   )
+                    │
+                    ├── Tag parsing: depends-on → dependencies[], governs → governs[]
+                    │
+                    └── Returns enriched resource dict with:
+                          dependencies, dependents, governs, monthly_cost, os_type
+```
+
+**Key design decisions:**
+
+- **Tag-based dependency inference** — Azure resource tags (`depends-on`, `governs`) drive the
+  dependency graph. KQL network topology (VM→NIC→NSG joins) supplements tags automatically.
+- **OS-aware pricing** — `cost_lookup.py` queries the Azure Retail Prices REST API (public,
+  no auth) with Windows/Linux filtering. Cache key includes `sku::location::os_type`.
+- **KQL injection protection** — `_kql_escape()` escapes all user-supplied string literals
+  in KQL queries to prevent quote injection.
+- **Subscription-wide reverse lookup** — reverse depends-on scans are not scoped to a single
+  resource group, so cross-RG dependents are always detected.
+- **`async def aclose()`** — `ResourceGraphClient` exposes this method to close the async
+  SDK client's connection pool at application shutdown.
+
+Three flags must be set for live topology: `USE_LOCAL_MOCKS=false`, `AZURE_SUBSCRIPTION_ID`,
+and `USE_LIVE_TOPOLOGY=true`. Defaulting the third flag to `false` prevents tests from making
+real Azure calls even when a subscription is configured.
+
+---
+
+## Scan Durability & Real-Time Streaming (Phase 16)
+
+Agent scans are **durable** — they persist to Cosmos DB (live) or local JSON (mock) and
+survive server restarts. Real-time progress is streamed via SSE.
+
+```
+POST /api/scan/cost
+    ↓
+_run_agent_scan(scan_id, "cost", resource_group)     ← background asyncio task
+    │
+    ├── _persist_scan_record(scan_id, {status: "running"})     ← write-through cache
+    ├── agent.scan(resource_group)                             ← ops agent investigation
+    │   ├── event → asyncio.Queue (producer)                   ← 9 event types
+    │   └── pipeline.evaluate(proposal) for each proposal
+    ├── _persist_scan_record(scan_id, {status: "complete"})
+    │
+GET /api/scan/{id}/stream                            ← SSE consumer
+    └── reads from asyncio.Queue → yields Server-Sent Events
+        (late connections receive buffered events)
+```
+
+**Key design decisions:**
+
+- **Write-through cache** — `_persist_scan_record()` is called on every status change. The
+  in-memory `_scans` dict is the fast path; `ScanRunTracker` is the durable fallback.
+- **asyncio.Queue bridges producer↔consumer** — the background task pushes events; the SSE
+  generator awaits them. Events are buffered for late-connecting clients.
+- **Cancellation** — `PATCH /api/scan/{id}/cancel` sets a flag; the background task checks
+  it before each proposal evaluation and stops cleanly.
 
 ---
 
@@ -384,7 +465,12 @@ src/
 ├── infrastructure/            # Azure clients with mock fallback
 │   ├── azure_tools.py         # 5 sync tools + 5 async variants (*_async): Resource Graph, metrics, NSG, activity log; mock fallbacks
 │   ├── resource_graph.py      # Live: _azure_enrich_topology() — tags + KQL topology + cost_lookup
-│   └── cost_lookup.py         # Azure Retail Prices API — SKU→monthly cost; no auth; module-level cache
+│   ├── cost_lookup.py         # Azure Retail Prices API — SKU→monthly cost; no auth; module-level cache
+│   ├── llm_throttle.py        # asyncio.Semaphore + exponential backoff for Azure OpenAI rate limits
+│   ├── cosmos_client.py       # Cosmos DB decisions client (live: CosmosClient; mock: JSON files)
+│   ├── search_client.py       # Azure AI Search client (live: BM25 full-text; mock: keyword matching)
+│   ├── openai_client.py       # Azure OpenAI / GPT-4.1 client (live: Responses API; mock: canned string)
+│   └── secrets.py             # Key Vault secret resolver (env → KV → empty string)
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
 dashboard/
 └── src/components/

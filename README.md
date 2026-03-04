@@ -7,11 +7,9 @@
 [![Azure](https://img.shields.io/badge/cloud-Azure-0078D4.svg)](https://azure.microsoft.com)
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
-RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a supervisory intelligence layer.
+RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-<p align="center">
-  <img src="docs/architecture.png" alt="RuriSkry Architecture" width="800">
-</p>
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 500+ automated tests.
 
 ---
 
@@ -129,7 +127,31 @@ flowchart LR
 
 ## Key Features
 
-### 🔔 Teams Notifications (Phase 17)
+### Two-Layer Intelligence
+Operational agents aren't blind action-proposers — they query **real Azure data** (Resource
+Graph tags, Monitor metrics, NSG rules, activity logs) via GPT-4.1 before proposing. RuriSkry
+then provides an **independent second opinion** using 4 governance agents in parallel. The ops
+agent catches obvious risks; RuriSkry catches what the ops agent missed.
+
+### Live Azure Topology Analysis
+In live mode (`USE_LIVE_TOPOLOGY=true`), governance agents query **Azure Resource Graph in
+real-time** — no stale JSON snapshots. Tag-based dependency parsing (`depends-on`, `governs`),
+KQL VM-to-NSG network joins, reverse dependency scans, and live SKU cost from the Azure Retail
+Prices API. Every governance decision reflects the actual state of your infrastructure.
+
+### Fully Async Pipeline
+All 7 agents (4 governance + 3 operational) are **fully async end-to-end** — from `@af.tool`
+callbacks through Azure SDK clients. `asyncio.gather()` runs 4 governance agents truly in
+parallel; topology enrichment fans out 4 concurrent KQL queries + 1 HTTP cost lookup. Async
+Azure SDK clients use `azure.identity.aio.DefaultAzureCredential` for non-blocking auth.
+
+### Durable Scan Tracking + Real-Time SSE
+Agent scans are persisted to **Cosmos DB** (or local JSON) and survive server restarts.
+`GET /api/scan/{id}/stream` provides **Server-Sent Events** for real-time scan progress —
+9 event types from discovery through verdict. Late-connecting clients receive buffered events.
+Scans are cancellable via `PATCH /api/scan/{id}/cancel`.
+
+### Teams Notifications
 DENIED and ESCALATED verdicts trigger an instant **Microsoft Teams Adaptive Card** via
 Incoming Webhook — no one needs to watch the dashboard. The card shows the verdict badge,
 resource and agent info, SRI composite + 4-dimension breakdown, governance reason, top
@@ -139,11 +161,11 @@ policy violation, and a "View in Dashboard" button.
 - **Fire-and-forget** — never blocks or delays a governance decision
 - **Test button** in the dashboard header sends a realistic sample card
 
-### 🔍 Decision Explanation & Counterfactual Drilldown (Phase 18)
+### Decision Explanation & Counterfactual Drilldown
 Click any row in the Live Activity Feed to open a **6-section full-page drilldown**:
 
 1. **Verdict header** — SRI composite score, resource, agent, timestamp
-2. **SRI™ Dimensional Breakdown** — 4 weighted bars; ⭐ marks the primary factor
+2. **SRI™ Dimensional Breakdown** — 4 weighted bars; primary factor marked
 3. **Decision Explanation** — GPT-4.1 plain-English summary, risk highlights, policy violations
 4. **Counterfactual Analysis** — "what would change this outcome?" — 3 hypothetical scenarios
    with score transitions (e.g. `77.0 → 53.1 → ESCALATED`)
@@ -151,6 +173,11 @@ Click any row in the Live Activity Feed to open a **6-section full-page drilldow
 6. **Audit Trail** — full raw JSON, collapsible
 
 No extra setup needed — the explanation engine works in both mock and live mode.
+
+### LLM Rate Limiting
+All 7 agents call Azure OpenAI through `run_with_throttle()` — an `asyncio.Semaphore` +
+exponential backoff wrapper. Governance agents fall back to deterministic rule-based scoring
+on 429s; operational agents return `[]` (no false positives from stale seed data).
 
 ---
 
@@ -243,12 +270,13 @@ ruriskry/
 │   │   ├── historical_agent.py      # SRI:Historical
 │   │   └── financial_agent.py       # SRI:Cost
 │   ├── core/                   # Decision engine & tracking
+│   │   ├── models.py               # Pydantic data models (read first)
+│   │   ├── pipeline.py              # asyncio.gather() orchestration
 │   │   ├── governance_engine.py     # SRI™ scoring + verdicts
 │   │   ├── decision_tracker.py      # Cosmos DB audit trail (verdicts)
-│   │   ├── scan_run_tracker.py      # Cosmos DB / JSON scan-run store (Phase 16)
-│   │   ├── interception.py          # Action interception façade
-│   │   ├── pipeline.py              # asyncio.gather() orchestration
-│   │   └── models.py               # Pydantic data models (read first)
+│   │   ├── scan_run_tracker.py      # Cosmos DB / JSON scan-run store
+│   │   ├── explanation_engine.py    # Counterfactual analysis + LLM summary
+│   │   └── interception.py          # Action interception façade
 │   ├── a2a/                    # A2A Protocol layer (Phase 10)
 │   │   ├── ruriskry_a2a_server.py   # A2A server + Agent Card
 │   │   ├── operational_a2a_clients.py  # A2A client wrappers
@@ -259,16 +287,16 @@ ruriskry/
 │   │   ├── azure_tools.py           # 5 sync + 5 async (*_async) tools: Resource Graph, metrics, NSG, activity log
 │   │   ├── resource_graph.py        # Live: KQL topology enrichment (tags + NSG join + cost)
 │   │   ├── cost_lookup.py           # Azure Retail Prices API — SKU→monthly cost (no auth)
-│   │   ├── cosmos_client.py
-│   │   ├── search_client.py
-│   │   ├── openai_client.py
+│   │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff for LLM calls
+│   │   ├── cosmos_client.py         # Cosmos DB decisions client
+│   │   ├── search_client.py         # Azure AI Search client
+│   │   ├── openai_client.py         # Azure OpenAI / GPT-4.1 client
 │   │   └── secrets.py               # Key Vault secret resolver
 │   ├── notifications/          # Outbound alerting (Phase 17)
 │   │   └── teams_notifier.py        # Adaptive Card → Teams webhook on DENIED/ESCALATED
 │   └── api/                    # Dashboard REST endpoints
 │       └── dashboard_api.py         # 18 endpoints: scan triggers, SSE stream, cancel, last-run, alert webhook, Teams status/test, explanation
 ├── dashboard/                  # React + Vite governance dashboard
-├── functions/                  # Azure Functions triggers
 ├── data/                       # Seed data for demo
 │   ├── agents/                      # A2A agent registry (mock)
 │   ├── decisions/                   # Audit trail (mock)
@@ -307,11 +335,15 @@ POL-SEC-001 fires (high severity — NSG changes require security review), pushi
 
 ---
 
-## Hackathon
+## Origin
 
-**Event**: Microsoft AI Dev Days Hackathon 2026
-**Challenge**: Automate and Optimize Software Delivery — Leverage Agentic DevOps Principles
-**Timeline**: February 10 – March 15, 2026
+RuriSkry was created for the **Microsoft AI Dev Days Hackathon 2026** (Feb 10 – Mar 15, 2026),
+challenge track: *Automate and Optimize Software Delivery — Leverage Agentic DevOps Principles*.
+
+Since its hackathon origins, the project has matured into a production-grade governance engine
+with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
+durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI with counterfactual
+drilldowns, and a comprehensive 500-test suite.
 
 ---
 

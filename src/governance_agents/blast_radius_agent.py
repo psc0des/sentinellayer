@@ -289,8 +289,8 @@ class BlastRadiusAgent:
                 **{**base.model_dump(), "reasoning": enriched_reasoning}
             )
 
-        # Tool was never called — return plain rule-based result
-        return self._evaluate_rules(action)
+        # Tool was never called — return plain rule-based result (async to avoid blocking)
+        return await self._evaluate_rules_async(action)
 
     # ------------------------------------------------------------------
     # Deterministic rule-based evaluation (used in both modes)

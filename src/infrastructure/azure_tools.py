@@ -607,14 +607,13 @@ async def query_resource_graph_async(
         return _mock_query_resource_graph(kusto_query)
 
     try:
-        from azure.identity import DefaultAzureCredential  # type: ignore[import]
+        from azure.identity.aio import DefaultAzureCredential  # type: ignore[import]
         from azure.mgmt.resourcegraph.aio import ResourceGraphClient  # type: ignore[import]
         from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
         from src.config import settings
 
         sub_id = subscription_id or settings.azure_subscription_id
-        credential = DefaultAzureCredential()
-        async with ResourceGraphClient(credential) as client:
+        async with ResourceGraphClient(DefaultAzureCredential()) as client:
             request = QueryRequest(
                 subscriptions=[sub_id] if sub_id else [],
                 query=kusto_query,
@@ -652,11 +651,10 @@ async def query_metrics_async(
         return _mock_query_metrics(resource_id, metric_names, timespan)
 
     try:
-        from azure.identity import DefaultAzureCredential  # type: ignore[import]
+        from azure.identity.aio import DefaultAzureCredential  # type: ignore[import]
         from azure.monitor.query.aio import MetricsQueryClient  # type: ignore[import]
 
-        credential = DefaultAzureCredential()
-        async with MetricsQueryClient(credential) as client:
+        async with MetricsQueryClient(DefaultAzureCredential()) as client:
             result = await client.query_resource(
                 resource_uri=resource_id,
                 metric_names=metric_names,
@@ -733,7 +731,7 @@ async def query_activity_log_async(
         return _mock_activity_log(resource_group)
 
     try:
-        from azure.identity import DefaultAzureCredential  # type: ignore[import]
+        from azure.identity.aio import DefaultAzureCredential  # type: ignore[import]
         from azure.monitor.query.aio import LogsQueryClient  # type: ignore[import]
         from azure.monitor.query import LogsQueryStatus  # type: ignore[import]
         from src.config import settings
@@ -745,7 +743,6 @@ async def query_activity_log_async(
                 "Set this environment variable to the Log Analytics workspace ID."
             )
 
-        credential = DefaultAzureCredential()
         kql = (
             "AzureActivity "
             f"| where ResourceGroup =~ '{resource_group}' "
@@ -754,7 +751,7 @@ async def query_activity_log_async(
             "| project TimeGenerated, OperationNameValue, ActivityStatusValue, "
             "Caller, ResourceType, Resource, Level"
         )
-        async with LogsQueryClient(credential) as client:
+        async with LogsQueryClient(DefaultAzureCredential()) as client:
             result = await client.query_workspace(
                 workspace_id=workspace_id,
                 query=kql,

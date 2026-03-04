@@ -2,7 +2,9 @@
 > This file is the single source of truth for any AI coding agent working on this project.
 
 ## What Is This Project?
-RuriSkry is an AI Action Governance & Simulation Engine for the Microsoft AI Dev Days Hackathon 2026. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
+RuriSkry is a production-grade AI Action Governance & Simulation Engine. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
+
+Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 500+ automated tests.
 
 ## Project Structure
 ```
@@ -198,14 +200,17 @@ full phase breakdown.
 - `src/infrastructure/cost_lookup.py` — `_extract_monthly_cost(items, os_type)` shared helper
   (DRY: used by both sync + async paths). `get_sku_monthly_cost_async()` via `httpx.AsyncClient`;
   shares the same `_cache` dict with the sync version.
-- `src/infrastructure/resource_graph.py` — `_async_rg_client` (`azure.mgmt.resourcegraph.aio`);
-  `get_resource_async()`, `list_all_async()`, `_azure_enrich_topology_async()` which uses
-  `asyncio.gather()` for 4 concurrent KQL/HTTP calls.
+- `src/infrastructure/resource_graph.py` — `_async_rg_client` (`azure.mgmt.resourcegraph.aio`,
+  credential: `azure.identity.aio.DefaultAzureCredential`); `get_resource_async()`,
+  `list_all_async()`, `_azure_enrich_topology_async()` which uses `asyncio.gather()` for 4
+  concurrent KQL/HTTP calls. `async def aclose()` — closes the connection pool at shutdown.
 - `src/infrastructure/azure_tools.py` — 5 async variants: `query_resource_graph_async`,
   `query_metrics_async`, `get_resource_details_async`, `query_activity_log_async`,
-  `list_nsg_rules_async`. Mock mode unchanged.
+  `list_nsg_rules_async`. Each uses `azure.identity.aio.DefaultAzureCredential` (async
+  credential type required for `.aio` clients). Mock mode unchanged.
 - `src/governance_agents/blast_radius_agent.py` + `financial_agent.py` — `_evaluate_rules_async()`,
-  `_find_resource_async()`, and all helpers now `async def`; `@af.tool` callbacks `async def`.
+  `_find_resource_async()`, and all helpers now `async def`; `@af.tool` callbacks `async def`;
+  framework "tool not called" fallback → `await self._evaluate_rules_async(action)` (was sync).
 - `src/operational_agents/cost_agent.py`, `monitoring_agent.py`, `deploy_agent.py` — all
   `@af.tool` azure_tool callbacks `async def` + `await *_async()`. `propose_action` stays sync.
 - `tests/test_async_migration.py` (NEW) — 34 tests: cache sharing, `asyncio.gather` call count,
