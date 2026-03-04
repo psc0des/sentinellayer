@@ -208,7 +208,7 @@ class PolicyComplianceAgent:
                 "violations list, total_policies_checked, policies_passed, and reasoning."
             ),
         )
-        def evaluate_policy_rules(action_json: str, metadata_json: str = "{}") -> str:
+        async def evaluate_policy_rules(action_json: str, metadata_json: str = "{}") -> str:
             """Check all governance policies against the proposed action."""
             try:
                 a = ProposedAction.model_validate_json(action_json)

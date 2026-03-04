@@ -189,6 +189,15 @@ class FinancialImpactAgent:
             self._resources = {}  # not used in live mode
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Release async Azure SDK resources (aiohttp connection pool)."""
+        if self._rg_client is not None:
+            await self._rg_client.aclose()
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 

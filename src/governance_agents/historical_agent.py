@@ -240,13 +240,13 @@ class HistoricalPatternAgent:
                 "and reasoning."
             ),
         )
-        def evaluate_historical_rules(action_json: str) -> str:
+        async def evaluate_historical_rules(action_json: str) -> str:
             """Match the action against historical incident records."""
             try:
                 a = ProposedAction.model_validate_json(action_json)
             except Exception:
                 a = action
-            r = self._evaluate_rules(a)
+            r = await self._evaluate_rules_async(a)
             result_holder.append(r)
             return r.model_dump_json()
 
@@ -274,6 +274,29 @@ class HistoricalPatternAgent:
                 **{**base.model_dump(), "reasoning": enriched_reasoning}
             )
 
+        # Tool was never called — return plain rule-based result (async to avoid blocking)
+        return await self._evaluate_rules_async(action)
+
+    # ------------------------------------------------------------------
+    # Async rule-based evaluation (Phase 20 fix — avoids blocking event loop)
+    # ------------------------------------------------------------------
+
+    async def _evaluate_rules_async(self, action: ProposedAction) -> HistoricalResult:
+        """Async variant of :meth:`_evaluate_rules` — offloads Azure AI Search I/O.
+
+        In live mode, ``search_incidents()`` is a blocking network call. Running it
+        directly on the event loop would block all concurrent ``asyncio.gather()``
+        governance agents. We offload it to a thread pool via ``asyncio.to_thread()``.
+
+        In mock mode, the evaluation is pure in-memory computation so we call
+        ``_evaluate_rules()`` directly (no thread overhead needed).
+        """
+        import asyncio
+
+        if not self._search.is_mock:
+            # Live mode: Azure AI Search call — offload to thread pool
+            return await asyncio.to_thread(self._evaluate_rules, action)
+        # Mock mode: pure computation, no I/O — safe to call synchronously
         return self._evaluate_rules(action)
 
     # ------------------------------------------------------------------

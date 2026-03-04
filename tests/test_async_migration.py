@@ -531,6 +531,134 @@ class TestGovernanceAgentAsyncTools:
                 f"evaluate_financial_rules should be async def, got: {type(financial_tool)}"
             )
 
+    async def test_historical_tool_is_async(self):
+        """The evaluate_historical_rules @af.tool callback is an async coroutine function."""
+        from src.governance_agents.historical_agent import HistoricalPatternAgent
+
+        cfg = self._make_live_cfg()
+
+        mock_af_module = MagicMock()
+        mock_af_module.tool = MagicMock(side_effect=lambda **kwargs: (lambda f: f))
+
+        mock_openai_client = MagicMock()
+        mock_agent = AsyncMock()
+
+        tool_func_holder: list = []
+
+        def capture_as_agent(name, instructions, tools):
+            tool_func_holder.extend(tools)
+            return mock_agent
+
+        mock_openai_client.as_agent = capture_as_agent
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "agent_framework": mock_af_module,
+                "agent_framework.openai": MagicMock(
+                    OpenAIResponsesClient=MagicMock(return_value=mock_openai_client)
+                ),
+                "azure.identity": MagicMock(
+                    DefaultAzureCredential=MagicMock,
+                    get_bearer_token_provider=MagicMock(return_value=MagicMock()),
+                ),
+                "openai": MagicMock(AsyncAzureOpenAI=MagicMock),
+            },
+        ):
+            agent = HistoricalPatternAgent(cfg=cfg)
+
+            with patch(
+                "src.infrastructure.llm_throttle.run_with_throttle",
+                new=AsyncMock(return_value=MagicMock(text="analysis")),
+            ):
+                from src.core.models import (
+                    ActionTarget, ActionType, ProposedAction, Urgency
+                )
+                action = ProposedAction(
+                    agent_id="test",
+                    action_type=ActionType.RESTART_SERVICE,
+                    target=ActionTarget(
+                        resource_id="payment-api",
+                        resource_type="Microsoft.Web/sites",
+                    ),
+                    reason="test",
+                    urgency=Urgency.LOW,
+                )
+                try:
+                    await agent._evaluate_with_framework(action)
+                except Exception:
+                    pass
+
+        if tool_func_holder:
+            hist_tool = tool_func_holder[0]
+            assert inspect.iscoroutinefunction(hist_tool), (
+                f"evaluate_historical_rules should be async def, got: {type(hist_tool)}"
+            )
+
+    async def test_policy_tool_is_async(self):
+        """The evaluate_policy_rules @af.tool callback is an async coroutine function."""
+        from src.governance_agents.policy_agent import PolicyComplianceAgent
+
+        cfg = self._make_live_cfg()
+
+        mock_af_module = MagicMock()
+        mock_af_module.tool = MagicMock(side_effect=lambda **kwargs: (lambda f: f))
+
+        mock_openai_client = MagicMock()
+        mock_agent = AsyncMock()
+
+        tool_func_holder: list = []
+
+        def capture_as_agent(name, instructions, tools):
+            tool_func_holder.extend(tools)
+            return mock_agent
+
+        mock_openai_client.as_agent = capture_as_agent
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "agent_framework": mock_af_module,
+                "agent_framework.openai": MagicMock(
+                    OpenAIResponsesClient=MagicMock(return_value=mock_openai_client)
+                ),
+                "azure.identity": MagicMock(
+                    DefaultAzureCredential=MagicMock,
+                    get_bearer_token_provider=MagicMock(return_value=MagicMock()),
+                ),
+                "openai": MagicMock(AsyncAzureOpenAI=MagicMock),
+            },
+        ):
+            agent = PolicyComplianceAgent(cfg=cfg)
+
+            with patch(
+                "src.infrastructure.llm_throttle.run_with_throttle",
+                new=AsyncMock(return_value=MagicMock(text="analysis")),
+            ):
+                from src.core.models import (
+                    ActionTarget, ActionType, ProposedAction, Urgency
+                )
+                action = ProposedAction(
+                    agent_id="test",
+                    action_type=ActionType.MODIFY_NSG,
+                    target=ActionTarget(
+                        resource_id="nsg-east",
+                        resource_type="Microsoft.Network/networkSecurityGroups",
+                    ),
+                    reason="test",
+                    urgency=Urgency.LOW,
+                )
+                try:
+                    await agent._evaluate_with_framework(action)
+                except Exception:
+                    pass
+
+        if tool_func_holder:
+            policy_tool = tool_func_holder[0]
+            assert inspect.iscoroutinefunction(policy_tool), (
+                f"evaluate_policy_rules should be async def, got: {type(policy_tool)}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # 5. Ops agents — @af.tool callbacks must be async def
@@ -756,3 +884,34 @@ class TestAsyncHelperMethods:
             assert inspect.iscoroutinefunction(getattr(at, fn_name)), (
                 f"azure_tools.{fn_name} should be async def"
             )
+
+    def test_blast_radius_has_aclose(self):
+        """BlastRadiusAgent exposes async aclose() for connection pool cleanup."""
+        from src.governance_agents.blast_radius_agent import BlastRadiusAgent
+
+        assert hasattr(BlastRadiusAgent, "aclose"), "BlastRadiusAgent missing aclose()"
+        assert inspect.iscoroutinefunction(BlastRadiusAgent.aclose), (
+            "BlastRadiusAgent.aclose should be async def"
+        )
+
+    def test_financial_agent_has_aclose(self):
+        """FinancialImpactAgent exposes async aclose() for connection pool cleanup."""
+        from src.governance_agents.financial_agent import FinancialImpactAgent
+
+        assert hasattr(FinancialImpactAgent, "aclose"), (
+            "FinancialImpactAgent missing aclose()"
+        )
+        assert inspect.iscoroutinefunction(FinancialImpactAgent.aclose), (
+            "FinancialImpactAgent.aclose should be async def"
+        )
+
+    def test_historical_agent_has_async_rules(self):
+        """HistoricalPatternAgent has _evaluate_rules_async helper."""
+        from src.governance_agents.historical_agent import HistoricalPatternAgent
+
+        assert hasattr(HistoricalPatternAgent, "_evaluate_rules_async"), (
+            "HistoricalPatternAgent missing _evaluate_rules_async"
+        )
+        assert inspect.iscoroutinefunction(HistoricalPatternAgent._evaluate_rules_async), (
+            "HistoricalPatternAgent._evaluate_rules_async should be async def"
+        )

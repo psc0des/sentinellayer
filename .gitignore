@@ -73,6 +73,7 @@ data/scans/
 
 # AI Agent Context (private)
 CLAUDE.md
+.claude/
 
 # Learning notes (personal)
 learning/
