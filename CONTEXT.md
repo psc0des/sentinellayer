@@ -213,9 +213,9 @@ instead of directly modifying Azure resources, which would cause IaC state drift
 verdicts get dashboard HITL buttons (Approve / Dismiss). IaC detection via Azure tags
 (`managed_by=terraform`). See `Adding-Terraform-Feature.md` for full implementation guide.
 
-New files (planned): `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
-`tests/test_execution_gateway.py`. New endpoints: `GET /api/execution/{action_id}`,
-`GET /api/execution/pending-reviews`, `POST /api/execution/{id}/approve`,
+New files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
+`tests/test_execution_gateway.py`. New endpoints: `GET /api/execution/pending-reviews`,
+`GET /api/execution/by-action/{action_id}`, `POST /api/execution/{id}/approve`,
 `POST /api/execution/{id}/dismiss`. New env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`,
 `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`.
 

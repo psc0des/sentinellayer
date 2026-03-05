@@ -397,7 +397,7 @@ tags = {
 - **Lifecycle tracking** — `ExecutionRecord` tracks: pending → pr_created → pr_merged → applied
 
 **New files:** `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
-**New endpoints:** `GET /api/execution/{action_id}`, `GET /api/execution/pending-reviews`,
+**New endpoints:** `GET /api/execution/pending-reviews`, `GET /api/execution/by-action/{action_id}`,
 `POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`
 **New env vars:** `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`
 **Implementation guide:** `Adding-Terraform-Feature.md`

@@ -75,6 +75,13 @@ def _get_resource_tags(resource_id: str) -> dict[str, str]:
 
     Returns an empty dict if the resource is not found (safe default — APPROVED
     verdicts will route to manual_required).
+
+    Design note: this currently reads from seed_resources.json (mock mode) only.
+    Resources not present in that file will always return empty tags, causing
+    APPROVED verdicts to route to manual_required regardless of their real Azure
+    tags. For full environment-agnosticism, extend this function to also query
+    Azure Resource Graph when USE_LOCAL_MOCKS=false (same pattern as
+    resource_graph.py::_azure_get_resource).
     """
     global _resource_graph_cache
     if _resource_graph_cache is None:
