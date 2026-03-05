@@ -150,10 +150,10 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
 | GET | `/api/evaluations/{evaluation_id}/explanation` | Full decision explanation with counterfactual analysis |
-| GET | `/api/execution/pending-reviews` | List ESCALATED verdicts awaiting human review (Phase 21) |
-| GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict (Phase 21) |
-| POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict (Phase 21) |
-| POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict (Phase 21) |
+| GET | `/api/execution/pending-reviews` | List ESCALATED verdicts awaiting human review |
+| GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict |
+| POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
+| POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
 
 ### Query parameters for `GET /api/evaluations`
 
@@ -496,7 +496,7 @@ Unknown agent names return an empty `no_data` response (not 404).
 
 ---
 
-## Execution Gateway Endpoints (Phase 21)
+## Execution Gateway Endpoints
 
 These endpoints manage the IaC-safe execution lifecycle for governance verdicts.
 

@@ -66,38 +66,57 @@ logger = logging.getLogger(__name__)
 _resource_graph_cache: dict[str, dict] | None = None
 
 
-def _get_resource_tags(resource_id: str) -> dict[str, str]:
-    """Look up a resource's tags from seed_resources.json by name or full ID.
-
-    Used by _run_agent_scan() to pass real IaC tags to the ExecutionGateway so
-    it can correctly detect terraform-managed resources and route APPROVED verdicts
-    to PR creation instead of manual_required.
-
-    Returns an empty dict if the resource is not found (safe default — APPROVED
-    verdicts will route to manual_required).
-
-    Design note: this currently reads from seed_resources.json (mock mode) only.
-    Resources not present in that file will always return empty tags, causing
-    APPROVED verdicts to route to manual_required regardless of their real Azure
-    tags. For full environment-agnosticism, extend this function to also query
-    Azure Resource Graph when USE_LOCAL_MOCKS=false (same pattern as
-    resource_graph.py::_azure_get_resource).
-    """
+def _load_seed_cache() -> dict[str, dict]:
+    """Load seed_resources.json into a name-keyed dict (used as fallback)."""
     global _resource_graph_cache
     if _resource_graph_cache is None:
         try:
             from pathlib import Path  # noqa: PLC0415
-            seed_path = Path(__file__).parent.parent.parent / "data" / "seed_resources.json"
             import json as _json  # noqa: PLC0415
+            seed_path = Path(__file__).parent.parent.parent / "data" / "seed_resources.json"
             data = _json.loads(seed_path.read_text(encoding="utf-8"))
             _resource_graph_cache = {r["name"]: r for r in data.get("resources", [])}
         except Exception as exc:  # noqa: BLE001
             logger.warning("dashboard_api: could not load seed_resources.json — %s", exc)
             _resource_graph_cache = {}
+    return _resource_graph_cache
 
-    # Try exact match, then last path segment (for full Azure resource IDs)
+
+async def _get_resource_tags(resource_id: str) -> dict[str, str]:
+    """Look up a resource's tags by name or full ARM resource ID.
+
+    In live mode (USE_LOCAL_MOCKS=false + subscription configured): queries
+    Azure Resource Graph so tags on real resources are reflected immediately —
+    APPROVED verdicts on IaC-managed resources route to Terraform PR creation
+    instead of manual_required.
+
+    In mock mode (or when the live query fails): falls back to seed_resources.json.
+
+    Returns an empty dict if the resource is not found (safe default — APPROVED
+    verdicts will route to manual_required).
+    """
+    # ------------------------------------------------------------------
+    # Live mode: query Azure Resource Graph
+    # ------------------------------------------------------------------
+    if not settings.use_local_mocks and settings.azure_subscription_id:
+        try:
+            from src.infrastructure.resource_graph import ResourceGraphClient  # noqa: PLC0415
+            client = ResourceGraphClient()
+            resource = await client.get_resource_async(resource_id)
+            if resource is not None:
+                return resource.get("tags") or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "dashboard_api: live tag lookup failed for %s — falling back to seed (%s)",
+                resource_id, exc,
+            )
+
+    # ------------------------------------------------------------------
+    # Mock / fallback: read from seed_resources.json
+    # ------------------------------------------------------------------
+    cache = _load_seed_cache()
     name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
-    resource = _resource_graph_cache.get(resource_id) or _resource_graph_cache.get(name)
+    resource = cache.get(resource_id) or cache.get(name)
     return resource.get("tags", {}) if resource else {}
 
 # ---------------------------------------------------------------------------
@@ -374,7 +393,7 @@ async def _run_agent_scan(
             # APPROVED verdicts route to Terraform PR, not manual_required.
             # Wrapped in try/except — gateway failure must never break the scan.
             try:
-                resource_tags = _get_resource_tags(action.target.resource_id)
+                resource_tags = await _get_resource_tags(action.target.resource_id)
                 exec_record = await _get_execution_gateway().process_verdict(
                     verdict, resource_tags
                 )

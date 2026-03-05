@@ -443,3 +443,113 @@ class TestScanDurabilityAndStreaming:
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# _get_resource_tags — mock path and live path
+# ---------------------------------------------------------------------------
+
+
+class TestGetResourceTags:
+    """Tests for the async _get_resource_tags() helper (Phase 21 fix)."""
+
+    def setup_method(self):
+        """Reset the module-level seed cache before each test."""
+        import src.api.dashboard_api as api_module
+        api_module._resource_graph_cache = None
+
+    def test_mock_mode_returns_tags_from_seed_by_name(self, monkeypatch):
+        """Mock mode: returns tags when resource is found in seed_resources.json."""
+        import src.api.dashboard_api as api_module
+
+        monkeypatch.setattr(api_module.settings, "use_local_mocks", True)
+        tags = asyncio.run(api_module._get_resource_tags("vm-dr-01"))
+        # vm-dr-01 has tags in seed_resources.json (disaster-recovery: true etc.)
+        assert isinstance(tags, dict)
+
+    def test_mock_mode_returns_empty_for_unknown_resource(self, monkeypatch):
+        """Mock mode: returns {} for resources not in seed file."""
+        import src.api.dashboard_api as api_module
+
+        monkeypatch.setattr(api_module.settings, "use_local_mocks", True)
+        tags = asyncio.run(api_module._get_resource_tags("nonexistent-vm-xyz"))
+        assert tags == {}
+
+    def test_mock_mode_resolves_full_arm_id_by_last_segment(self, monkeypatch):
+        """Full ARM IDs are resolved by their last path segment."""
+        import src.api.dashboard_api as api_module
+
+        monkeypatch.setattr(api_module.settings, "use_local_mocks", True)
+        arm_id = "/subscriptions/demo/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-dr-01"
+        tags = asyncio.run(api_module._get_resource_tags(arm_id))
+        assert isinstance(tags, dict)
+
+    def test_live_mode_uses_resource_graph_client(self, monkeypatch):
+        """Live mode: delegates to ResourceGraphClient.get_resource_async()."""
+        import src.api.dashboard_api as api_module
+        from unittest.mock import AsyncMock, MagicMock
+
+        monkeypatch.setattr(api_module.settings, "use_local_mocks", False)
+        monkeypatch.setattr(api_module.settings, "azure_subscription_id", "sub-live-test")
+
+        mock_client = MagicMock()
+        mock_client.get_resource_async = AsyncMock(
+            return_value={"name": "vm-live", "tags": {"iac_repo": "org/repo", "iac_path": "infra/"}}
+        )
+        mock_rg_module = MagicMock()
+        mock_rg_module.ResourceGraphClient.return_value = mock_client
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "src.infrastructure.resource_graph",
+            mock_rg_module,
+        )
+
+        tags = asyncio.run(api_module._get_resource_tags("vm-live"))
+        assert tags == {"iac_repo": "org/repo", "iac_path": "infra/"}
+        mock_client.get_resource_async.assert_awaited_once_with("vm-live")
+
+    def test_live_mode_falls_back_to_seed_on_exception(self, monkeypatch):
+        """Live mode: falls back to seed_resources.json when Resource Graph raises."""
+        import src.api.dashboard_api as api_module
+        from unittest.mock import AsyncMock, MagicMock
+
+        monkeypatch.setattr(api_module.settings, "use_local_mocks", False)
+        monkeypatch.setattr(api_module.settings, "azure_subscription_id", "sub-live-test")
+
+        mock_client = MagicMock()
+        mock_client.get_resource_async = AsyncMock(side_effect=RuntimeError("network timeout"))
+        mock_rg_module = MagicMock()
+        mock_rg_module.ResourceGraphClient.return_value = mock_client
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "src.infrastructure.resource_graph",
+            mock_rg_module,
+        )
+
+        # Should not raise — falls back to seed silently
+        tags = asyncio.run(api_module._get_resource_tags("vm-dr-01"))
+        assert isinstance(tags, dict)  # seed fallback returns tags for vm-dr-01
+
+    def test_live_mode_resource_not_in_graph_falls_back_to_seed(self, monkeypatch):
+        """Live mode: None result from Resource Graph triggers seed fallback."""
+        import src.api.dashboard_api as api_module
+        from unittest.mock import AsyncMock, MagicMock
+
+        monkeypatch.setattr(api_module.settings, "use_local_mocks", False)
+        monkeypatch.setattr(api_module.settings, "azure_subscription_id", "sub-live-test")
+
+        mock_client = MagicMock()
+        mock_client.get_resource_async = AsyncMock(return_value=None)
+        mock_rg_module = MagicMock()
+        mock_rg_module.ResourceGraphClient.return_value = mock_client
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "src.infrastructure.resource_graph",
+            mock_rg_module,
+        )
+
+        tags = asyncio.run(api_module._get_resource_tags("vm-dr-01"))
+        assert isinstance(tags, dict)  # seed fallback

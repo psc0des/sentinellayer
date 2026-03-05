@@ -169,7 +169,7 @@ RuriSkry (Layer 2 — independent second opinion)
     → GovernanceVerdict returned (approved/escalated/denied)
     → Decision logged to audit trail
             ↓
-Execution Gateway (Layer 3 — IaC-safe execution) [Phase 21 — PLANNED]
+Execution Gateway (Layer 3 — IaC-safe execution) [Phase 21 — COMPLETE]
     → DENIED  → blocked (no action)
     → ESCALATED → awaiting human review (dashboard HITL)
     → APPROVED + IaC-managed → auto-generate Terraform PR (GitHub API)
@@ -205,19 +205,19 @@ STATUS.md for full phase breakdown.
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
-**Phase 21 — Execution Gateway & Human-in-the-Loop (PLANNED)**
+**Phase 21 — Execution Gateway & Human-in-the-Loop (COMPLETE)**
 
-RuriSkry currently **evaluates only** — it never executes. Phase 21 adds an Execution
-Gateway that routes APPROVED verdicts to IaC-safe paths (Terraform PRs via GitHub API)
-instead of directly modifying Azure resources, which would cause IaC state drift. ESCALATED
-verdicts get dashboard HITL buttons (Approve / Dismiss). IaC detection via Azure tags
-(`managed_by=terraform`). See `Adding-Terraform-Feature.md` for full implementation guide.
+APPROVED verdicts route to IaC-safe Terraform PRs (via GitHub API) instead of direct Azure
+SDK calls, preventing IaC state drift. ESCALATED verdicts get dashboard HITL buttons (Approve
+/ Dismiss). IaC detection reads `managed_by=terraform` tag: **in live mode** via
+`ResourceGraphClient.get_resource_async()`, with `seed_resources.json` fallback in mock mode
+or on network failure. `ExecutionRecord` is JSON-durable (`data/executions/`).
 
-New files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
-`tests/test_execution_gateway.py`. New endpoints: `GET /api/execution/pending-reviews`,
+Key files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
+`tests/test_execution_gateway.py`. Endpoints: `GET /api/execution/pending-reviews`,
 `GET /api/execution/by-action/{action_id}`, `POST /api/execution/{id}/approve`,
-`POST /api/execution/{id}/dismiss`. New env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`,
-`IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`.
+`POST /api/execution/{id}/dismiss`. Env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`,
+`IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`. **Tests: 544 passed.**
 
 **Phase 20 — Async End-to-End Migration (complete)**
 

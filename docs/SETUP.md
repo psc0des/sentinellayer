@@ -167,7 +167,7 @@ fully computed regardless of mode.
 
 ---
 
-## Optional: Execution Gateway & HITL (Phase 21 — Planned)
+## Optional: Execution Gateway & HITL (Phase 21)
 
 The Execution Gateway routes APPROVED verdicts to IaC-safe paths — generating Terraform PRs
 instead of directly modifying Azure resources. This prevents IaC state drift.

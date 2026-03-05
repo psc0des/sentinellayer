@@ -178,7 +178,7 @@ Click any row in the Live Activity Feed to open a **6-section full-page drilldow
 
 No extra setup needed — the explanation engine works in both mock and live mode.
 
-### Execution Gateway & Human-in-the-Loop (Phase 21 — Planned)
+### Execution Gateway & Human-in-the-Loop (Phase 21)
 APPROVED verdicts don't execute directly on Azure — that would cause **IaC state drift**
 (Terraform reverts the change on next `terraform apply`). Instead, the Execution Gateway
 routes verdicts to IaC-safe paths:
@@ -189,7 +189,8 @@ routes verdicts to IaC-safe paths:
   human reviews and merges; CI/CD runs `terraform apply`
 - **APPROVED + not IaC-managed** → marked for manual execution
 
-IaC detection uses Azure resource tags (`managed_by=terraform`, `iac_repo`, `iac_path`).
+IaC detection reads `managed_by=terraform` from Azure resource tags — queried live via
+`ResourceGraphClient` in live mode; falls back to `seed_resources.json` in mock mode.
 The governance engine evaluates; Terraform executes; humans approve. IaC state never drifts.
 
 ### LLM Rate Limiting
