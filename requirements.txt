@@ -46,9 +46,8 @@ pytest-asyncio>=0.23.0
 pytest-cov>=4.1.0
 
 # --- Execution Gateway (Phase 21) ---
-# Optional: only needed when EXECUTION_GATEWAY_ENABLED=true and GITHUB_TOKEN is set.
-# Install manually: pip install PyGithub>=2.1.0
-# PyGithub>=2.1.0
+# Required when EXECUTION_GATEWAY_ENABLED=true and GITHUB_TOKEN is set.
+PyGithub>=2.1.0
 
 # --- Code Quality ---
 black>=24.0.0

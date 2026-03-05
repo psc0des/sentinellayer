@@ -184,6 +184,10 @@ _AGENT_TYPE_MAP: dict[str, str] = {
     "deploy-agent": "deploy",
 }
 
+# Reverse map: scan agent_type → AgentRegistry name.
+# Used by _run_agent_scan() to update the Connected Agents panel after each verdict.
+_AGENT_REGISTRY_NAMES: dict[str, str] = {v: k for k, v in _AGENT_TYPE_MAP.items()}
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -442,6 +446,15 @@ async def _run_agent_scan(
             else:
                 denied += 1
 
+            # --- Update Connected Agents panel ---
+            # Each call increments total_actions_proposed + the right verdict
+            # counter + refreshes last_seen in the AgentRegistry JSON file.
+            # Without this the dashboard card shows stale counts from the last
+            # A2A registration event.
+            registry_name = _AGENT_REGISTRY_NAMES.get(agent_type)
+            if registry_name:
+                _get_registry().update_agent_stats(registry_name, decision)
+
         summary = f"{approved} approved, {escalated} escalated, {denied} denied"
         _scans[scan_id].update(
             {
@@ -457,6 +470,15 @@ async def _run_agent_scan(
             }
         )
         _persist_scan_record(scan_id)
+
+        # If there were no proposals, update_agent_stats was never called in the
+        # loop above, so last_seen is still stale.  register_agent() only touches
+        # last_seen when the agent already exists — a safe no-op otherwise.
+        if not proposals:
+            registry_name = _AGENT_REGISTRY_NAMES.get(agent_type)
+            if registry_name:
+                _get_registry().register_agent(registry_name)
+
         logger.info(
             "scan %s (%s): complete — %d proposals, %d verdicts (%s)",
             scan_id[:8], agent_type, len(proposals), len(evaluations), summary,
