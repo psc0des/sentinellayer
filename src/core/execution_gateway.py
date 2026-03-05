@@ -265,6 +265,49 @@ class ExecutionGateway:
             if r.status == ExecutionStatus.awaiting_review
         ]
 
+    def get_unresolved_proposals(self) -> list[tuple["ProposedAction", ExecutionRecord]]:
+        """Return (ProposedAction, ExecutionRecord) pairs for issues that are
+        APPROVED but have no automated resolution path yet.
+
+        Only ``manual_required`` records are returned — these are APPROVED verdicts
+        where no IaC path was detected, so a human must fix the Azure resource
+        manually.  The scan loop uses this to re-flag the same issues on every
+        subsequent scan until the human either:
+          - Fixes the resource in Azure and clicks **Dismiss** in the dashboard, OR
+          - The agent naturally stops proposing it (underlying config changed).
+
+        Excluded statuses:
+          - ``pr_created``      — a PR is already open; no need to re-propose
+          - ``awaiting_review`` — HITL buttons are already in the dashboard
+          - ``blocked``         — deliberately denied; do not re-surface
+          - ``dismissed``       — human acknowledged / resolved
+          - ``applied``         — fix confirmed applied
+          - ``failed``          — gateway error; let next scan handle fresh
+        """
+        from src.core.models import ProposedAction  # noqa: PLC0415 (avoid circular at module level)
+
+        self._ensure_loaded()
+        results = []
+        for record in self._records.values():
+            if record.status != ExecutionStatus.manual_required:
+                continue
+            snapshot = record.verdict_snapshot
+            if not snapshot:
+                continue
+            action_data = snapshot.get("proposed_action")
+            if not action_data:
+                continue
+            try:
+                action = ProposedAction.model_validate(action_data)
+                results.append((action, record))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "ExecutionGateway: could not reconstruct ProposedAction "
+                    "from verdict_snapshot for record %s — %s",
+                    record.execution_id[:8], exc,
+                )
+        return results
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

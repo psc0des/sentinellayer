@@ -279,6 +279,47 @@ async def _run_agent_scan(
                 ),
             )
 
+        # --- Re-flag unresolved manual_required issues (flag-until-fixed) ---
+        # If a previous scan returned APPROVED verdicts that couldn't be routed
+        # to a Terraform PR (no IaC tags), the resource still needs a manual fix.
+        # Re-add those proposals so the governance pipeline evaluates them again
+        # on every scan — until the human dismisses the record (meaning they
+        # fixed it) or the agent naturally stops proposing it (config changed).
+        already_proposed = {
+            (p.target.resource_id, p.action_type.value) for p in proposals
+        }
+        unresolved_pairs = _get_execution_gateway().get_unresolved_proposals()
+        requeued = 0
+        for unresolved_action, exec_record in unresolved_pairs:
+            key = (unresolved_action.target.resource_id, unresolved_action.action_type.value)
+            if key not in already_proposed:
+                # Annotate the reason so the scan log is clear
+                unresolved_action = unresolved_action.model_copy(update={
+                    "reason": (
+                        f"[Unresolved since {exec_record.created_at.strftime('%d %b')}] "
+                        + unresolved_action.reason
+                    )
+                })
+                proposals.append(unresolved_action)
+                already_proposed.add(key)
+                requeued += 1
+                logger.info(
+                    "scan %s (%s): re-flagging unresolved %s on %s (exec %s)",
+                    scan_id[:8], agent_type,
+                    unresolved_action.action_type.value,
+                    unresolved_action.target.resource_id.split("/")[-1],
+                    exec_record.execution_id[:8],
+                )
+        if requeued:
+            await _emit_event(
+                scan_id, "discovery",
+                agent=agent_type,
+                message=(
+                    f"Re-flagging {requeued} unresolved issue(s) from previous scans "
+                    f"(manual_required — not yet dismissed)."
+                ),
+            )
+
         logger.info(
             "scan %s (%s): agent returned %d proposal(s)",
             scan_id[:8], agent_type, len(proposals),

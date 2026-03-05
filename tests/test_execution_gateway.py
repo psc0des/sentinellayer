@@ -549,3 +549,97 @@ class TestTerraformPRGenerator:
         assert "psc0des/ruriskry" in body
         assert "Reviewer Checklist" in body
         assert "http://localhost:5173" in body
+
+
+# ---------------------------------------------------------------------------
+# 8. Flag-until-fixed: get_unresolved_proposals()
+# ---------------------------------------------------------------------------
+
+
+class TestUnresolvedProposals:
+    """get_unresolved_proposals() surfaces manual_required records for re-flagging."""
+
+    @pytest.mark.asyncio
+    async def test_manual_required_returned(self, gateway):
+        """manual_required record → ProposedAction returned."""
+        verdict = _make_verdict(SRIVerdict.APPROVED, "vm-no-iac")
+        record = await gateway.process_verdict(verdict, resource_tags={})
+        assert record.status == ExecutionStatus.manual_required
+
+        pairs = gateway.get_unresolved_proposals()
+        assert len(pairs) == 1
+        action, rec = pairs[0]
+        assert action.target.resource_id == "vm-no-iac"
+        assert rec.execution_id == record.execution_id
+
+    @pytest.mark.asyncio
+    async def test_pr_created_not_returned(self, gateway):
+        """pr_created record (IaC-managed) must NOT be re-proposed."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+
+        async def _fake_pr(record, v):
+            record.status = ExecutionStatus.pr_created
+            record.pr_url = "https://github.com/org/repo/pull/1"
+            record.pr_number = 1
+            return record
+
+        with patch.object(gateway, "_create_terraform_pr", side_effect=_fake_pr):
+            record = await gateway.process_verdict(verdict, resource_tags=_TERRAFORM_TAGS)
+
+        assert record.status == ExecutionStatus.pr_created
+        assert gateway.get_unresolved_proposals() == []
+
+    @pytest.mark.asyncio
+    async def test_awaiting_review_not_returned(self, gateway):
+        """awaiting_review (ESCALATED) must NOT be re-proposed — HITL buttons handle it."""
+        verdict = _make_verdict(SRIVerdict.ESCALATED)
+        record = await gateway.process_verdict(verdict, resource_tags={})
+        assert record.status == ExecutionStatus.awaiting_review
+        assert gateway.get_unresolved_proposals() == []
+
+    @pytest.mark.asyncio
+    async def test_blocked_not_returned(self, gateway):
+        """blocked (DENIED) must NOT be re-proposed."""
+        verdict = _make_verdict(SRIVerdict.DENIED)
+        record = await gateway.process_verdict(verdict, resource_tags={})
+        assert record.status == ExecutionStatus.blocked
+        assert gateway.get_unresolved_proposals() == []
+
+    @pytest.mark.asyncio
+    async def test_dismissed_not_returned(self, gateway):
+        """After dismiss, record must NOT appear in unresolved list."""
+        verdict = _make_verdict(SRIVerdict.APPROVED, "vm-dismissed")
+        record = await gateway.process_verdict(verdict, resource_tags={})
+        assert record.status == ExecutionStatus.manual_required
+
+        await gateway.dismiss_execution(record.execution_id, reviewed_by="alice")
+        assert gateway.get_unresolved_proposals() == []
+
+    @pytest.mark.asyncio
+    async def test_deduplication_in_new_proposals(self, gateway):
+        """Resource already in agent proposals → unresolved record skipped (no duplicate)."""
+        verdict = _make_verdict(SRIVerdict.APPROVED, "vm-web-01")
+        await gateway.process_verdict(verdict, resource_tags={})
+
+        pairs = gateway.get_unresolved_proposals()
+        assert len(pairs) == 1
+
+        # Simulate: agent already proposed same resource + action
+        existing_keys = {("vm-web-01", "update_config")}
+        filtered = [
+            (a, r) for a, r in pairs
+            if (a.target.resource_id, a.action_type.value) not in existing_keys
+        ]
+        assert filtered == []  # nothing left — agent found it naturally
+
+    @pytest.mark.asyncio
+    async def test_multiple_unresolved_all_returned(self, gateway):
+        """Multiple manual_required records across different resources are all returned."""
+        for rid in ("vm-a", "vm-b", "vm-c"):
+            await gateway.process_verdict(
+                _make_verdict(SRIVerdict.APPROVED, rid), resource_tags={}
+            )
+        pairs = gateway.get_unresolved_proposals()
+        assert len(pairs) == 3
+        resource_ids = {a.target.resource_id for a, _ in pairs}
+        assert resource_ids == {"vm-a", "vm-b", "vm-c"}
