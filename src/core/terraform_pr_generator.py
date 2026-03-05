@@ -207,13 +207,18 @@ class TerraformPRGenerator:
         return record
 
     def _apply_nsg_fix_to_content(self, content: str, rule_name: str) -> str | None:
-        """Find an azurerm_network_security_rule block for rule_name and change Allow→Deny.
+        """Find an NSG rule block for rule_name and change Allow→Deny.
 
-        Uses a line-by-line brace-counting walk to locate the specific resource
-        block without an HCL parser.  Returns the modified file content, or None
-        if the rule was not found or already set to Deny.
+        Handles two Terraform patterns:
+        1. Standalone resource "azurerm_network_security_rule" block
+        2. Inline security_rule {} block inside resource "azurerm_network_security_group"
+
+        Uses a line-by-line brace-counting walk (no HCL parser needed).
+        Returns modified file content, or None if rule not found / already Deny.
         """
         lines = content.split("\n")
+
+        # --- Pass 1: standalone azurerm_network_security_rule resource ---
         resource_start: int | None = None
         rule_found = False
         brace_depth = 0
@@ -234,33 +239,63 @@ class TerraformPRGenerator:
                 ):
                     rule_found = True
 
-                # End of block (brace_depth back to 0, past the opening line)
                 if brace_depth <= 0 and i > resource_start:
                     if rule_found:
-                        new_lines = list(lines)
-                        changed = False
-                        for j in range(resource_start, i + 1):
-                            patched = re.sub(
-                                r'(\baccess\s*=\s*)"Allow"',
-                                r'\1"Deny"',
-                                new_lines[j],
-                                flags=re.IGNORECASE,
-                            )
-                            patched = re.sub(
-                                r"(\baccess\s*=\s*)'Allow'",
-                                r"\1'Deny'",
-                                patched,
-                                flags=re.IGNORECASE,
-                            )
-                            if patched != new_lines[j]:
-                                changed = True
-                            new_lines[j] = patched
-                        return "\n".join(new_lines) if changed else None
-                    # Reset — this block didn't contain our rule
+                        return self._patch_block(lines, resource_start, i)
                     resource_start = None
                     rule_found = False
 
+        # --- Pass 2: inline security_rule {} inside azurerm_network_security_group ---
+        sr_start: int | None = None
+        sr_brace_depth = 0
+        sr_rule_found = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+
+            if sr_start is None and stripped.startswith("security_rule") and "{" in stripped:
+                sr_start = i
+                sr_brace_depth = stripped.count("{") - stripped.count("}")
+                sr_rule_found = False
+                continue  # don't process rule-name check on the opening line
+
+            if sr_start is not None:
+                sr_brace_depth += stripped.count("{") - stripped.count("}")
+
+                if re.search(
+                    r'name\s*=\s*["\']' + re.escape(rule_name) + r'["\']', line
+                ):
+                    sr_rule_found = True
+
+                if sr_brace_depth <= 0 and i > sr_start:
+                    if sr_rule_found:
+                        return self._patch_block(lines, sr_start, i)
+                    sr_start = None
+                    sr_rule_found = False
+
         return None
+
+    def _patch_block(self, lines: list[str], start: int, end: int) -> str | None:
+        """Change access = "Allow" → "Deny" within lines[start:end+1].
+
+        Returns the full modified file content as a string, or None if no change
+        was made (rule already set to Deny).
+        """
+        new_lines = list(lines)
+        changed = False
+        for j in range(start, end + 1):
+            patched = re.sub(
+                r'(\baccess\s*=\s*)"Allow"', r'\1"Deny"',
+                new_lines[j], flags=re.IGNORECASE,
+            )
+            patched = re.sub(
+                r"(\baccess\s*=\s*)'Allow'", r"\1'Deny'",
+                patched, flags=re.IGNORECASE,
+            )
+            if patched != new_lines[j]:
+                changed = True
+            new_lines[j] = patched
+        return "\n".join(new_lines) if changed else None
 
     def _find_and_patch_tf_file(
         self,
@@ -270,8 +305,9 @@ class TerraformPRGenerator:
     ) -> dict | None:
         """Search .tf files in iac_path for the target resource and apply the fix.
 
-        Currently handles MODIFY_NSG: finds the ``azurerm_network_security_rule``
-        resource for the flagged rule and changes ``access = "Allow"`` to ``"Deny"``.
+        Handles MODIFY_NSG for two Terraform patterns:
+        - Standalone ``resource "azurerm_network_security_rule"`` blocks
+        - Inline ``security_rule {}`` blocks inside ``azurerm_network_security_group``
 
         Returns a dict ``{path, new_content, sha, summary}`` on success, or None
         when no matching resource was found in any .tf file.
@@ -279,7 +315,10 @@ class TerraformPRGenerator:
         if action.action_type != ActionType.MODIFY_NSG:
             return None
 
-        rule_match = re.search(r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE)
+        # Quoted: rule 'name' or rule "name" — or unquoted Azure-style identifier
+        rule_match = re.search(
+            r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
+        ) or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
         if not rule_match:
             return None
         rule_name = rule_match.group(1)

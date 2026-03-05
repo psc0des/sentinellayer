@@ -968,6 +968,47 @@ resource "azurerm_network_security_rule" "testing_ssh" {
         result = gen._apply_nsg_fix_to_content(tf, "testing-ssh")
         assert result is None  # no change needed
 
+    def test_patches_inline_security_rule_inside_nsg(self):
+        """Inline security_rule {} blocks inside azurerm_network_security_group are patched."""
+        gen = self._gen()
+        tf = '''\
+resource "azurerm_network_security_group" "prod" {
+  name                = "nsg-east-prod"
+  resource_group_name = "rg"
+
+  security_rule {
+    name                       = "allow-http-my-ip"
+    priority                   = 100
+    access                     = "Allow"
+    destination_port_range     = "80"
+  }
+
+  security_rule {
+    name                       = "allow-ssh-anywhere"
+    priority                   = 110
+    access                     = "Allow"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+  }
+}
+'''
+        result = gen._apply_nsg_fix_to_content(tf, "allow-ssh-anywhere")
+        assert result is not None
+        # only the targeted rule is changed
+        lines = result.split("\n")
+        ssh_idx = next(i for i, l in enumerate(lines) if "allow-ssh-anywhere" in l)
+        # find access = in the ssh block
+        access_line = next(
+            l for l in lines[ssh_idx:ssh_idx + 10] if "access" in l.lower()
+        )
+        assert '"Deny"' in access_line
+        # the other rule (allow-http-my-ip) still says Allow
+        http_idx = next(i for i, l in enumerate(lines) if "allow-http-my-ip" in l)
+        http_access = next(
+            l for l in lines[http_idx:http_idx + 10] if "access" in l.lower()
+        )
+        assert '"Allow"' in http_access
+
     # ── _find_and_patch_tf_file ────────────────────────────────────────────
 
     def test_find_and_patch_returns_none_for_non_nsg(self):
