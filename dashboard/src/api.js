@@ -217,6 +217,49 @@ export async function dismissExecution(executionId, reviewedBy = 'dashboard-user
 }
 
 /**
+ * Create a Terraform PR from a manual_required execution record.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @param {string} reviewedBy - name/email of the person creating the PR
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function createPRFromManual(executionId, reviewedBy = 'dashboard-user') {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/create-pr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewed_by: reviewedBy }),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to create PR`)
+  return res.json()
+}
+
+/**
+ * Preview the az CLI commands that would fix a manual_required issue.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @returns {{ execution_id: string, action_type: string, resource_id: string, commands: string[], warning: string }}
+ */
+export async function fetchAgentFixPreview(executionId) {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/agent-fix-preview`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch agent fix preview`)
+  return res.json()
+}
+
+/**
+ * Execute the az CLI fix commands for a manual_required record.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @param {string} reviewedBy - name/email of the person executing
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function executeAgentFix(executionId, reviewedBy = 'dashboard-user') {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/agent-fix-execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewed_by: reviewedBy }),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to execute agent fix`)
+  return res.json()
+}
+
+/**
  * Fetch the Terraform HCL stub for a manual_required execution record.
  * @param {string} executionId - UUID of the ExecutionRecord
  * @returns {{ execution_id: string, hcl: string }}

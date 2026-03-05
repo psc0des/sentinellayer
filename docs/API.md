@@ -154,6 +154,9 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict |
 | POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
+| POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record |
+| GET | `/api/execution/{execution_id}/agent-fix-preview` | Preview `az` CLI fix commands |
+| POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute `az` CLI fix commands |
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
 
@@ -600,6 +603,55 @@ Human dismisses a verdict — no execution will happen.
 ```
 
 **Response:** Updated `ExecutionRecord` JSON with `status: "dismissed"`.
+
+---
+
+### `POST /api/execution/{execution_id}/create-pr`
+
+Create a Terraform PR from a `manual_required` execution record. Reuses the `TerraformPRGenerator` flow. If GitHub is not configured, the record stays `manual_required` with an explanatory note.
+
+**Request body:**
+```json
+{ "reviewed_by": "admin@example.com" }
+```
+
+**Response:** Updated `ExecutionRecord` JSON. Status transitions to `pr_created` on success.
+
+Returns `404` if `execution_id` is unknown, `400` if status is not `manual_required` or snapshot is missing.
+
+---
+
+### `GET /api/execution/{execution_id}/agent-fix-preview`
+
+Preview the `az` CLI commands that would fix a `manual_required` issue. Pure read — no side effects.
+
+**Response:**
+```json
+{
+  "execution_id": "50823c45-...",
+  "action_type": "modify_nsg",
+  "resource_id": "/subscriptions/.../nsg-east",
+  "commands": ["az network nsg rule delete --resource-group rg-prod --nsg-name nsg-east --name AllowAll_Inbound"],
+  "warning": "These commands will modify your Azure environment. Review carefully before executing."
+}
+```
+
+Returns `404` if `execution_id` is unknown, `400` if no verdict snapshot is stored.
+
+---
+
+### `POST /api/execution/{execution_id}/agent-fix-execute`
+
+Execute the `az` CLI fix commands for a `manual_required` record. In mock mode, simulates success. In live mode, runs each command and returns the result.
+
+**Request body:**
+```json
+{ "reviewed_by": "admin@example.com" }
+```
+
+**Response:** Updated `ExecutionRecord` JSON. Status transitions to `applied` on success, `failed` on error.
+
+Returns `404` if `execution_id` is unknown, `400` if status is not `manual_required` or snapshot is missing.
 
 ---
 

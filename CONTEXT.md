@@ -216,8 +216,10 @@ or on network failure. `ExecutionRecord` is JSON-durable (`data/executions/`).
 Key files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
 `tests/test_execution_gateway.py`. Endpoints: `GET /api/execution/pending-reviews`,
 `GET /api/execution/by-action/{action_id}`, `POST /api/execution/{id}/approve`,
-`POST /api/execution/{id}/dismiss`. Env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`,
-`IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`. **Tests: 551 passed.**
+`POST /api/execution/{id}/dismiss`, `POST /api/execution/{id}/create-pr`,
+`GET /api/execution/{id}/agent-fix-preview`, `POST /api/execution/{id}/agent-fix-execute`.
+Env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`,
+`EXECUTION_GATEWAY_ENABLED`. **Tests: 568 passed.**
 
 Post-deploy fixes: `_run_agent_scan()` updates `AgentRegistry` per verdict (Connected Agents
 panel stays current); "Run All Agents" opens merged SSE log for all 3 agents;
@@ -241,8 +243,18 @@ until human dismisses them ("flag until fixed" governance pattern).
   execution record with a verdict snapshot. Used by dashboard "Show Terraform Fix" button.
   `POST /api/admin/reset`: dev/test wipe of local JSON files + in-memory state.
 - `EvaluationDrilldown.jsx` — `pr_created` status: action panel with Show Terraform Fix,
-  Fix in Azure Portal, Close PR / Ignore buttons. `manual_required` status: same panel.
+  Fix in Azure Portal, Close PR / Ignore buttons. `manual_required` status: 4-button panel —
+  Create Terraform PR, Open in Azure Portal, Fix using Agent (two-step: preview commands
+  → confirm → execute via Azure SDK), Decline / Ignore.
   `fetchTerraformStub()` lazy-loads and toggles the HCL code block inline.
+- `execution_gateway.py` — `_parse_arm_id()`: extracts resource_group/name/provider from ARM
+  IDs. `_build_az_commands()`: generates human-readable `az` CLI commands for preview panel.
+  `_execute_fix_via_sdk()`: live execution via Azure Python SDK (`azure.mgmt.network`,
+  `azure.mgmt.compute`, `azure.mgmt.resource`) with `DefaultAzureCredential` — works on
+  App Service (Managed Identity), local dev, and CI/CD; no `az` CLI dependency.
+  `create_pr_from_manual()`: reuses `_create_terraform_pr()` for manual_required records.
+  `generate_agent_fix_commands()`: pure-read preview. `execute_agent_fix()`: mock mode
+  simulates success; live mode runs `asyncio.create_subprocess_exec()` per command.
 
 **Phase 20 — Async End-to-End Migration (complete)**
 

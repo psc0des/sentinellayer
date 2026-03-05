@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { approveExecution, dismissExecution, fetchExecutionStatus, fetchExplanation, fetchTerraformStub } from '../api'
+import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub } from '../api'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -67,6 +67,12 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
     const [tfStub, setTfStub] = useState(null)
     const [tfLoading, setTfLoading] = useState(false)
     const [tfExpanded, setTfExpanded] = useState(false)
+    const [agentFixPreview, setAgentFixPreview] = useState(null)
+    const [agentFixLoading, setAgentFixLoading] = useState(false)
+    const [agentFixExpanded, setAgentFixExpanded] = useState(false)
+    const [agentFixExecuting, setAgentFixExecuting] = useState(false)
+    const [agentFixResult, setAgentFixResult] = useState(null)
+    const [createPrLoading, setCreatePrLoading] = useState(false)
 
     const ev = evaluation
     const decision = (ev.decision ?? 'approved').toLowerCase()
@@ -138,6 +144,47 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
             setTfStub(`# Error fetching stub: ${err.message}`)
         } finally {
             setTfLoading(false)
+        }
+    }
+
+    async function handleCreatePR(executionId) {
+        setCreatePrLoading(true)
+        try {
+            const updated = await createPRFromManual(executionId)
+            setExecutionStatus(updated)
+        } catch (err) {
+            alert(`Create PR failed: ${err.message}`)
+        } finally {
+            setCreatePrLoading(false)
+        }
+    }
+
+    async function handleAgentFixPreview(executionId) {
+        if (agentFixPreview) { setAgentFixExpanded(e => !e); return }
+        setAgentFixLoading(true)
+        setAgentFixExpanded(true)
+        try {
+            const data = await fetchAgentFixPreview(executionId)
+            setAgentFixPreview(data)
+        } catch (err) {
+            setAgentFixPreview({ commands: [`# Error: ${err.message}`], warning: '' })
+        } finally {
+            setAgentFixLoading(false)
+        }
+    }
+
+    async function handleAgentFixExecute(executionId) {
+        if (!window.confirm('This will run az CLI commands against your Azure environment. Continue?')) return
+        setAgentFixExecuting(true)
+        setAgentFixResult(null)
+        try {
+            const updated = await executeAgentFix(executionId)
+            setExecutionStatus(updated)
+            setAgentFixResult({ success: updated.status === 'applied', notes: updated.notes })
+        } catch (err) {
+            setAgentFixResult({ success: false, notes: err.message })
+        } finally {
+            setAgentFixExecuting(false)
         }
     }
 
@@ -548,17 +595,22 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                         {executionStatus.status === 'manual_required' && (
                             <div className="space-y-3 pt-1">
                                 <p className="text-xs text-orange-300/80 bg-orange-500/5 border border-orange-500/20 rounded-lg px-3 py-2">
-                                    This verdict was approved but could not be executed automatically (no Terraform PR was created).
+                                    This verdict was approved but could not be executed automatically.
                                     Choose how to proceed:
                                 </p>
 
-                                {/* Three action buttons */}
+                                {/* Four action buttons */}
                                 <div className="flex flex-wrap gap-2">
                                     <button
-                                        onClick={() => handleShowTerraform(executionStatus.execution_id)}
-                                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors"
+                                        onClick={() => handleCreatePR(executionStatus.execution_id)}
+                                        disabled={createPrLoading}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
                                     >
-                                        📋 {tfExpanded ? 'Hide' : 'Show'} Terraform Fix
+                                        {createPrLoading ? (
+                                            <><span className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> Creating PR…</>
+                                        ) : (
+                                            <>📝 Create Terraform PR</>
+                                        )}
                                     </button>
 
                                     {ev.resource_id && (
@@ -573,22 +625,65 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                     )}
 
                                     <button
-                                        onClick={() => handleDismiss(executionStatus.execution_id, 'Fixed manually in Azure Portal')}
-                                        className="flex items-center gap-1.5 px-4 py-2 bg-green-600/20 hover:bg-green-600/30 border border-green-500/40 text-green-300 hover:text-green-200 rounded-lg text-sm font-medium transition-colors"
+                                        onClick={() => handleAgentFixPreview(executionStatus.execution_id)}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 rounded-lg text-sm font-medium transition-colors"
                                     >
-                                        ✓ Mark as Fixed
+                                        🤖 {agentFixExpanded ? 'Hide' : 'Fix using'} Agent
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleDismiss(executionStatus.execution_id, 'Declined — not applicable')}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        ✕ Decline / Ignore
                                     </button>
                                 </div>
 
-                                {/* Terraform HCL code block */}
-                                {tfExpanded && (
-                                    <div className="mt-2">
-                                        {tfLoading ? (
-                                            <p className="text-xs text-slate-500 animate-pulse px-1">Generating Terraform stub…</p>
+                                {/* Agent Fix — expandable preview + execute panel */}
+                                {agentFixExpanded && (
+                                    <div className="mt-2 bg-slate-900/60 border border-purple-500/20 rounded-lg p-4 space-y-3">
+                                        <p className="text-xs text-orange-300/80 flex items-center gap-1.5">
+                                            ⚠ These commands will modify your Azure environment. Review carefully before running.
+                                        </p>
+
+                                        {agentFixLoading ? (
+                                            <p className="text-xs text-slate-500 animate-pulse">Loading commands…</p>
                                         ) : (
-                                            <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-72 border border-slate-700 whitespace-pre-wrap">
-                                                {tfStub}
-                                            </pre>
+                                            <>
+                                                <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-3 overflow-x-auto border border-slate-700 whitespace-pre-wrap">
+                                                    {agentFixPreview?.commands?.map((cmd, i) => `$ ${cmd}`).join('\n')}
+                                                </pre>
+
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => handleAgentFixExecute(executionStatus.execution_id)}
+                                                        disabled={agentFixExecuting}
+                                                        className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                                                    >
+                                                        {agentFixExecuting ? (
+                                                            <><span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Running…</>
+                                                        ) : (
+                                                            <>▶ Run</>
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setAgentFixExpanded(false)}
+                                                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-medium transition-colors"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+
+                                                {agentFixResult && (
+                                                    <div className={`text-xs rounded-lg px-3 py-2 border ${
+                                                        agentFixResult.success
+                                                            ? 'bg-green-500/10 border-green-500/30 text-green-300'
+                                                            : 'bg-red-500/10 border-red-500/30 text-red-300'
+                                                    }`}>
+                                                        {agentFixResult.success ? 'Fix applied successfully.' : 'Fix failed.'} {agentFixResult.notes}
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 )}

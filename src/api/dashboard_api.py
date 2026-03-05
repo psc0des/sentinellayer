@@ -22,6 +22,9 @@ GET  /api/execution/pending-reviews              List all ESCALATED verdicts awa
 GET  /api/execution/by-action/{action_id}        Execution status for a governance verdict.
 POST /api/execution/{execution_id}/approve       Human approves an escalated verdict.
 POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
+POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual_required record.
+GET  /api/execution/{execution_id}/agent-fix-preview  Preview az CLI fix commands.
+POST /api/execution/{execution_id}/agent-fix-execute  Execute az CLI fix commands.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
 
 Run
@@ -1532,6 +1535,84 @@ async def dismiss_execution(execution_id: str, body: dict = Body(default={})) ->
         return record.model_dump(mode="json")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — HITL Agent Fix + PR from manual_required
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/execution/{execution_id}/create-pr")
+async def create_pr_from_manual(
+    execution_id: str, body: dict = Body(default={})
+) -> dict:
+    """Create a Terraform PR from a manual_required execution record.
+
+    Reuses the existing TerraformPRGenerator flow.  If GitHub is not
+    configured the record stays ``manual_required`` with an explanatory note.
+
+    Request body (optional)::
+
+        {"reviewed_by": "alice@example.com"}
+
+    Returns 404 if execution_id is unknown.
+    Returns 400 if the record is not ``manual_required`` or snapshot is missing.
+    """
+    gateway = _get_execution_gateway()
+    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    try:
+        record = await gateway.create_pr_from_manual(execution_id, reviewed_by)
+        return record.model_dump(mode="json")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/execution/{execution_id}/agent-fix-preview")
+async def agent_fix_preview(execution_id: str) -> dict:
+    """Preview the ``az`` CLI commands that would fix this issue.
+
+    Pure read — no side effects.  Returns the list of shell commands and
+    a warning message for the user to review before confirming.
+
+    Returns 404 if execution_id is unknown.
+    Returns 400 if the verdict snapshot is missing.
+    """
+    gateway = _get_execution_gateway()
+    try:
+        return gateway.generate_agent_fix_commands(execution_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/execution/{execution_id}/agent-fix-execute")
+async def agent_fix_execute(
+    execution_id: str, body: dict = Body(default={})
+) -> dict:
+    """Execute the ``az`` CLI fix commands for a manual_required record.
+
+    In mock mode, simulates success.  In live mode, runs each ``az`` command
+    and returns the result.
+
+    Request body (optional)::
+
+        {"reviewed_by": "alice@example.com"}
+
+    Returns 404 if execution_id is unknown.
+    Returns 400 if the record is not ``manual_required`` or snapshot is missing.
+    """
+    gateway = _get_execution_gateway()
+    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    try:
+        record = await gateway.execute_agent_fix(execution_id, reviewed_by)
+        return record.model_dump(mode="json")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

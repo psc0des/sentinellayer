@@ -8,6 +8,8 @@ Covers:
 4. Gateway failure does not break verdict (integration smoke test)
 5. Edge cases: unknown execution_id, wrong-state approvals
 6. TerraformPRGenerator without PyGithub (graceful degradation)
+7. Agent fix flow — command generation, ARM ID parsing, mock execution
+8. Create PR from manual_required — status transition, error cases
 """
 
 from datetime import datetime, timezone
@@ -15,7 +17,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.core.execution_gateway import ExecutionGateway
+from src.core.execution_gateway import (
+    ExecutionGateway,
+    _build_az_commands,
+    _parse_arm_id,
+)
 from src.core.models import (
     ActionTarget,
     ActionType,
@@ -643,3 +649,264 @@ class TestUnresolvedProposals:
         assert len(pairs) == 3
         resource_ids = {a.target.resource_id for a, _ in pairs}
         assert resource_ids == {"vm-a", "vm-b", "vm-c"}
+
+
+# ---------------------------------------------------------------------------
+# 9. ARM ID Parsing
+# ---------------------------------------------------------------------------
+
+
+class TestArmIdParsing:
+    def test_full_arm_id(self):
+        arm_id = "/subscriptions/sub-1/resourceGroups/rg-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-east"
+        result = _parse_arm_id(arm_id)
+        assert result["resource_group"] == "rg-prod"
+        assert result["name"] == "nsg-east"
+        assert result["provider"] == "Microsoft.Network/networkSecurityGroups"
+        assert result["resource_type"] == "networkSecurityGroups"
+
+    def test_short_name_only(self):
+        result = _parse_arm_id("vm-web-01")
+        assert result["name"] == "vm-web-01"
+        assert result["resource_group"] == ""
+
+    def test_two_part_path(self):
+        result = _parse_arm_id("virtualMachines/vm-web-01")
+        assert result["name"] == "vm-web-01"
+        assert result["resource_type"] == "virtualMachines"
+
+
+# ---------------------------------------------------------------------------
+# 10. Agent Fix — Command Generation
+# ---------------------------------------------------------------------------
+
+
+class TestAgentFixFlow:
+    def test_modify_nsg_command(self):
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-east",
+                resource_type="Microsoft.Network/networkSecurityGroups",
+            ),
+            reason="Dangerous rule 'AllowAll_Inbound' — opens all ports",
+        )
+        cmds = _build_az_commands(action)
+        assert len(cmds) == 1
+        assert "nsg rule delete" in cmds[0]
+        assert "--nsg-name nsg-east" in cmds[0]
+        assert "--name AllowAll_Inbound" in cmds[0]
+        assert "--resource-group rg-prod" in cmds[0]
+
+    def test_scale_down_command(self):
+        action = ProposedAction(
+            agent_id="cost-agent",
+            action_type=ActionType.SCALE_DOWN,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg-prod/providers/Microsoft.Compute/virtualMachines/vm-dr-01",
+                resource_type="Microsoft.Compute/virtualMachines",
+                current_sku="Standard_D4as_v4",
+                proposed_sku="Standard_B2ls_v2",
+            ),
+            reason="CPU avg 3.2% — right-size candidate",
+        )
+        cmds = _build_az_commands(action)
+        assert len(cmds) == 1
+        assert "vm resize" in cmds[0]
+        assert "--size Standard_B2ls_v2" in cmds[0]
+        assert "--name vm-dr-01" in cmds[0]
+
+    def test_delete_resource_full_arm_id(self):
+        arm_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-old"
+        action = ProposedAction(
+            agent_id="cost-agent",
+            action_type=ActionType.DELETE_RESOURCE,
+            target=ActionTarget(resource_id=arm_id, resource_type="Microsoft.Compute/virtualMachines"),
+            reason="Unused resource",
+        )
+        cmds = _build_az_commands(action)
+        assert "--ids" in cmds[0]
+        assert arm_id in cmds[0]
+
+    def test_restart_service_command(self):
+        action = ProposedAction(
+            agent_id="monitoring-agent",
+            action_type=ActionType.RESTART_SERVICE,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+                resource_type="Microsoft.Compute/virtualMachines",
+            ),
+            reason="High memory pressure",
+        )
+        cmds = _build_az_commands(action)
+        assert "vm restart" in cmds[0]
+        assert "--name vm-web-01" in cmds[0]
+
+    def test_unknown_action_type_fallback(self):
+        action = ProposedAction(
+            agent_id="test",
+            action_type=ActionType.UPDATE_CONFIG,
+            target=ActionTarget(resource_id="some-resource", resource_type="SomeType"),
+            reason="Test",
+        )
+        cmds = _build_az_commands(action)
+        assert cmds[0].startswith("#")
+
+    def test_nsg_no_rule_name_uses_placeholder(self):
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(resource_id="nsg-test", resource_type="Microsoft.Network/networkSecurityGroups"),
+            reason="Bad rule detected",
+        )
+        cmds = _build_az_commands(action)
+        assert "<RULE_NAME>" in cmds[0]
+
+    @pytest.mark.asyncio
+    async def test_generate_agent_fix_commands(self, gateway):
+        """generate_agent_fix_commands() returns preview dict."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        preview = gateway.generate_agent_fix_commands(record.execution_id)
+        assert "commands" in preview
+        assert "warning" in preview
+        assert preview["execution_id"] == record.execution_id
+
+    @pytest.mark.asyncio
+    async def test_generate_commands_unknown_id_raises(self, gateway):
+        with pytest.raises(KeyError):
+            gateway.generate_agent_fix_commands("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_mock_mode_execution_sets_applied(self, gateway):
+        """In mock mode, execute_agent_fix sets status=applied."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        with patch("src.core.execution_gateway.settings") as mock_settings:
+            mock_settings.use_local_mocks = True
+            result = await gateway.execute_agent_fix(record.execution_id, "alice")
+
+        assert result.status == ExecutionStatus.applied
+        assert "[mock]" in result.notes
+        assert result.reviewed_by == "alice"
+
+    @pytest.mark.asyncio
+    async def test_execute_wrong_status_raises(self, gateway):
+        """Cannot execute agent fix on a non-manual_required record."""
+        verdict = _make_verdict(SRIVerdict.DENIED)
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.blocked
+
+        with pytest.raises(ValueError, match="manual_required"):
+            await gateway.execute_agent_fix(record.execution_id, "alice")
+
+    @pytest.mark.asyncio
+    async def test_sdk_missing_arm_id_raises_valueerror(self, gateway):
+        """Short resource name (no ARM ID) raises ValueError — record stays intact."""
+        # _make_verdict uses "vm-web-01" (short name, no resource group)
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        # Override action to RESTART_SERVICE (supported type) but with short name
+        verdict.proposed_action.action_type = ActionType.RESTART_SERVICE
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        with patch("src.core.execution_gateway.settings") as mock_settings:
+            mock_settings.use_local_mocks = False
+            with pytest.raises(ValueError, match="full ARM ID"):
+                await gateway.execute_agent_fix(record.execution_id, "alice")
+
+        still = gateway.get_record(record.execution_id)
+        assert still.status == ExecutionStatus.manual_required
+
+    @pytest.mark.asyncio
+    async def test_sdk_unsupported_action_raises_valueerror(self, gateway):
+        """Unsupported action type raises ValueError — record stays intact."""
+        # Use a full ARM ID so we pass the ARM check, but UPDATE_CONFIG type
+        action = ProposedAction(
+            agent_id="test-agent",
+            action_type=ActionType.UPDATE_CONFIG,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/sites/app-01",
+                resource_type="Microsoft.Web/sites",
+            ),
+            reason="Test unsupported action",
+        )
+        verdict = GovernanceVerdict(
+            action_id="test-unsupported-001",
+            timestamp=datetime.now(timezone.utc),
+            proposed_action=action,
+            skry_risk_index=SRIBreakdown(
+                sri_infrastructure=5.0, sri_policy=0.0,
+                sri_historical=0.0, sri_cost=0.0, sri_composite=1.5,
+            ),
+            decision=SRIVerdict.APPROVED,
+            reason="APPROVED",
+        )
+
+        with patch("src.core.execution_gateway.settings") as mock_settings:
+            mock_settings.execution_gateway_enabled = True
+            record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        with patch("src.core.execution_gateway.settings") as mock_settings:
+            mock_settings.use_local_mocks = False
+            with pytest.raises(ValueError, match="not supported"):
+                await gateway.execute_agent_fix(record.execution_id, "alice")
+
+        still = gateway.get_record(record.execution_id)
+        assert still.status == ExecutionStatus.manual_required
+
+
+# ---------------------------------------------------------------------------
+# 11. Create PR from manual_required
+# ---------------------------------------------------------------------------
+
+
+class TestCreatePRFromManual:
+    @pytest.mark.asyncio
+    async def test_creates_pr_from_manual(self, gateway):
+        """create_pr_from_manual delegates to _create_terraform_pr."""
+        pr_calls = []
+
+        async def fake_pr(record, verdict):
+            pr_calls.append(True)
+            record.status = ExecutionStatus.pr_created
+            record.pr_url = "https://github.com/org/repo/pull/10"
+            record.pr_number = 10
+            return record
+
+        gateway._create_terraform_pr = fake_pr
+
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        result = await gateway.create_pr_from_manual(record.execution_id, "bob")
+        assert len(pr_calls) == 1
+        assert result.status == ExecutionStatus.pr_created
+        assert result.reviewed_by == "bob"
+
+    @pytest.mark.asyncio
+    async def test_wrong_status_raises(self, gateway):
+        verdict = _make_verdict(SRIVerdict.DENIED)
+        record = await gateway.process_verdict(verdict, {})
+        with pytest.raises(ValueError, match="manual_required"):
+            await gateway.create_pr_from_manual(record.execution_id, "alice")
+
+    @pytest.mark.asyncio
+    async def test_unknown_id_raises(self, gateway):
+        with pytest.raises(KeyError):
+            await gateway.create_pr_from_manual("bad-id", "alice")
+
+    @pytest.mark.asyncio
+    async def test_missing_snapshot_raises(self, gateway):
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        record.verdict_snapshot = {}
+        with pytest.raises(ValueError, match="snapshot"):
+            await gateway.create_pr_from_manual(record.execution_id, "alice")

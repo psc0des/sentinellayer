@@ -21,15 +21,18 @@ Design principles:
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import settings
 from src.core.models import (
+    ActionType,
     ExecutionRecord,
     ExecutionStatus,
     GovernanceVerdict,
+    ProposedAction,
     SRIVerdict,
 )
 
@@ -38,6 +41,197 @@ logger = logging.getLogger(__name__)
 _DEFAULT_EXECUTIONS_DIR = (
     Path(__file__).parent.parent.parent / "data" / "executions"
 )
+
+
+def _parse_arm_id(resource_id: str) -> dict[str, str]:
+    """Extract resource_group, name, provider, and resource_type from an ARM ID.
+
+    ARM IDs look like:
+        /subscriptions/{sub}/resourceGroups/{rg}/providers/{provider}/{type}/{name}
+
+    For short names (no slashes), returns the name as-is with empty fields.
+    """
+    parts = resource_id.strip("/").split("/")
+    result: dict[str, str] = {
+        "resource_group": "",
+        "name": "",
+        "provider": "",
+        "resource_type": "",
+        "full_id": resource_id,
+    }
+    if len(parts) >= 8:
+        # Standard ARM path: subscriptions/X/resourceGroups/Y/providers/A/B/C
+        result["resource_group"] = parts[3]
+        result["provider"] = f"{parts[5]}/{parts[6]}"
+        result["name"] = parts[7]
+        result["resource_type"] = parts[6]
+    elif len(parts) >= 2:
+        result["name"] = parts[-1]
+        result["resource_type"] = parts[-2] if len(parts) >= 2 else ""
+    else:
+        result["name"] = resource_id
+    return result
+
+
+def _build_az_commands(action: ProposedAction) -> list[str]:
+    """Map a ProposedAction to one or more ``az`` CLI commands.
+
+    This is the *preview* — the user sees these commands before confirming
+    execution.  Only the most common action types are handled; unknown types
+    get a comment explaining manual steps.
+    """
+    arm = _parse_arm_id(action.target.resource_id)
+    rg = arm["resource_group"] or "<RESOURCE_GROUP>"
+    name = arm["name"] or action.target.resource_id
+    commands: list[str] = []
+
+    if action.action_type == ActionType.MODIFY_NSG:
+        # Try to extract the rule name from the reason text
+        rule_match = re.search(
+            r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
+        )
+        rule_name = rule_match.group(1) if rule_match else "<RULE_NAME>"
+        commands.append(
+            f"az network nsg rule delete"
+            f" --resource-group {rg}"
+            f" --nsg-name {name}"
+            f" --name {rule_name}"
+        )
+
+    elif action.action_type in (ActionType.SCALE_DOWN, ActionType.SCALE_UP):
+        proposed = action.target.proposed_sku or "<NEW_SKU>"
+        commands.append(
+            f"az vm resize"
+            f" --resource-group {rg}"
+            f" --name {name}"
+            f" --size {proposed}"
+        )
+
+    elif action.action_type == ActionType.DELETE_RESOURCE:
+        if arm["full_id"].startswith("/"):
+            commands.append(f"az resource delete --ids {arm['full_id']}")
+        else:
+            commands.append(
+                f"az resource delete"
+                f" --resource-group {rg}"
+                f" --name {name}"
+                f" --resource-type {arm['provider'] or '<PROVIDER/TYPE>'}"
+            )
+
+    elif action.action_type == ActionType.RESTART_SERVICE:
+        commands.append(
+            f"az vm restart"
+            f" --resource-group {rg}"
+            f" --name {name}"
+        )
+
+    else:
+        # Fallback — no known az mapping
+        commands.append(
+            f"# No automated az command for action type"
+            f" '{action.action_type.value}'."
+            f"  Please apply manually in the Azure Portal."
+        )
+
+    return commands
+
+
+async def _execute_fix_via_sdk(action: ProposedAction) -> str:
+    """Execute the remediation for a ProposedAction using Azure Python SDK.
+
+    Uses ``DefaultAzureCredential`` (same as the rest of the project) so it
+    works on Azure App Service (Managed Identity), local dev (``az login``),
+    and CI/CD (service principal).
+
+    Returns a human-readable summary of what was done.
+
+    Raises:
+        ValueError: If the action type is not supported for SDK execution,
+                    or required ARM ID fields are missing.
+        ImportError: If the Azure management SDK is not installed.
+    """
+    arm = _parse_arm_id(action.target.resource_id)
+    rg = arm["resource_group"]
+    name = arm["name"]
+
+    if not rg or not name:
+        raise ValueError(
+            f"Cannot execute fix: resource_id '{action.target.resource_id}' "
+            "must be a full ARM ID (need resource_group and name)"
+        )
+
+    from azure.identity.aio import DefaultAzureCredential  # noqa: PLC0415
+
+    if action.action_type == ActionType.MODIFY_NSG:
+        rule_match = re.search(
+            r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
+        )
+        if not rule_match:
+            raise ValueError(
+                "Cannot determine NSG rule name from action reason. "
+                "Expected format: rule 'RuleName'"
+            )
+        rule_name = rule_match.group(1)
+
+        from azure.mgmt.network.aio import NetworkManagementClient  # noqa: PLC0415
+
+        async with DefaultAzureCredential() as credential:
+            async with NetworkManagementClient(
+                credential, settings.azure_subscription_id
+            ) as client:
+                poller = await client.security_rules.begin_delete(
+                    rg, name, rule_name
+                )
+                await poller.result()
+        return f"Deleted NSG rule '{rule_name}' from '{name}' in '{rg}'"
+
+    elif action.action_type in (ActionType.SCALE_DOWN, ActionType.SCALE_UP):
+        proposed_sku = action.target.proposed_sku
+        if not proposed_sku:
+            raise ValueError("Cannot resize: proposed_sku is missing")
+
+        from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
+
+        async with DefaultAzureCredential() as credential:
+            async with ComputeManagementClient(
+                credential, settings.azure_subscription_id
+            ) as client:
+                poller = await client.virtual_machines.begin_update(
+                    rg, name,
+                    {"hardware_profile": {"vm_size": proposed_sku}},
+                )
+                await poller.result()
+        return f"Resized VM '{name}' to '{proposed_sku}' in '{rg}'"
+
+    elif action.action_type == ActionType.DELETE_RESOURCE:
+        from azure.mgmt.resource.aio import ResourceManagementClient  # noqa: PLC0415
+
+        async with DefaultAzureCredential() as credential:
+            async with ResourceManagementClient(
+                credential, settings.azure_subscription_id
+            ) as client:
+                poller = await client.resources.begin_delete_by_id(
+                    arm["full_id"], api_version="2023-07-01"
+                )
+                await poller.result()
+        return f"Deleted resource '{name}' in '{rg}'"
+
+    elif action.action_type == ActionType.RESTART_SERVICE:
+        from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
+
+        async with DefaultAzureCredential() as credential:
+            async with ComputeManagementClient(
+                credential, settings.azure_subscription_id
+            ) as client:
+                poller = await client.virtual_machines.begin_restart(rg, name)
+                await poller.result()
+        return f"Restarted VM '{name}' in '{rg}'"
+
+    else:
+        raise ValueError(
+            f"Action type '{action.action_type.value}' is not supported "
+            "for automated SDK execution. Use the Azure Portal instead."
+        )
 
 
 class ExecutionGateway:
@@ -307,6 +501,179 @@ class ExecutionGateway:
                     record.execution_id[:8], exc,
                 )
         return results
+
+    # ------------------------------------------------------------------
+    # HITL Agent Fix + PR creation from manual_required
+    # ------------------------------------------------------------------
+
+    async def create_pr_from_manual(
+        self, execution_id: str, reviewed_by: str
+    ) -> ExecutionRecord:
+        """Create a Terraform PR from a manual_required execution record.
+
+        Re-uses the existing ``_create_terraform_pr`` path so there is no
+        code duplication.  If GitHub is not configured, the status stays
+        ``manual_required`` with an explanatory note (same as approve flow).
+
+        Raises:
+            KeyError: If execution_id is unknown.
+            ValueError: If the record is not in ``manual_required`` state,
+                        or the verdict snapshot is missing.
+        """
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record:
+            raise KeyError(f"Execution record not found: {execution_id!r}")
+        if record.status != ExecutionStatus.manual_required:
+            raise ValueError(
+                f"Cannot create PR for {execution_id!r}: "
+                f"status is '{record.status.value}' (must be 'manual_required')"
+            )
+
+        verdict = self._reconstruct_verdict(record)
+        if verdict is None:
+            raise ValueError(
+                f"Cannot create PR for {execution_id!r}: "
+                "verdict snapshot is missing or corrupted"
+            )
+
+        record.reviewed_by = reviewed_by
+        record.updated_at = datetime.now(timezone.utc)
+
+        try:
+            record = await self._create_terraform_pr(record, verdict)
+            logger.info(
+                "ExecutionGateway: %s — PR created from manual_required by '%s'",
+                execution_id[:8], reviewed_by,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "ExecutionGateway: create_pr_from_manual failed — %s", exc
+            )
+            record.status = ExecutionStatus.failed
+            record.notes = f"PR creation error: {exc}"
+
+        self._save(record)
+        return record
+
+    def generate_agent_fix_commands(self, execution_id: str) -> dict:
+        """Preview the ``az`` CLI commands that would fix this issue.
+
+        Pure read operation — no side effects.
+
+        Returns:
+            Dict with ``execution_id``, ``action_type``, ``resource_id``,
+            ``commands`` (list of shell strings), and a ``warning`` message.
+
+        Raises:
+            KeyError: If execution_id is unknown.
+            ValueError: If the verdict snapshot is missing.
+        """
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record:
+            raise KeyError(f"Execution record not found: {execution_id!r}")
+
+        snapshot = record.verdict_snapshot
+        if not snapshot or "proposed_action" not in snapshot:
+            raise ValueError(
+                f"Cannot generate commands for {execution_id!r}: "
+                "verdict snapshot is missing"
+            )
+
+        action = ProposedAction.model_validate(snapshot["proposed_action"])
+        commands = _build_az_commands(action)
+
+        return {
+            "execution_id": execution_id,
+            "action_type": action.action_type.value,
+            "resource_id": action.target.resource_id,
+            "commands": commands,
+            "warning": (
+                "These commands will modify your Azure environment. "
+                "Review carefully before executing."
+            ),
+        }
+
+    async def execute_agent_fix(
+        self, execution_id: str, reviewed_by: str
+    ) -> ExecutionRecord:
+        """Execute a remediation fix using the Azure Python SDK.
+
+        In mock mode (``settings.use_local_mocks``), simulates success.
+
+        In live mode, calls the appropriate Azure management SDK
+        (``azure.mgmt.network``, ``azure.mgmt.compute``, ``azure.mgmt.resource``)
+        using ``DefaultAzureCredential`` — works on App Service (Managed Identity),
+        local dev (``az login``), and CI/CD (service principal).
+
+        Raises:
+            KeyError: If execution_id is unknown.
+            ValueError: If the record is not in ``manual_required`` state,
+                        the verdict snapshot is missing, or the action type
+                        is unsupported for SDK execution.
+        """
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record:
+            raise KeyError(f"Execution record not found: {execution_id!r}")
+        if record.status != ExecutionStatus.manual_required:
+            raise ValueError(
+                f"Cannot execute fix for {execution_id!r}: "
+                f"status is '{record.status.value}' (must be 'manual_required')"
+            )
+
+        preview = self.generate_agent_fix_commands(execution_id)
+        commands = preview["commands"]
+
+        # Reconstruct the ProposedAction for SDK execution
+        snapshot = record.verdict_snapshot
+        action = ProposedAction.model_validate(snapshot["proposed_action"])
+
+        record.reviewed_by = reviewed_by
+        record.updated_at = datetime.now(timezone.utc)
+
+        # ── Mock mode: simulate success ──
+        if settings.use_local_mocks:
+            record.status = ExecutionStatus.applied
+            record.notes = (
+                f"[mock] Agent fix applied successfully.\n"
+                f"Commands: {'; '.join(commands)}"
+            )
+            logger.info(
+                "ExecutionGateway: %s — agent fix applied (mock) by '%s'",
+                execution_id[:8], reviewed_by,
+            )
+            self._save(record)
+            return record
+
+        # ── Live mode: execute via Azure SDK ──
+        try:
+            result_msg = await _execute_fix_via_sdk(action)
+            record.status = ExecutionStatus.applied
+            record.notes = f"Agent fix applied via Azure SDK.\n{result_msg}"
+            logger.info(
+                "ExecutionGateway: %s — agent fix applied (SDK) by '%s': %s",
+                execution_id[:8], reviewed_by, result_msg,
+            )
+        except ImportError as exc:
+            raise ValueError(
+                f"Azure management SDK not installed: {exc}. "
+                "Run: pip install azure-mgmt-network azure-mgmt-compute azure-mgmt-resource"
+            ) from None
+        except ValueError:
+            # Re-raise ValueError (unsupported action, missing ARM ID, etc.)
+            # without corrupting the record status.
+            raise
+        except Exception as exc:  # noqa: BLE001
+            record.status = ExecutionStatus.failed
+            record.notes = f"Azure SDK error: {exc}"
+            logger.error(
+                "ExecutionGateway: agent fix failed — %s", exc
+            )
+
+        self._save(record)
+        return record
 
     # ------------------------------------------------------------------
     # Private helpers

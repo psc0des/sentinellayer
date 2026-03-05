@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-05 (post-deploy fixes round 3: scan_notes tool-call visibility in live log; deploy agent instructions rewritten for explicit NSG exposure detection (port 22/3389 open to `*` → must propose_action); real Terraform HCL for modify_nsg with 3 remediation options; HITL action panel for `pr_created` + `manual_required` status; GET /api/execution/{id}/terraform; 551 tests passing)
+**Last updated:** 2026-03-05 (HITL agent fix panel: Create Terraform PR from manual_required; agent fix preview + execute via Azure SDK; Decline/Ignore button; 3 new API endpoints; 570 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
@@ -28,7 +28,7 @@
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
-| Dashboard API | ✅ Complete | FastAPI REST (18 endpoints; scan runs durable; SSE live log; Teams status + test; explanation engine) |
+| Dashboard API | ✅ Complete | FastAPI REST (28 endpoints; scan runs durable; SSE live log; Teams status + test; explanation engine; HITL agent fix) |
 | Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
 | Live Azure topology (Phase 19) | ✅ Complete | `ResourceGraphClient._azure_enrich_topology()` — tag-based + KQL network topology; `cost_lookup.py` — Azure Retail Prices API; `USE_LIVE_TOPOLOGY=true` opt-in flag |
 | Async end-to-end migration (Phase 20) | ✅ Complete | All 7 agents: every `@af.tool` callback `async def` (incl. historical + policy, fixed post-audit); async Azure SDK clients (`aio.*`); `asyncio.gather()` for 4 concurrent KQL queries; `aclose()` on `ResourceGraphClient`, `BlastRadiusAgent`, `FinancialImpactAgent` |
@@ -48,7 +48,7 @@
 | A2A Protocol server | ✅ Complete | `agent-framework-a2a` + `a2a-sdk` |
 | A2A operational clients | ✅ Complete | `A2ACardResolver` + `A2AClient` + `httpx` |
 | A2A agent registry | ✅ Complete | JSON (mock) / Cosmos DB (live) |
-| Execution Gateway & HITL (Phase 21) | ✅ Complete | `src/core/execution_gateway.py` + `terraform_pr_generator.py` — IaC-safe execution via GitHub PRs; JSON-durable `ExecutionRecord`; HITL Approve/Dismiss in dashboard; live Azure tag lookup for IaC detection |
+| Execution Gateway & HITL (Phase 21) | ✅ Complete | `src/core/execution_gateway.py` + `terraform_pr_generator.py` — IaC-safe execution via GitHub PRs; JSON-durable `ExecutionRecord`; HITL Approve/Dismiss in dashboard; live Azure tag lookup for IaC detection; agent fix via `az` CLI (preview + execute); Create PR from `manual_required`; Decline/Ignore |
 
 ---
 
