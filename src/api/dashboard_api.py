@@ -18,6 +18,10 @@ POST /api/scan/all                 Trigger all 3 agents simultaneously.
 GET  /api/scan/{scan_id}/status    Check if a scan is complete + retrieve results.
 GET  /api/scan/{scan_id}/stream    SSE stream of real-time scan progress events.
 PATCH /api/scan/{scan_id}/cancel   Request cancellation of a running scan.
+GET  /api/execution/{action_id}            Execution status for a governance verdict.
+GET  /api/execution/pending-reviews        List all ESCALATED verdicts awaiting review.
+POST /api/execution/{execution_id}/approve Human approves an escalated verdict.
+POST /api/execution/{execution_id}/dismiss Human dismisses a verdict.
 
 Run
 ---
@@ -40,6 +44,7 @@ from pydantic import BaseModel
 from src.a2a.agent_registry import AgentRegistry
 from src.config import settings
 from src.core.decision_tracker import DecisionTracker
+from src.core.execution_gateway import ExecutionGateway
 from src.core.models import (
     ActionTarget,
     ActionType,
@@ -81,6 +86,7 @@ app.add_middleware(
 _tracker: DecisionTracker | None = None
 _registry: AgentRegistry | None = None
 _scan_tracker: ScanRunTracker | None = None
+_execution_gateway: ExecutionGateway | None = None
 
 # ---------------------------------------------------------------------------
 # Scan request model + in-memory scan store
@@ -320,6 +326,37 @@ async def _run_agent_scan(
             )
 
             tracker.record(verdict)
+
+            # --- Execution Gateway (Phase 21) ---
+            # Routes verdict to IaC-safe execution path.
+            # Wrapped in try/except — gateway failure must never break the scan.
+            try:
+                exec_record = await _get_execution_gateway().process_verdict(verdict)
+                logger.info(
+                    "scan %s (%s): execution status=%s for %s",
+                    scan_id[:8], agent_type,
+                    exec_record.status.value, resource_name,
+                )
+                await _emit_event(
+                    scan_id, "execution",
+                    agent=agent_type,
+                    resource_id=resource_name,
+                    execution_id=exec_record.execution_id,
+                    execution_status=exec_record.status.value,
+                    iac_managed=exec_record.iac_managed,
+                    pr_url=exec_record.pr_url,
+                    message=(
+                        f"Execution: {exec_record.status.value}"
+                        + (f" — PR #{exec_record.pr_number}" if exec_record.pr_number else "")
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "scan %s (%s): execution gateway failed — %s "
+                    "(verdict still valid)",
+                    scan_id[:8], agent_type, exc,
+                )
+
             verdict_id = verdict.action_id
             logger.info(
                 "scan %s (%s): verdict %s persisted to audit trail",
@@ -411,6 +448,14 @@ def _get_scan_tracker() -> ScanRunTracker:
     if _scan_tracker is None:
         _scan_tracker = ScanRunTracker()
     return _scan_tracker
+
+
+def _get_execution_gateway() -> ExecutionGateway:
+    """Return the module-level ExecutionGateway singleton."""
+    global _execution_gateway
+    if _execution_gateway is None:
+        _execution_gateway = ExecutionGateway()
+    return _execution_gateway
 
 
 def _persist_scan_record(scan_id: str) -> None:
@@ -1235,6 +1280,92 @@ async def get_evaluation_explanation(evaluation_id: str) -> dict:
 
     explanation = await _get_explainer().explain(verdict, action)
     return explanation.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Endpoints 19-22 — Execution Gateway (Phase 21)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/execution/{action_id}")
+async def get_execution_status(action_id: str) -> dict:
+    """Return execution status for a governance verdict.
+
+    Path parameter:
+    - **action_id**: the ``action_id`` UUID from the governance verdict.
+
+    Returns all ExecutionRecords linked to this verdict (usually one).
+    Returns ``{"status": "no_execution"}`` if the gateway has not processed
+    this verdict yet (e.g. EXECUTION_GATEWAY_ENABLED=false).
+    """
+    gateway = _get_execution_gateway()
+    records = gateway.get_records_for_verdict(action_id)
+    if not records:
+        return {"status": "no_execution", "action_id": action_id}
+    return {
+        "action_id": action_id,
+        "executions": [r.model_dump(mode="json") for r in records],
+    }
+
+
+@app.get("/api/execution/pending-reviews")
+async def get_pending_reviews() -> dict:
+    """List all ESCALATED verdicts currently awaiting human review.
+
+    These are records with ``status == "awaiting_review"`` — the human
+    can approve or dismiss them via the dashboard buttons.
+    """
+    gateway = _get_execution_gateway()
+    pending = gateway.get_pending_reviews()
+    return {
+        "count": len(pending),
+        "reviews": [r.model_dump(mode="json") for r in pending],
+    }
+
+
+@app.post("/api/execution/{execution_id}/approve")
+async def approve_execution(execution_id: str, body: dict = Body(default={})) -> dict:
+    """Human approves an escalated verdict for execution.
+
+    Transitions status from ``awaiting_review`` → ``pr_created`` (if IaC-managed)
+    or ``manual_required`` (if not IaC-managed).
+
+    Request body (optional)::
+
+        {"reviewed_by": "alice@example.com"}
+
+    Returns 400 if the record is not in ``awaiting_review`` state.
+    Returns 404 if execution_id is unknown.
+    """
+    gateway = _get_execution_gateway()
+    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    try:
+        record = await gateway.approve_execution(execution_id, reviewed_by)
+        return record.model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/execution/{execution_id}/dismiss")
+async def dismiss_execution(execution_id: str, body: dict = Body(default={})) -> dict:
+    """Human dismisses a verdict — no execution will happen.
+
+    Can dismiss any non-terminal execution record.
+
+    Request body (optional)::
+
+        {"reviewed_by": "alice@example.com", "reason": "Not needed this sprint"}
+
+    Returns 404 if execution_id is unknown.
+    """
+    gateway = _get_execution_gateway()
+    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    reason = body.get("reason", "")
+    try:
+        record = await gateway.dismiss_execution(execution_id, reviewed_by, reason)
+        return record.model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

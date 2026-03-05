@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { fetchExplanation } from '../api'
+import { approveExecution, dismissExecution, fetchExecutionStatus, fetchExplanation } from '../api'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -62,6 +62,8 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
     const [jsonExpanded, setJsonExpanded] = useState(false)
+    const [executionStatus, setExecutionStatus] = useState(null)
+    const [execLoading, setExecLoading] = useState(true)
 
     const ev = evaluation
     const decision = (ev.decision ?? 'approved').toLowerCase()
@@ -86,6 +88,41 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
             .finally(() => { if (!cancelled) setLoading(false) })
         return () => { cancelled = true }
     }, [ev.action_id])
+
+    useEffect(() => {
+        let cancelled = false
+        setExecLoading(true)
+        fetchExecutionStatus(ev.action_id)
+            .then(data => {
+                if (!cancelled) {
+                    // Pick the most recent execution record if multiple exist
+                    const execs = data.executions
+                    setExecutionStatus(execs && execs.length > 0 ? execs[execs.length - 1] : null)
+                }
+            })
+            .catch(() => { if (!cancelled) setExecutionStatus(null) })
+            .finally(() => { if (!cancelled) setExecLoading(false) })
+        return () => { cancelled = true }
+    }, [ev.action_id])
+
+    async function handleApprove(executionId) {
+        try {
+            const updated = await approveExecution(executionId)
+            setExecutionStatus(updated)
+        } catch (err) {
+            alert(`Approve failed: ${err.message}`)
+        }
+    }
+
+    async function handleDismiss(executionId) {
+        const reason = window.prompt('Reason for dismissal (optional):') ?? ''
+        try {
+            const updated = await dismissExecution(executionId, 'dashboard-user', reason)
+            setExecutionStatus(updated)
+        } catch (err) {
+            alert(`Dismiss failed: ${err.message}`)
+        }
+    }
 
     // SRI dimension display config
     const dimensions = [
@@ -383,6 +420,109 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                     </pre>
                 )}
             </div>
+
+            {/* ═══════════════════════════════════════════════════════════════
+          Section 7 — Execution Status (Phase 21)
+          ═══════════════════════════════════════════════════════════════ */}
+            <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                    Execution Status
+                </h2>
+
+                {execLoading ? (
+                    <p className="text-sm text-slate-500 animate-pulse">Loading execution status…</p>
+                ) : executionStatus ? (
+                    <div className="space-y-4">
+                        {/* Status badge row */}
+                        <div className="flex items-center gap-3 flex-wrap">
+                            <ExecutionStatusBadge status={executionStatus.status} />
+                            {executionStatus.iac_managed && (
+                                <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                                    IaC: {executionStatus.iac_tool || 'terraform'}
+                                </span>
+                            )}
+                            {executionStatus.reviewed_by && (
+                                <span className="text-xs text-slate-400">
+                                    by {executionStatus.reviewed_by}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* PR link */}
+                        {executionStatus.pr_url && (
+                            <a
+                                href={executionStatus.pr_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 underline"
+                            >
+                                View PR #{executionStatus.pr_number} on GitHub →
+                            </a>
+                        )}
+
+                        {/* Notes / error message */}
+                        {executionStatus.notes && (
+                            <p className="text-xs text-slate-400 italic">{executionStatus.notes}</p>
+                        )}
+
+                        {/* HITL action buttons — only for awaiting_review */}
+                        {executionStatus.status === 'awaiting_review' && (
+                            <div className="flex gap-3 pt-1">
+                                <button
+                                    onClick={() => handleApprove(executionStatus.execution_id)}
+                                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    Approve &amp; Execute
+                                </button>
+                                <button
+                                    onClick={() => handleDismiss(executionStatus.execution_id)}
+                                    className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg text-sm font-medium transition-colors"
+                                >
+                                    Dismiss
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Execution ID for audit */}
+                        <p className="text-xs text-slate-600 font-mono">
+                            ID: {executionStatus.execution_id}
+                        </p>
+                    </div>
+                ) : (
+                    <div className="space-y-1">
+                        <p className="text-sm text-slate-500">
+                            No execution record — verdict is informational only.
+                        </p>
+                        <p className="text-xs text-slate-600">
+                            Set <code className="text-slate-400">EXECUTION_GATEWAY_ENABLED=true</code> to
+                            enable Terraform PR generation for APPROVED verdicts.
+                        </p>
+                    </div>
+                )}
+            </div>
         </div>
+    )
+}
+
+// ── Execution status badge ──────────────────────────────────────────────────
+
+const EXEC_STATUS_CONFIG = {
+    pending:         { label: 'Pending',          color: 'text-slate-400',  bg: 'bg-slate-500/10',  border: 'border-slate-500/30' },
+    blocked:         { label: 'Blocked',           color: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/30' },
+    awaiting_review: { label: 'Awaiting Review',   color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
+    pr_created:      { label: 'PR Created',        color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/30' },
+    pr_merged:       { label: 'PR Merged',         color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/30' },
+    applied:         { label: 'Applied',           color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/30' },
+    manual_required: { label: 'Manual Required',   color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/30' },
+    dismissed:       { label: 'Dismissed',         color: 'text-slate-400',  bg: 'bg-slate-500/10',  border: 'border-slate-500/30' },
+    failed:          { label: 'Failed',            color: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/30' },
+}
+
+function ExecutionStatusBadge({ status }) {
+    const cfg = EXEC_STATUS_CONFIG[status] ?? EXEC_STATUS_CONFIG.pending
+    return (
+        <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+            {cfg.label}
+        </span>
     )
 }

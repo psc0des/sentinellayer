@@ -106,6 +106,26 @@ class Settings(BaseSettings):
     # Env var: SEQUENTIAL_LLM=true
     sequential_llm: bool = False
 
+    # --- Execution Gateway (Phase 21) ---
+    # GitHub PAT with Contents + Pull requests read/write on iac_github_repo.
+    # Required for Terraform PR generation.  Empty = PR creation disabled.
+    # Env var: GITHUB_TOKEN
+    github_token: str = ""
+
+    # GitHub repo that owns the IaC (e.g. "psc0des/ruriskry").
+    # Env var: IAC_GITHUB_REPO
+    iac_github_repo: str = ""
+
+    # Path within iac_github_repo to the Terraform config directory.
+    # Env var: IAC_TERRAFORM_PATH
+    iac_terraform_path: str = "infrastructure/terraform-prod"
+
+    # Master on/off switch for the Execution Gateway.
+    # False (default) = verdicts are informational only; no PRs are created.
+    # Set to true to enable PR generation for APPROVED + IaC-managed verdicts.
+    # Env var: EXECUTION_GATEWAY_ENABLED=true
+    execution_gateway_enabled: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

@@ -213,6 +213,41 @@ class DecisionExplanation(BaseModel):
 
 
 # ============================================
+# Execution Gateway Models (Phase 21)
+# ============================================
+
+class ExecutionStatus(str, Enum):
+    """Lifecycle states for a verdict's execution path."""
+    pending = "pending"                  # Verdict issued, not yet processed
+    blocked = "blocked"                  # DENIED — no execution
+    awaiting_review = "awaiting_review"  # ESCALATED — waiting for human
+    pr_created = "pr_created"            # APPROVED + IaC-managed — PR opened
+    pr_merged = "pr_merged"              # PR merged by human
+    applied = "applied"                  # terraform apply succeeded
+    manual_required = "manual_required"  # APPROVED but not IaC-managed
+    dismissed = "dismissed"              # Human chose to skip
+    failed = "failed"                    # PR creation or apply failed
+
+
+class ExecutionRecord(BaseModel):
+    """Tracks the execution lifecycle of a governance verdict."""
+    execution_id: str
+    action_id: str                   # Links to GovernanceVerdict.action_id
+    verdict: SRIVerdict
+    status: ExecutionStatus
+    iac_managed: bool = False        # True if resource has managed_by tag
+    iac_tool: str = ""               # "terraform" | "bicep" | "" (unknown)
+    iac_repo: str = ""               # e.g. "psc0des/ruriskry"
+    iac_path: str = ""               # e.g. "infrastructure/terraform-prod"
+    pr_url: str = ""                 # GitHub PR URL (when created)
+    pr_number: int = 0               # GitHub PR number
+    reviewed_by: str = ""            # Human who approved/dismissed
+    created_at: datetime
+    updated_at: datetime
+    notes: str = ""                  # Human-added context
+
+
+# ============================================
 # Audit Trail Record
 # ============================================
 

@@ -72,6 +72,10 @@ locals {
     project    = "ruriskry"
     managed_by = "terraform"
     purpose    = "governance-demo"
+    # IaC detection tags — read by ExecutionGateway to route APPROVED verdicts
+    # to Terraform PR generation instead of direct Azure SDK execution.
+    iac_repo   = "psc0des/ruriskry"
+    iac_path   = "infrastructure/terraform-prod"
   }
 }
 

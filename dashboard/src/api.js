@@ -171,3 +171,47 @@ export async function fetchExplanation(evaluationId) {
   if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch explanation`)
   return res.json()
 }
+
+/**
+ * Fetch execution status for a governance verdict.
+ * @param {string} actionId - action_id UUID from the governance verdict
+ * @returns {{ status?: string, action_id: string, executions?: object[] }}
+ */
+export async function fetchExecutionStatus(actionId) {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(actionId)}`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch execution status`)
+  return res.json()
+}
+
+/**
+ * Human approves an escalated verdict for execution.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @param {string} reviewedBy - name/email of the approver
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function approveExecution(executionId, reviewedBy = 'dashboard-user') {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewed_by: reviewedBy }),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to approve execution`)
+  return res.json()
+}
+
+/**
+ * Human dismisses a verdict — no execution will happen.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @param {string} reviewedBy - name/email of the person dismissing
+ * @param {string} reason - optional reason for dismissal
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function dismissExecution(executionId, reviewedBy = 'dashboard-user', reason = '') {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/dismiss`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewed_by: reviewedBy, reason }),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to dismiss execution`)
+  return res.json()
+}
