@@ -245,6 +245,8 @@ class ExecutionRecord(BaseModel):
     created_at: datetime
     updated_at: datetime
     notes: str = ""                  # Human-added context
+    verdict_snapshot: dict = {}      # GovernanceVerdict.model_dump() — used to reconstruct
+                                     # the verdict when approving ESCALATED records for PR creation
 
 
 # ============================================

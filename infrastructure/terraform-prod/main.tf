@@ -72,10 +72,12 @@ locals {
     project    = "ruriskry"
     managed_by = "terraform"
     purpose    = "governance-demo"
-    # IaC detection tags — read by ExecutionGateway to route APPROVED verdicts
-    # to Terraform PR generation instead of direct Azure SDK execution.
-    iac_repo   = "psc0des/ruriskry"
-    iac_path   = "infrastructure/terraform-prod"
+    # IaC detection tags — read by RuriSkry ExecutionGateway to route APPROVED
+    # verdicts to Terraform PR generation instead of direct Azure SDK execution.
+    # Set iac_github_repo + iac_terraform_path in terraform.tfvars to match
+    # your fork's GitHub repo and path.
+    iac_repo   = var.iac_github_repo
+    iac_path   = var.iac_terraform_path
   }
 }
 

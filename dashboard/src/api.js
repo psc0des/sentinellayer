@@ -178,7 +178,7 @@ export async function fetchExplanation(evaluationId) {
  * @returns {{ status?: string, action_id: string, executions?: object[] }}
  */
 export async function fetchExecutionStatus(actionId) {
-  const res = await fetch(`${BASE}/execution/${encodeURIComponent(actionId)}`)
+  const res = await fetch(`${BASE}/execution/by-action/${encodeURIComponent(actionId)}`)
   if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch execution status`)
   return res.json()
 }

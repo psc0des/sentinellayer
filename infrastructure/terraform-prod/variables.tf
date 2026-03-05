@@ -78,3 +78,22 @@ variable "allowed_source_cidr_override" {
     error_message = "allowed_source_cidr_override must be empty or a valid CIDR (for example 203.0.113.10/32)."
   }
 }
+
+# =============================================================================
+# Execution Gateway — IaC detection tags (Phase 21)
+# =============================================================================
+# These are written to every resource's tags as managed_by=terraform, iac_repo,
+# and iac_path.  The RuriSkry ExecutionGateway reads them to route APPROVED
+# verdicts to Terraform PR generation instead of direct Azure SDK execution.
+
+variable "iac_github_repo" {
+  description = "GitHub repo that owns this Terraform config (owner/repo). Written as iac_repo tag on all resources. Used by RuriSkry ExecutionGateway to create PRs."
+  type        = string
+  default     = "psc0des/ruriskry"
+}
+
+variable "iac_terraform_path" {
+  description = "Path within iac_github_repo to this Terraform directory. Written as iac_path tag on all resources."
+  type        = string
+  default     = "infrastructure/terraform-prod"
+}

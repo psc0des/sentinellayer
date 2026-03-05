@@ -16,11 +16,14 @@ Design principles:
 2. Gateway failure never breaks the verdict — callers wrap in try/except.
 3. HITL always present — even APPROVED actions require a human to merge the PR.
 4. IaC state is sacred — all changes flow through terraform apply, never direct SDK.
+5. State is durable — records persisted to data/executions/ (JSON mock) / Cosmos.
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from src.config import settings
 from src.core.models import (
@@ -32,9 +35,16 @@ from src.core.models import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_EXECUTIONS_DIR = (
+    Path(__file__).parent.parent.parent / "data" / "executions"
+)
+
 
 class ExecutionGateway:
     """Process governance verdicts and route to IaC-safe execution paths.
+
+    Records are persisted to ``data/executions/`` in mock mode (one JSON file
+    per record) so they survive API restarts.
 
     Usage::
 
@@ -43,10 +53,11 @@ class ExecutionGateway:
         print(record.status.value)  # "pr_created", "blocked", "awaiting_review", etc.
     """
 
-    def __init__(self) -> None:
-        # In-memory store keyed by execution_id.
-        # Future enhancement: persist to Cosmos DB for durability across restarts.
+    def __init__(self, executions_dir: Path | None = None) -> None:
+        self._dir = executions_dir or _DEFAULT_EXECUTIONS_DIR
+        # In-memory index for fast lookup; populated from disk on first use.
         self._records: dict[str, ExecutionRecord] = {}
+        self._loaded = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -59,19 +70,17 @@ class ExecutionGateway:
     ) -> ExecutionRecord:
         """Route a governance verdict to the correct execution path.
 
-        Called by the pipeline (or dashboard_api) immediately after
-        DecisionTracker.record().  The returned ExecutionRecord tracks the
-        full lifecycle: pending → pr_created → pr_merged → applied.
-
         Args:
             verdict: The governance verdict from the pipeline.
             resource_tags: Azure resource tags for IaC detection.
-                           Pass {} or None when tags are not available
-                           (APPROVED verdicts will become manual_required).
+                           Pass the real tags from seed_resources.json /
+                           Azure Resource Graph.  Empty dict → APPROVED
+                           verdicts become manual_required.
 
         Returns:
             ExecutionRecord with the initial execution status.
         """
+        self._ensure_loaded()
         tags = resource_tags or {}
         iac_managed, iac_tool, iac_repo, iac_path = self._detect_iac_management(tags)
         now = datetime.now(timezone.utc)
@@ -87,6 +96,7 @@ class ExecutionGateway:
             iac_path=iac_path,
             created_at=now,
             updated_at=now,
+            verdict_snapshot=verdict.model_dump(mode="json"),
         )
 
         resource_id = verdict.proposed_action.target.resource_id
@@ -107,7 +117,6 @@ class ExecutionGateway:
 
         elif verdict.decision == SRIVerdict.APPROVED:
             if not settings.execution_gateway_enabled:
-                # Gateway disabled — verdict is informational only.
                 record.status = ExecutionStatus.pending
                 logger.info(
                     "ExecutionGateway: APPROVED but gateway disabled — "
@@ -115,7 +124,6 @@ class ExecutionGateway:
                     resource_id,
                 )
             elif iac_managed and iac_repo:
-                # IaC-managed + gateway enabled → generate Terraform PR
                 try:
                     record = await self._create_terraform_pr(record, verdict)
                 except Exception as exc:  # noqa: BLE001
@@ -125,7 +133,6 @@ class ExecutionGateway:
                     record.status = ExecutionStatus.failed
                     record.notes = f"PR creation error: {exc}"
             else:
-                # Not IaC-managed → human must execute manually
                 record.status = ExecutionStatus.manual_required
                 logger.info(
                     "ExecutionGateway: APPROVED but not IaC-managed — "
@@ -134,8 +141,7 @@ class ExecutionGateway:
                 )
 
         record.updated_at = datetime.now(timezone.utc)
-        self._records[record.execution_id] = record
-        # Also index by action_id for quick lookup from API endpoints
+        self._save(record)
         return record
 
     async def approve_execution(
@@ -143,7 +149,8 @@ class ExecutionGateway:
     ) -> ExecutionRecord:
         """Human approves an ESCALATED verdict for execution.
 
-        Marks the record as pending and re-routes through IaC/manual path.
+        Rebuilds the original GovernanceVerdict from the stored snapshot
+        and calls TerraformPRGenerator if the resource is IaC-managed.
 
         Args:
             execution_id: UUID of the ExecutionRecord to approve.
@@ -153,11 +160,13 @@ class ExecutionGateway:
             Updated ExecutionRecord.
 
         Raises:
-            ValueError: If execution_id unknown or record is not awaiting_review.
+            KeyError: If execution_id is unknown.
+            ValueError: If record is not in awaiting_review state.
         """
+        self._ensure_loaded()
         record = self._records.get(execution_id)
         if not record:
-            raise ValueError(f"Unknown execution_id: {execution_id!r}")
+            raise KeyError(f"Execution record not found: {execution_id!r}")
         if record.status != ExecutionStatus.awaiting_review:
             raise ValueError(
                 f"Cannot approve execution {execution_id!r}: "
@@ -167,16 +176,34 @@ class ExecutionGateway:
         record.reviewed_by = reviewed_by
         record.updated_at = datetime.now(timezone.utc)
 
-        # Re-route: try IaC PR if repo is set, else manual
         if record.iac_managed and record.iac_repo:
-            # Reconstruct a minimal verdict reference is not needed here —
-            # the record already has all routing info.  Just mark for PR.
-            record.status = ExecutionStatus.pr_created
-            logger.info(
-                "ExecutionGateway: %s approved by '%s' — "
-                "marking pr_created (IaC repo: %s)",
-                execution_id[:8], reviewed_by, record.iac_repo,
-            )
+            # Reconstruct the GovernanceVerdict from the stored snapshot so we
+            # can pass it to TerraformPRGenerator for real PR creation.
+            verdict = self._reconstruct_verdict(record)
+            if verdict is not None:
+                try:
+                    record = await self._create_terraform_pr(record, verdict)
+                    logger.info(
+                        "ExecutionGateway: %s approved by '%s' — PR created",
+                        execution_id[:8], reviewed_by,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "ExecutionGateway: approve PR creation failed — %s", exc
+                    )
+                    record.status = ExecutionStatus.failed
+                    record.notes = f"PR creation error on approve: {exc}"
+            else:
+                # Snapshot missing / corrupted — fall back to manual
+                record.status = ExecutionStatus.manual_required
+                record.notes = (
+                    "Verdict snapshot not available — manual execution required"
+                )
+                logger.warning(
+                    "ExecutionGateway: %s approved by '%s' — no verdict snapshot, "
+                    "manual_required",
+                    execution_id[:8], reviewed_by,
+                )
         else:
             record.status = ExecutionStatus.manual_required
             logger.info(
@@ -184,16 +211,13 @@ class ExecutionGateway:
                 execution_id[:8], reviewed_by,
             )
 
-        self._records[execution_id] = record
+        self._save(record)
         return record
 
     async def dismiss_execution(
         self, execution_id: str, reviewed_by: str, reason: str = ""
     ) -> ExecutionRecord:
         """Human dismisses a verdict — no execution will happen.
-
-        Can dismiss any non-terminal record (pending, awaiting_review,
-        manual_required, pr_created).
 
         Args:
             execution_id: UUID of the ExecutionRecord to dismiss.
@@ -204,11 +228,12 @@ class ExecutionGateway:
             Updated ExecutionRecord with status 'dismissed'.
 
         Raises:
-            ValueError: If execution_id is unknown.
+            KeyError: If execution_id is unknown.
         """
+        self._ensure_loaded()
         record = self._records.get(execution_id)
         if not record:
-            raise ValueError(f"Unknown execution_id: {execution_id!r}")
+            raise KeyError(f"Execution record not found: {execution_id!r}")
 
         record.status = ExecutionStatus.dismissed
         record.reviewed_by = reviewed_by
@@ -219,19 +244,22 @@ class ExecutionGateway:
             "ExecutionGateway: %s dismissed by '%s' — reason: %s",
             execution_id[:8], reviewed_by, reason or "(none)",
         )
-        self._records[execution_id] = record
+        self._save(record)
         return record
 
     def get_record(self, execution_id: str) -> ExecutionRecord | None:
         """Return one ExecutionRecord by ID, or None if not found."""
+        self._ensure_loaded()
         return self._records.get(execution_id)
 
     def get_records_for_verdict(self, action_id: str) -> list[ExecutionRecord]:
         """Return all ExecutionRecords linked to a governance verdict's action_id."""
+        self._ensure_loaded()
         return [r for r in self._records.values() if r.action_id == action_id]
 
     def get_pending_reviews(self) -> list[ExecutionRecord]:
         """Return all records awaiting human review (ESCALATED verdicts)."""
+        self._ensure_loaded()
         return [
             r for r in self._records.values()
             if r.status == ExecutionStatus.awaiting_review
@@ -245,9 +273,6 @@ class ExecutionGateway:
         self, resource_tags: dict[str, str]
     ) -> tuple[bool, str, str, str]:
         """Check if a resource is IaC-managed via its Azure tags.
-
-        Looks for a ``managed_by`` tag with value "terraform", "bicep", or
-        "pulumi".  Also reads ``iac_repo`` and ``iac_path`` tags.
 
         Returns:
             (is_managed, iac_tool, iac_repo, iac_path)
@@ -267,11 +292,7 @@ class ExecutionGateway:
         record: ExecutionRecord,
         verdict: GovernanceVerdict,
     ) -> ExecutionRecord:
-        """Delegate PR creation to TerraformPRGenerator.
-
-        Imports lazily to avoid requiring PyGithub when the gateway is
-        disabled or the repo is not configured.
-        """
+        """Delegate PR creation to TerraformPRGenerator."""
         try:
             from src.core.terraform_pr_generator import TerraformPRGenerator  # noqa: PLC0415
             generator = TerraformPRGenerator()
@@ -288,3 +309,56 @@ class ExecutionGateway:
             record.status = ExecutionStatus.failed
             record.notes = f"PR creation error: {exc}"
         return record
+
+    def _reconstruct_verdict(self, record: ExecutionRecord) -> GovernanceVerdict | None:
+        """Rebuild a GovernanceVerdict from the stored snapshot dict.
+
+        Returns None if the snapshot is missing or cannot be parsed.
+        """
+        snapshot = record.verdict_snapshot
+        if not snapshot:
+            return None
+        try:
+            return GovernanceVerdict.model_validate(snapshot)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ExecutionGateway: could not reconstruct verdict from snapshot — %s", exc
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # Persistence helpers (JSON file store)
+    # ------------------------------------------------------------------
+
+    def _ensure_loaded(self) -> None:
+        """Load all persisted records from disk on first access."""
+        if self._loaded:
+            return
+        self._loaded = True
+        if not self._dir.exists():
+            return
+        for path in self._dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                rec = ExecutionRecord.model_validate(data)
+                self._records[rec.execution_id] = rec
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "ExecutionGateway: could not load record %s — %s", path.name, exc
+                )
+
+    def _save(self, record: ExecutionRecord) -> None:
+        """Persist one record to disk and update the in-memory index."""
+        self._records[record.execution_id] = record
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            path = self._dir / f"{record.execution_id}.json"
+            path.write_text(
+                record.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ExecutionGateway: could not persist record %s — %s",
+                record.execution_id[:8], exc,
+            )

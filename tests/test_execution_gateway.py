@@ -34,9 +34,9 @@ from src.core.models import (
 
 
 @pytest.fixture
-def gateway():
-    """Fresh ExecutionGateway with no prior records."""
-    return ExecutionGateway()
+def gateway(tmp_path):
+    """Fresh ExecutionGateway with isolated temp dir — no cross-test pollution."""
+    return ExecutionGateway(executions_dir=tmp_path / "executions")
 
 
 def _make_verdict(decision: SRIVerdict, resource_id: str = "vm-web-01") -> GovernanceVerdict:
@@ -215,17 +215,41 @@ class TestVerdictRouting:
 
 class TestApprovalFlow:
     @pytest.mark.asyncio
-    async def test_approve_escalated_record(self, gateway):
+    async def test_approve_escalated_no_iac_becomes_manual(self, gateway):
+        """Approving an ESCALATED verdict with no IaC tags → manual_required."""
         verdict = _make_verdict(SRIVerdict.ESCALATED)
         record = await gateway.process_verdict(verdict, {})
         assert record.status == ExecutionStatus.awaiting_review
 
         approved = await gateway.approve_execution(record.execution_id, "alice@example.com")
         assert approved.reviewed_by == "alice@example.com"
-        assert approved.status in (
-            ExecutionStatus.pr_created,
-            ExecutionStatus.manual_required,
-        )
+        assert approved.status == ExecutionStatus.manual_required  # no IaC tags
+
+    @pytest.mark.asyncio
+    async def test_approve_escalated_iac_calls_pr_generator(self, gateway):
+        """Approving ESCALATED + IaC-managed actually calls _create_terraform_pr."""
+        pr_called = []
+
+        async def fake_pr(record, verdict):
+            pr_called.append(True)
+            record.status = ExecutionStatus.pr_created
+            record.pr_number = 99
+            record.pr_url = "https://github.com/psc0des/ruriskry/pull/99"
+            return record
+
+        gateway._create_terraform_pr = fake_pr
+
+        verdict = _make_verdict(SRIVerdict.ESCALATED)
+        record = await gateway.process_verdict(verdict, _TERRAFORM_TAGS)
+        assert record.status == ExecutionStatus.awaiting_review
+
+        # snapshot must have been stored
+        assert record.verdict_snapshot  # non-empty dict
+
+        approved = await gateway.approve_execution(record.execution_id, "bob@example.com")
+        assert len(pr_called) == 1, "PR generator was not called"
+        assert approved.status == ExecutionStatus.pr_created
+        assert approved.pr_number == 99
 
     @pytest.mark.asyncio
     async def test_approve_non_escalated_raises(self, gateway):
@@ -236,8 +260,9 @@ class TestApprovalFlow:
             await gateway.approve_execution(record.execution_id, "alice")
 
     @pytest.mark.asyncio
-    async def test_approve_unknown_id_raises(self, gateway):
-        with pytest.raises(ValueError, match="Unknown execution_id"):
+    async def test_approve_unknown_id_raises_keyerror(self, gateway):
+        # Unknown ID raises KeyError (→ 404 in API), not ValueError (→ 400)
+        with pytest.raises(KeyError):
             await gateway.approve_execution("nonexistent-id", "alice")
 
     @pytest.mark.asyncio
@@ -253,8 +278,9 @@ class TestApprovalFlow:
         assert dismissed.notes == "Not needed this sprint"
 
     @pytest.mark.asyncio
-    async def test_dismiss_unknown_id_raises(self, gateway):
-        with pytest.raises(ValueError, match="Unknown execution_id"):
+    async def test_dismiss_unknown_id_raises_keyerror(self, gateway):
+        # Unknown ID raises KeyError (→ 404 in API), not ValueError (→ 400)
+        with pytest.raises(KeyError):
             await gateway.dismiss_execution("bad-id", "bob")
 
     @pytest.mark.asyncio
@@ -279,6 +305,59 @@ class TestApprovalFlow:
 # ---------------------------------------------------------------------------
 # 4. Gateway Failure Does Not Break Verdict (smoke test)
 # ---------------------------------------------------------------------------
+
+
+class TestVerdictSnapshot:
+    @pytest.mark.asyncio
+    async def test_snapshot_stored_on_process(self, gateway):
+        """verdict_snapshot is populated from verdict.model_dump() in process_verdict."""
+        verdict = _make_verdict(SRIVerdict.DENIED)
+        record = await gateway.process_verdict(verdict, {})
+        assert record.verdict_snapshot  # non-empty
+        assert record.verdict_snapshot["action_id"] == verdict.action_id
+        assert record.verdict_snapshot["decision"] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_reconstruct_verdict_from_snapshot(self, gateway):
+        """_reconstruct_verdict returns a valid GovernanceVerdict from snapshot."""
+        verdict = _make_verdict(SRIVerdict.ESCALATED)
+        record = await gateway.process_verdict(verdict, {})
+
+        reconstructed = gateway._reconstruct_verdict(record)
+        assert reconstructed is not None
+        assert reconstructed.action_id == verdict.action_id
+        assert reconstructed.decision == SRIVerdict.ESCALATED
+
+    @pytest.mark.asyncio
+    async def test_reconstruct_empty_snapshot_returns_none(self, gateway):
+        """_reconstruct_verdict returns None when snapshot is empty."""
+        verdict = _make_verdict(SRIVerdict.ESCALATED)
+        record = await gateway.process_verdict(verdict, {})
+        record.verdict_snapshot = {}
+        result = gateway._reconstruct_verdict(record)
+        assert result is None
+
+
+class TestPersistence:
+    @pytest.mark.asyncio
+    async def test_records_persist_to_disk(self, tmp_path):
+        """Records written to disk can be loaded by a fresh gateway instance."""
+        gw1 = ExecutionGateway(executions_dir=tmp_path)
+        verdict = _make_verdict(SRIVerdict.DENIED)
+        record = await gw1.process_verdict(verdict, {})
+
+        # New instance — loads from disk
+        gw2 = ExecutionGateway(executions_dir=tmp_path)
+        loaded = gw2.get_record(record.execution_id)
+        assert loaded is not None
+        assert loaded.execution_id == record.execution_id
+        assert loaded.status == ExecutionStatus.blocked
+
+    @pytest.mark.asyncio
+    async def test_empty_dir_loads_cleanly(self, tmp_path):
+        """Gateway with an empty directory starts with no records."""
+        gw = ExecutionGateway(executions_dir=tmp_path)
+        assert gw.get_pending_reviews() == []
 
 
 class TestGatewayResiliency:

@@ -18,10 +18,10 @@ POST /api/scan/all                 Trigger all 3 agents simultaneously.
 GET  /api/scan/{scan_id}/status    Check if a scan is complete + retrieve results.
 GET  /api/scan/{scan_id}/stream    SSE stream of real-time scan progress events.
 PATCH /api/scan/{scan_id}/cancel   Request cancellation of a running scan.
-GET  /api/execution/{action_id}            Execution status for a governance verdict.
-GET  /api/execution/pending-reviews        List all ESCALATED verdicts awaiting review.
-POST /api/execution/{execution_id}/approve Human approves an escalated verdict.
-POST /api/execution/{execution_id}/dismiss Human dismisses a verdict.
+GET  /api/execution/pending-reviews              List all ESCALATED verdicts awaiting review.
+GET  /api/execution/by-action/{action_id}        Execution status for a governance verdict.
+POST /api/execution/{execution_id}/approve       Human approves an escalated verdict.
+POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
 
 Run
 ---
@@ -58,6 +58,40 @@ from src.core.scan_run_tracker import ScanRunTracker
 from src.notifications.teams_notifier import send_teams_notification
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Resource tag lookup helper (Fix 1 — pass real tags to ExecutionGateway)
+# ---------------------------------------------------------------------------
+
+_resource_graph_cache: dict[str, dict] | None = None
+
+
+def _get_resource_tags(resource_id: str) -> dict[str, str]:
+    """Look up a resource's tags from seed_resources.json by name or full ID.
+
+    Used by _run_agent_scan() to pass real IaC tags to the ExecutionGateway so
+    it can correctly detect terraform-managed resources and route APPROVED verdicts
+    to PR creation instead of manual_required.
+
+    Returns an empty dict if the resource is not found (safe default — APPROVED
+    verdicts will route to manual_required).
+    """
+    global _resource_graph_cache
+    if _resource_graph_cache is None:
+        try:
+            from pathlib import Path  # noqa: PLC0415
+            seed_path = Path(__file__).parent.parent.parent / "data" / "seed_resources.json"
+            import json as _json  # noqa: PLC0415
+            data = _json.loads(seed_path.read_text(encoding="utf-8"))
+            _resource_graph_cache = {r["name"]: r for r in data.get("resources", [])}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("dashboard_api: could not load seed_resources.json — %s", exc)
+            _resource_graph_cache = {}
+
+    # Try exact match, then last path segment (for full Azure resource IDs)
+    name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+    resource = _resource_graph_cache.get(resource_id) or _resource_graph_cache.get(name)
+    return resource.get("tags", {}) if resource else {}
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -329,9 +363,14 @@ async def _run_agent_scan(
 
             # --- Execution Gateway (Phase 21) ---
             # Routes verdict to IaC-safe execution path.
+            # Pass real resource tags so IaC-managed resources are detected and
+            # APPROVED verdicts route to Terraform PR, not manual_required.
             # Wrapped in try/except — gateway failure must never break the scan.
             try:
-                exec_record = await _get_execution_gateway().process_verdict(verdict)
+                resource_tags = _get_resource_tags(action.target.resource_id)
+                exec_record = await _get_execution_gateway().process_verdict(
+                    verdict, resource_tags
+                )
                 logger.info(
                     "scan %s (%s): execution status=%s for %s",
                     scan_id[:8], agent_type,
@@ -1284,10 +1323,30 @@ async def get_evaluation_explanation(evaluation_id: str) -> dict:
 
 # ---------------------------------------------------------------------------
 # Endpoints 19-22 — Execution Gateway (Phase 21)
+# NOTE: Static routes MUST be declared before dynamic /{param} routes to
+# prevent FastAPI from capturing them as path parameters.
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/execution/{action_id}")
+@app.get("/api/execution/pending-reviews")
+async def get_pending_reviews() -> dict:
+    """List all ESCALATED verdicts currently awaiting human review.
+
+    These are records with ``status == "awaiting_review"`` — the human
+    can approve or dismiss them via the dashboard buttons.
+
+    This route is declared BEFORE ``/by-action/{action_id}`` so FastAPI does
+    not mistake the literal string "pending-reviews" for an action_id.
+    """
+    gateway = _get_execution_gateway()
+    pending = gateway.get_pending_reviews()
+    return {
+        "count": len(pending),
+        "reviews": [r.model_dump(mode="json") for r in pending],
+    }
+
+
+@app.get("/api/execution/by-action/{action_id}")
 async def get_execution_status(action_id: str) -> dict:
     """Return execution status for a governance verdict.
 
@@ -1297,6 +1356,9 @@ async def get_execution_status(action_id: str) -> dict:
     Returns all ExecutionRecords linked to this verdict (usually one).
     Returns ``{"status": "no_execution"}`` if the gateway has not processed
     this verdict yet (e.g. EXECUTION_GATEWAY_ENABLED=false).
+
+    Route renamed from ``/{action_id}`` to ``/by-action/{action_id}`` to
+    prevent shadowing of the static ``/pending-reviews`` route.
     """
     gateway = _get_execution_gateway()
     records = gateway.get_records_for_verdict(action_id)
@@ -1308,40 +1370,28 @@ async def get_execution_status(action_id: str) -> dict:
     }
 
 
-@app.get("/api/execution/pending-reviews")
-async def get_pending_reviews() -> dict:
-    """List all ESCALATED verdicts currently awaiting human review.
-
-    These are records with ``status == "awaiting_review"`` — the human
-    can approve or dismiss them via the dashboard buttons.
-    """
-    gateway = _get_execution_gateway()
-    pending = gateway.get_pending_reviews()
-    return {
-        "count": len(pending),
-        "reviews": [r.model_dump(mode="json") for r in pending],
-    }
-
-
 @app.post("/api/execution/{execution_id}/approve")
 async def approve_execution(execution_id: str, body: dict = Body(default={})) -> dict:
     """Human approves an escalated verdict for execution.
 
-    Transitions status from ``awaiting_review`` → ``pr_created`` (if IaC-managed)
-    or ``manual_required`` (if not IaC-managed).
+    Reconstructs the original GovernanceVerdict from the stored snapshot and
+    calls TerraformPRGenerator if the resource is IaC-managed and GitHub is
+    configured.  Otherwise transitions to ``manual_required``.
 
     Request body (optional)::
 
         {"reviewed_by": "alice@example.com"}
 
-    Returns 400 if the record is not in ``awaiting_review`` state.
     Returns 404 if execution_id is unknown.
+    Returns 400 if the record is not in ``awaiting_review`` state.
     """
     gateway = _get_execution_gateway()
     reviewed_by = body.get("reviewed_by", "dashboard-user")
     try:
         record = await gateway.approve_execution(execution_id, reviewed_by)
         return record.model_dump(mode="json")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1364,8 +1414,8 @@ async def dismiss_execution(execution_id: str, body: dict = Body(default={})) ->
     try:
         record = await gateway.dismiss_execution(execution_id, reviewed_by, reason)
         return record.model_dump(mode="json")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
