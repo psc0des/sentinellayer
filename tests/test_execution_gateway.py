@@ -910,3 +910,150 @@ class TestCreatePRFromManual:
         record.verdict_snapshot = {}
         with pytest.raises(ValueError, match="snapshot"):
             await gateway.create_pr_from_manual(record.execution_id, "alice")
+
+
+class TestNsgPatchInPRGenerator:
+    """Tests for _apply_nsg_fix_to_content and _find_and_patch_tf_file."""
+
+    def _gen(self):
+        from src.core.terraform_pr_generator import TerraformPRGenerator
+        with patch("src.core.terraform_pr_generator.settings") as s:
+            s.github_token = ""
+            s.iac_github_repo = ""
+            s.iac_terraform_path = "infra"
+            s.dashboard_url = ""
+            return TerraformPRGenerator()
+
+    # ── _apply_nsg_fix_to_content ──────────────────────────────────────────
+
+    def test_patches_allow_to_deny(self):
+        gen = self._gen()
+        tf = '''\
+resource "azurerm_network_security_rule" "testing_ssh" {
+  name                        = "testing-ssh"
+  priority                    = 140
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_address_prefix       = "*"
+  destination_port_range      = "22"
+  resource_group_name         = "rg"
+  network_security_group_name = "nsg"
+}
+'''
+        result = gen._apply_nsg_fix_to_content(tf, "testing-ssh")
+        assert result is not None
+        assert '"Deny"' in result
+        assert '"Allow"' not in result
+
+    def test_returns_none_when_rule_not_found(self):
+        gen = self._gen()
+        tf = '''\
+resource "azurerm_network_security_rule" "other_rule" {
+  name   = "other-rule"
+  access = "Allow"
+}
+'''
+        result = gen._apply_nsg_fix_to_content(tf, "testing-ssh")
+        assert result is None
+
+    def test_returns_none_when_already_deny(self):
+        gen = self._gen()
+        tf = '''\
+resource "azurerm_network_security_rule" "testing_ssh" {
+  name   = "testing-ssh"
+  access = "Deny"
+}
+'''
+        result = gen._apply_nsg_fix_to_content(tf, "testing-ssh")
+        assert result is None  # no change needed
+
+    # ── _find_and_patch_tf_file ────────────────────────────────────────────
+
+    def test_find_and_patch_returns_none_for_non_nsg(self):
+        gen = self._gen()
+        action = ProposedAction(
+            agent_id="cost-agent",
+            action_type=ActionType.SCALE_DOWN,
+            target=ActionTarget(resource_id="vm-web-01", resource_type="virtualMachines", resource_group="rg"),
+            reason="CPU low",
+            urgency=Urgency.LOW,
+        )
+        result = gen._find_and_patch_tf_file(MagicMock(), "infra", action)
+        assert result is None
+
+    def test_find_and_patch_returns_none_when_no_rule_name_in_reason(self):
+        gen = self._gen()
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(resource_id="nsg-east-prod", resource_type="networkSecurityGroups", resource_group="rg"),
+            reason="some rule is bad",  # no quoted rule name
+            urgency=Urgency.HIGH,
+        )
+        result = gen._find_and_patch_tf_file(MagicMock(), "infra", action)
+        assert result is None
+
+    def test_find_and_patch_modifies_existing_file(self):
+        gen = self._gen()
+        tf_content = '''\
+resource "azurerm_network_security_rule" "testing_ssh" {
+  name   = "testing-ssh"
+  access = "Allow"
+}
+'''
+        mock_file = MagicMock()
+        mock_file.name = "main.tf"
+        mock_file.path = "infra/main.tf"
+        mock_file.sha = "abc123"
+        mock_file.decoded_content = tf_content.encode()
+        mock_file.type = "file"
+
+        mock_repo = MagicMock()
+        mock_repo.get_contents.return_value = [mock_file]
+
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(resource_id="nsg-east-prod", resource_type="networkSecurityGroups", resource_group="rg"),
+            reason="rule 'testing-ssh' allows SSH from *",
+            urgency=Urgency.HIGH,
+        )
+        result = gen._find_and_patch_tf_file(mock_repo, "infra", action)
+
+        assert result is not None
+        assert result["path"] == "infra/main.tf"
+        assert result["rule_name"] == "testing-ssh"
+        assert '"Deny"' in result["new_content"]
+        assert result["sha"] == "abc123"
+
+
+class TestAutoDissmissOnRescan:
+    """Integration test for the auto-dismiss-on-rescan logic in get_unresolved_proposals."""
+
+    @pytest.mark.asyncio
+    async def test_auto_dismiss_sets_status_dismissed(self, gateway):
+        """A manual_required record that is dismissed becomes 'dismissed'."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        # Simulate what the scan loop does: agent found the resource clean → dismiss
+        await gateway.dismiss_execution(
+            record.execution_id,
+            "auto-scan",
+            "Auto-dismissed: deploy re-scanned resource and found no issues",
+        )
+        updated = gateway.get_record(record.execution_id)
+        assert updated.status == ExecutionStatus.dismissed
+        assert updated.reviewed_by == "auto-scan"
+
+    @pytest.mark.asyncio
+    async def test_dismissed_records_not_in_unresolved(self, gateway):
+        """Dismissed records do NOT appear in get_unresolved_proposals."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        await gateway.dismiss_execution(record.execution_id, "auto-scan", "resolved")
+        pairs = gateway.get_unresolved_proposals()
+        ids = [r.execution_id for _, r in pairs]
+        assert record.execution_id not in ids

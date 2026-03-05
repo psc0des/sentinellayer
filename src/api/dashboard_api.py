@@ -35,6 +35,7 @@ Run
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -308,33 +309,77 @@ async def _run_agent_scan(
         # If a previous scan returned APPROVED verdicts that couldn't be routed
         # to a Terraform PR (no IaC tags), the resource still needs a manual fix.
         # Re-add those proposals so the governance pipeline evaluates them again
-        # on every scan — until the human dismisses the record (meaning they
-        # fixed it) or the agent naturally stops proposing it (config changed).
+        # on every scan — UNLESS the agent just scanned that resource and found
+        # it clean, in which case the fix was already applied → auto-dismiss.
         already_proposed = {
             (p.target.resource_id, p.action_type.value) for p in proposals
         }
+
+        # Build a set of resource names the agent actively examined this scan
+        # by parsing scan_notes (e.g. "found: vm-01, nsg-east" or "NSG 'nsg-x':")
+        examined_names: set[str] = set()
+        for note in getattr(agent, "scan_notes", []):
+            # "Resource Graph query → N resource(s) found: name1, name2"
+            found_match = re.search(r"found[:\s→]+(.+)", note, re.IGNORECASE)
+            if found_match:
+                for name in found_match.group(1).split(","):
+                    examined_names.add(name.strip().lower())
+            # "NSG 'nsg-name':" or similar single-quoted resource names
+            for m in re.finditer(r"'([^']+)'", note):
+                examined_names.add(m.group(1).lower())
+
         unresolved_pairs = _get_execution_gateway().get_unresolved_proposals()
         requeued = 0
+        auto_dismissed = 0
         for unresolved_action, exec_record in unresolved_pairs:
             key = (unresolved_action.target.resource_id, unresolved_action.action_type.value)
-            if key not in already_proposed:
-                # Annotate the reason so the scan log is clear
-                unresolved_action = unresolved_action.model_copy(update={
-                    "reason": (
-                        f"[Unresolved since {exec_record.created_at.strftime('%d %b')}] "
-                        + unresolved_action.reason
+            if key in already_proposed:
+                continue  # current scan re-proposed it — will be evaluated fresh
+
+            resource_name = unresolved_action.target.resource_id.split("/")[-1].lower()
+            if resource_name in examined_names:
+                # Agent scanned this resource and found nothing wrong → fix was applied
+                try:
+                    await _get_execution_gateway().dismiss_execution(
+                        exec_record.execution_id,
+                        "auto-scan",
+                        f"Auto-dismissed: {agent_type} re-scanned '{resource_name}' and found no issues",
                     )
-                })
-                proposals.append(unresolved_action)
-                already_proposed.add(key)
-                requeued += 1
-                logger.info(
-                    "scan %s (%s): re-flagging unresolved %s on %s (exec %s)",
-                    scan_id[:8], agent_type,
-                    unresolved_action.action_type.value,
-                    unresolved_action.target.resource_id.split("/")[-1],
-                    exec_record.execution_id[:8],
+                    auto_dismissed += 1
+                    logger.info(
+                        "scan %s (%s): auto-dismissed resolved issue for %s (exec %s)",
+                        scan_id[:8], agent_type, resource_name, exec_record.execution_id[:8],
+                    )
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning("scan %s: auto-dismiss failed — %s", scan_id[:8], _e)
+                continue
+
+            # Resource was not scanned this run → keep re-flagging
+            unresolved_action = unresolved_action.model_copy(update={
+                "reason": (
+                    f"[Unresolved since {exec_record.created_at.strftime('%d %b')}] "
+                    + unresolved_action.reason
                 )
+            })
+            proposals.append(unresolved_action)
+            already_proposed.add(key)
+            requeued += 1
+            logger.info(
+                "scan %s (%s): re-flagging unresolved %s on %s (exec %s)",
+                scan_id[:8], agent_type,
+                unresolved_action.action_type.value,
+                unresolved_action.target.resource_id.split("/")[-1],
+                exec_record.execution_id[:8],
+            )
+        if auto_dismissed:
+            await _emit_event(
+                scan_id, "info",
+                agent=agent_type,
+                message=(
+                    f"Auto-dismissed {auto_dismissed} resolved issue(s): "
+                    f"re-scanned and found clean."
+                ),
+            )
         if requeued:
             await _emit_event(
                 scan_id, "discovery",
