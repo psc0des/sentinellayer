@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-06 (Policy engine upgraded to production-grade: 6→11 policies covering CIS Azure 6.1/6.2/6.3, mandatory tag enforcement, production deletion/downgrade protection; two new condition types: `reason_pattern` (regex on action reason) and `tags_absent` (mandatory tag enforcement); resource_type prefix match for sub-resources; 606 tests passing)
+**Last updated:** 2026-03-07 (Policy engine: removed POL-SEC-002/003 — reason_pattern on remediation actions was blocking the fix for the very issue the agent detected; 9 policies now; `reason_pattern` and `tags_absent` condition types retained in engine for future use; 596 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 

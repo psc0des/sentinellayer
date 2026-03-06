@@ -131,7 +131,7 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 | Agent | SRI Dimension | Data Source |
 |---|---|---|
 | `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` — KQL topology (tag + NSG join) · **Mock:** `seed_resources.json` |
-| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies (CIS Azure 6.1/6.2/6.3, DR, tag enforcement, change windows, cost, prod protection) |
+| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 9 production policies (DR, NSG change control, tag enforcement, change windows, cost, critical/shared resource protection, prod deletion/downgrade protection) |
 | `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` |
 | `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · **Mock:** `seed_resources.json` |
 

@@ -24,30 +24,6 @@
     "category": "security"
   },
   {
-    "id": "POL-SEC-002",
-    "name": "Internet-Exposed Dangerous Ports",
-    "description": "NSG rules exposing SSH (22), RDP (3389), or database ports (1433, 3306, 5432) to all sources ('*' or '0.0.0.0/0') are prohibited (CIS Azure 6.1/6.2)",
-    "severity": "critical",
-    "conditions": {
-      "blocked_actions": ["modify_nsg"],
-      "reason_pattern": "(?:port\\s+(?:22|3389|1433|3306|5432)|\\bSSH\\b|\\bRDP\\b).*(?:(?:source|from)\\s+(?:\\*|0\\.0\\.0\\.0|any|all|internet)|(?:\\*|0\\.0\\.0\\.0|any|all|internet).*(?:source|from|inbound))|(?:(?:source|from)\\s+(?:\\*|0\\.0\\.0\\.0|any|all|internet)|(?:\\*|0\\.0\\.0\\.0|any|all|internet).*(?:source|from|inbound)).*(?:port\\s+(?:22|3389|1433|3306|5432)|\\bSSH\\b|\\bRDP\\b)"
-    },
-    "override_requires": "security_team_review",
-    "category": "security"
-  },
-  {
-    "id": "POL-SEC-003",
-    "name": "Unrestricted Inbound Access",
-    "description": "NSG rules allowing inbound traffic from all sources ('*' or '0.0.0.0/0') on any port require security review (CIS Azure 6.3)",
-    "severity": "high",
-    "conditions": {
-      "blocked_actions": ["modify_nsg"],
-      "reason_pattern": "(?:all\\s+sources|source[s]?\\s*(?:=\\s*)?['\"]?\\*['\"]?|0\\.0\\.0\\.0/0|from\\s+(?:\\*|any|all|internet|everywhere)|\\*\\)|expose[s]?.*(?:entire|internet|everywhere)|to\\s+(?:all|the\\s+entire|the\\s+internet))"
-    },
-    "override_requires": "security_team_review",
-    "category": "security"
-  },
-  {
     "id": "POL-CHG-001",
     "name": "Change Window Enforcement",
     "description": "Production changes prohibited Friday 5PM through Monday 8AM UTC",

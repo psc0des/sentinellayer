@@ -529,113 +529,6 @@ class TestPolicyComplianceAgent:
         assert result.total_policies_checked == 0
 
     # ------------------------------------------------------------------
-    # POL-SEC-002 — Internet-Exposed Dangerous Ports (critical)
-    # ------------------------------------------------------------------
-
-    async def test_pol_sec002_ssh_open_to_star(self, agent):
-        """SSH port 22 exposed to source '*' triggers POL-SEC-002."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups/securityRules",
-            reason="Inbound Allow rule 'allow-ssh-anywhere' exposes port 22 (SSH) to all sources ('*'), which is a critical security gap exposing SSH to the entire internet.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
-
-    async def test_pol_sec002_rdp_open_to_internet(self, agent):
-        """RDP port 3389 exposed to 0.0.0.0/0 triggers POL-SEC-002."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Inbound Allow rule exposes port 3389 (RDP) from 0.0.0.0/0 to VMs.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
-
-    async def test_pol_sec002_database_port_open(self, agent):
-        """PostgreSQL port 5432 open to internet triggers POL-SEC-002."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Rule allows inbound traffic on port 5432 from source * to database subnet.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
-
-    async def test_pol_sec002_severity_is_critical(self, agent):
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="SSH port 22 open from source * to all VMs.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        violation = next(v for v in result.violations if v.policy_id == "POL-SEC-002")
-        assert violation.severity == PolicySeverity.CRITICAL
-
-    async def test_pol_sec002_not_triggered_for_restricted_source(self, agent):
-        """SSH open to a specific IP range should NOT trigger POL-SEC-002."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Allow SSH port 22 from source 10.0.0.0/24 to management subnet.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert not any(v.policy_id == "POL-SEC-002" for v in result.violations)
-
-    async def test_pol_sec002_not_triggered_for_non_nsg_action(self, agent):
-        """Non-modify_nsg actions should not trigger POL-SEC-002 even with matching reason."""
-        action = _make_action(
-            action_type=ActionType.UPDATE_CONFIG,
-            reason="Update config: SSH port 22 from source * exposed.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert not any(v.policy_id == "POL-SEC-002" for v in result.violations)
-
-    # ------------------------------------------------------------------
-    # POL-SEC-003 — Unrestricted Inbound Access (high)
-    # ------------------------------------------------------------------
-
-    async def test_pol_sec003_all_sources_wildcard(self, agent):
-        """NSG rule allowing from all sources ('*') triggers POL-SEC-003."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Inbound Allow rule exposes port 8080 to all sources ('*').",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-003" for v in result.violations)
-
-    async def test_pol_sec003_cidr_any(self, agent):
-        """0.0.0.0/0 source triggers POL-SEC-003."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Rule allows inbound from 0.0.0.0/0 on port 443.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-003" for v in result.violations)
-
-    async def test_pol_sec003_exposes_to_internet(self, agent):
-        """Reason mentioning 'exposing to the entire internet' triggers POL-SEC-003."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="This rule exposes port 8443 to the entire internet.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-003" for v in result.violations)
-
-    async def test_pol_sec003_not_triggered_for_internal(self, agent):
-        """Internal traffic rule should not trigger POL-SEC-003."""
-        action = _make_action(
-            action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Allow port 443 from VNet 10.0.0.0/16 to application subnet.",
-        )
-        result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert not any(v.policy_id == "POL-SEC-003" for v in result.violations)
-
-    # ------------------------------------------------------------------
     # POL-TAG-001 — Mandatory Governance Tags (medium)
     # ------------------------------------------------------------------
 
@@ -793,18 +686,22 @@ class TestPolicyComplianceAgent:
         assert any(v.policy_id == "POL-SEC-001" for v in result.violations)
 
     # ------------------------------------------------------------------
-    # Condition type: reason_pattern
+    # Condition type: reason_pattern (engine capability — tested with custom policy)
     # ------------------------------------------------------------------
 
-    async def test_reason_pattern_case_insensitive(self, agent):
+    async def test_reason_pattern_case_insensitive(self, tmp_path):
         """reason_pattern should match case-insensitively."""
+        custom = tmp_path / "reason_test.json"
+        custom.write_text('[{"id": "TEST-RP-001", "name": "Test Reason Pattern", '
+                          '"description": "test", "severity": "low", '
+                          '"conditions": {"reason_pattern": "danger.*zone"}}]')
+        agent = PolicyComplianceAgent(policies_path=custom)
         action = _make_action(
             action_type=ActionType.MODIFY_NSG,
-            resource_type="Microsoft.Network/networkSecurityGroups",
-            reason="Exposes PORT 22 (ssh) FROM SOURCE * to VMs.",
+            reason="This is a DANGER ZONE situation.",
         )
         result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert any(v.policy_id == "POL-SEC-002" for v in result.violations)
+        assert any(v.policy_id == "TEST-RP-001" for v in result.violations)
 
     # ------------------------------------------------------------------
     # Condition type: tags_absent
@@ -830,8 +727,8 @@ class TestPolicyComplianceAgent:
     # Updated score / metadata checks
     # ------------------------------------------------------------------
 
-    async def test_total_policies_is_eleven(self, agent):
-        """Production policy set should have 11 policies."""
+    async def test_total_policies_is_nine(self, agent):
+        """Production policy set should have 9 policies."""
         action = _make_action()
         result = await agent.evaluate(action, now=_WEDNESDAY_NOON)
-        assert result.total_policies_checked == 11
+        assert result.total_policies_checked == 9
