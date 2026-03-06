@@ -155,8 +155,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
 | POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record |
-| GET | `/api/execution/{execution_id}/agent-fix-preview` | Preview `az` CLI fix commands |
-| POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute `az` CLI fix commands |
+| GET | `/api/execution/{execution_id}/agent-fix-preview` | Preview remediation commands (displayed as `az` CLI for readability; execution uses Azure SDK) |
+| POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
 

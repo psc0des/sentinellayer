@@ -48,11 +48,12 @@ src/
 ├── notifications/               # Outbound alerting
 │   └── teams_notifier.py        # send_teams_notification() — Adaptive Card to Teams webhook
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints — 18 total (Phase 10 agents,
+│   └── dashboard_api.py         # FastAPI REST endpoints — 27 total (Phase 10 agents,
 │                                #   Phase 12 alert-trigger, Phase 13 scan triggers,
 │                                #   Phase 16: SSE stream, cancel, last-run + durable store,
 │                                #   Phase 17: notification-status + test-notification,
-│                                #   Phase 18: evaluation explanation)
+│                                #   Phase 18: evaluation explanation,
+│                                #   Phase 21: execution gateway HITL + agent-fix + terraform stub)
 └── config.py                    # Environment config with SRI thresholds
 ```
 
@@ -219,7 +220,7 @@ Key files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
 `POST /api/execution/{id}/dismiss`, `POST /api/execution/{id}/create-pr`,
 `GET /api/execution/{id}/agent-fix-preview`, `POST /api/execution/{id}/agent-fix-execute`.
 Env vars: `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`,
-`EXECUTION_GATEWAY_ENABLED`. **Tests: 568 passed.**
+`EXECUTION_GATEWAY_ENABLED`. **Tests: 579 passed.**
 
 Post-deploy fixes: `_run_agent_scan()` updates `AgentRegistry` per verdict (Connected Agents
 panel stays current); "Run All Agents" opens merged SSE log for all 3 agents;
@@ -248,13 +249,23 @@ until human dismisses them ("flag until fixed" governance pattern).
   → confirm → execute via Azure SDK), Decline / Ignore.
   `fetchTerraformStub()` lazy-loads and toggles the HCL code block inline.
 - `execution_gateway.py` — `_parse_arm_id()`: extracts resource_group/name/provider from ARM
-  IDs. `_build_az_commands()`: generates human-readable `az` CLI commands for preview panel.
+  IDs (falls back to `action.target.resource_group` for short-name resource IDs).
+  `_build_az_commands()`: generates human-readable `az` CLI commands for preview panel only.
   `_execute_fix_via_sdk()`: live execution via Azure Python SDK (`azure.mgmt.network`,
   `azure.mgmt.compute`, `azure.mgmt.resource`) with `DefaultAzureCredential` — works on
   App Service (Managed Identity), local dev, and CI/CD; no `az` CLI dependency.
   `create_pr_from_manual()`: reuses `_create_terraform_pr()` for manual_required records.
   `generate_agent_fix_commands()`: pure-read preview. `execute_agent_fix()`: mock mode
-  simulates success; live mode runs `asyncio.create_subprocess_exec()` per command.
+  simulates success; live mode calls `_execute_fix_via_sdk()` (Azure SDK, not subprocess).
+- `dashboard_api.py` re-flag logic: builds `examined_names` from `agent.scan_notes` after
+  each scan; if a `manual_required` resource was scanned and the agent found it clean,
+  the record is auto-dismissed ("flag-until-fixed" stops when the issue is actually resolved).
+- `terraform_pr_generator.py` — `_apply_nsg_fix_to_content()` runs two passes: (1) standalone
+  `resource "azurerm_network_security_rule"` blocks, (2) inline `security_rule {}` blocks
+  inside `resource "azurerm_network_security_group"`. Shared `_patch_block()` applies
+  `access = "Allow"` → `"Deny"`. `_find_and_patch_tf_file()` searches the IaC repo and
+  calls `repo.update_file()` on the existing file — not `create_file()` — so PRs contain
+  a real one-line diff instead of a stub.
 
 **Phase 20 — Async End-to-End Migration (complete)**
 

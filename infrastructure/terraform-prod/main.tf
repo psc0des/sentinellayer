@@ -76,8 +76,8 @@ locals {
     # verdicts to Terraform PR generation instead of direct Azure SDK execution.
     # Set iac_github_repo + iac_terraform_path in terraform.tfvars to match
     # your fork's GitHub repo and path.
-    iac_repo   = var.iac_github_repo
-    iac_path   = var.iac_terraform_path
+    iac_repo = var.iac_github_repo
+    iac_path = var.iac_terraform_path
   }
 }
 
@@ -129,7 +129,7 @@ resource "azurerm_network_security_group" "prod" {
     environment = "production"
     managed-by  = "platform-team"
     # governs: VMs protected by this NSG — used by blast radius topology inference
-    governs     = "vm-dr-01,vm-web-01"
+    governs = "vm-dr-01,vm-web-01"
   })
 
   security_rule {
@@ -177,6 +177,18 @@ resource "azurerm_network_security_group" "prod" {
     source_port_range          = "*"
     destination_port_range     = "443"
     source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow-ssh-anywhere"
+    priority                   = 140
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
 
@@ -286,7 +298,7 @@ resource "azurerm_linux_virtual_machine" "dr01" {
     cost-center       = "infrastructure"
     # depends-on: resources this VM relies on (storage + NSG)
     # picked up by ResourceGraphClient._azure_enrich_topology()
-    depends-on        = "ruriskryprod${var.suffix},nsg-east-prod"
+    depends-on = "ruriskryprod${var.suffix},nsg-east-prod"
   })
 }
 
@@ -343,7 +355,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
     owner       = "web-team"
     cost-center = "frontend"
     # depends-on: payment API + shared storage + NSG
-    depends-on  = "payment-api-prod-${var.suffix},ruriskryprod${var.suffix},nsg-east-prod"
+    depends-on = "payment-api-prod-${var.suffix},ruriskryprod${var.suffix},nsg-east-prod"
   })
 }
 
@@ -410,7 +422,7 @@ resource "azurerm_linux_web_app" "payment_api" {
     environment = "production"
     critical    = "true"
     # depends-on: shared storage account
-    depends-on  = "ruriskryprod${var.suffix}"
+    depends-on = "ruriskryprod${var.suffix}"
   })
 }
 

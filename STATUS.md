@@ -4,7 +4,7 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-05 (HITL agent fix panel: Create Terraform PR from manual_required; agent fix preview + execute via Azure SDK; Decline/Ignore button; 3 new API endpoints; 570 tests passing)
+**Last updated:** 2026-03-06 (Post-HITL fixes: PR generator now patches inline `security_rule {}` blocks inside `azurerm_network_security_group` (not just standalone resources); auto-dismiss resolved issues when agent re-scans and finds clean; frontend now surfaces real backend error detail; rule name regex handles unquoted Azure identifiers; ARM ID falls back to `action.target.resource_group`; 579 tests passing)
 **Active branch:** `main`
 **Demo verdict:** All 3 scenarios pass with real prod resource IDs (DENIED / APPROVED / ESCALATED)
 
