@@ -4,7 +4,9 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-08 (Dashboard: Triage Intelligence card added to `Overview.jsx` — teal GlowCard showing LLM calls saved (NumberTicker), Tier 1/2/3 counts with percentages, stacked progress bar (emerald/amber/rose); `Cpu` icon from lucide-react; `pipeline.py` block comment updated to accurately reflect Phases 26 + 27A active and Phase 27B as next. No new tests — 719 still passing.)
+**Last updated:** 2026-03-08 (Demo cleanup: Triage Intelligence card hidden in `Overview.jsx` (`{false && metrics && ...}`) — card will be re-enabled post-hackathon. Triage backend (Phases 26/27A) remains fully functional. README.md cleaned of triage mentions for public presentation. Internal dev docs (CONTEXT.md, ARCHITECTURE.md, SETUP.md, API.md) kept accurate since code still exists.)
+
+**Last updated (prev):** 2026-03-08 (Dashboard: Triage Intelligence card added to `Overview.jsx` — teal GlowCard showing LLM calls saved (NumberTicker), Tier 1/2/3 counts with percentages, stacked progress bar (emerald/amber/rose); `Cpu` icon from lucide-react; `pipeline.py` block comment updated to accurately reflect Phases 26 + 27A active and Phase 27B as next. No new tests — 719 still passing.)
 
 **Last updated (Phase 27A):** 2026-03-08 (Phase 27A: Tier 1 Short-Circuiting — `force_deterministic: bool = False` on all 4 governance agents; pipeline computes `force_deterministic = (triage_tier == 1)` and passes it through; `triage_mode` field added to `GovernanceVerdict` and stored in decision records; `/api/metrics` triage section gains `deterministic_evaluations` and `full_evaluations` counts; 16 new tests; **719 tests passing**)
 

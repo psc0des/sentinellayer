@@ -395,7 +395,8 @@ export default function Overview() {
       </div>
 
       {/* ── Triage Intelligence (Phase 26/27A) ── */}
-      {metrics && (
+      {/* Hidden for demo — enable by removing false below */}
+      {false && metrics && (
         <GlowCard color="teal" intensity="low" className="p-5">
           <div className="flex items-center gap-2 mb-4">
             <Cpu className="w-4 h-4 text-teal-400" />

@@ -9,7 +9,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (SRE bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, risk-proportionate evaluation triage with Tier 1 short-circuiting, and 719+ automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 719+ automated tests.
 
 ---
 
@@ -92,8 +92,7 @@ flowchart LR
             FIN["Financial Impact<br/>weight 0.20"]
         end
 
-        PIPE --> TRIAGE["Risk Triage<br/>Tier 1: 0 LLM | Tier 2: 1 LLM | Tier 3: full"]
-        TRIAGE --> GOV
+        PIPE --> GOV
         GOV --> ENGINE["Governance Decision Engine<br/>denied: critical viol OR >60 | escalated: 26-60 OR HIGH viol | approved: ≤25"]
         ENGINE --> TRACKER["Decision Tracker<br/>immutable audit trail"]
     end
@@ -129,7 +128,6 @@ flowchart LR
 | Teams Notifications | Microsoft Teams Incoming Webhook (Adaptive Cards) | Real-time alerts for DENIED/ESCALATED verdicts |
 | Azure Monitor → RuriSkry | `terraform-prod` Action Group + `webhook_receiver` | CPU/heartbeat alerts POST to `/api/alert-trigger` → auto-triggers governance evaluation (set `alert_webhook_url` in tfvars) |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
-| Risk Triage Engine | `src/core/risk_triage.py` — `ActionFingerprint` + `classify_tier()` | Routes actions to Tier 1 (0 LLM calls), Tier 2 (1 call), or Tier 3 (full pipeline) in <1 ms before any agent runs. Tier stored on every verdict for cost observability. |
 
 ---
 
