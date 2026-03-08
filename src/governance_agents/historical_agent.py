@@ -193,7 +193,7 @@ class HistoricalPatternAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    async def evaluate(self, action: ProposedAction) -> HistoricalResult:
+    async def evaluate(self, action: ProposedAction, force_deterministic: bool = False) -> HistoricalResult:
         """Match the proposed action against the incident history.
 
         Routes to the Microsoft Agent Framework agent in live mode, or to the
@@ -211,7 +211,7 @@ class HistoricalPatternAgent:
             * ``recommended_procedure`` — lesson from the best match
             * ``reasoning`` — explanation (enriched by GPT-4.1 in live mode)
         """
-        if not self._use_framework:
+        if not self._use_framework or force_deterministic:
             return self._evaluate_rules(action)
 
         try:
@@ -242,6 +242,7 @@ class HistoricalPatternAgent:
             azure_endpoint=self._cfg.azure_openai_endpoint,
             azure_ad_token_provider=token_provider,
             api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+            timeout=float(self._cfg.llm_timeout),
         )
         client = OpenAIResponsesClient(
             async_client=azure_openai,

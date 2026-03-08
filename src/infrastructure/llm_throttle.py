@@ -113,9 +113,20 @@ async def run_with_throttle(coro_fn, *args, **kwargs):
         async with sem:
             logger.debug("LLM throttle: semaphore acquired — calling LLM")
             try:
-                result = await coro_fn(*args, **kwargs)
+                result = await asyncio.wait_for(
+                    coro_fn(*args, **kwargs),
+                    timeout=float(settings.llm_timeout),
+                )
                 logger.debug("LLM throttle: LLM call succeeded")
                 return result
+            except asyncio.TimeoutError as exc:
+                logger.warning(
+                    "LLM throttle: call timed out after %ds — re-raising as scan error",
+                    settings.llm_timeout,
+                )
+                raise TimeoutError(
+                    f"LLM call timed out after {settings.llm_timeout}s"
+                ) from exc
             except Exception as exc:  # noqa: BLE001
                 is_429 = _is_rate_limit_error(exc)
 

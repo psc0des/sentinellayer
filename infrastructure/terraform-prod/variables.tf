@@ -65,6 +65,17 @@ variable "alert_email" {
   default     = "ops-team@example.com"
 }
 
+variable "alert_webhook_url" {
+  description = <<-EOT
+    Full URL of the RuriSkry /api/alert-trigger endpoint.
+    Azure Monitor POSTs alert payloads here so the monitoring agent is triggered automatically.
+    Example: "https://your-api-host/api/alert-trigger"
+    Leave empty to disable webhook forwarding (alerts will email only).
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "allowed_source_cidr_override" {
   description = "Optional CIDR override for NSG HTTP/HTTPS allow rules (example: 203.0.113.10/32). If empty, Terraform auto-detects your current public IP."
   type        = string

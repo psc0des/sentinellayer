@@ -22,6 +22,9 @@ import {
   triggerScan,
 } from '../api'
 import LiveLogPanel from './LiveLogPanel'
+import { Play, Square, ClipboardList, BarChart2, ScrollText, Info } from 'lucide-react'
+import GlowCard from './magicui/GlowCard'
+import VerdictBadge from './magicui/VerdictBadge'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -51,11 +54,12 @@ function formatTime(iso) {
   }
 }
 
+// verdictBadge class helper kept for inline uses that haven't migrated yet
 function verdictBadge(decision) {
   const d = decision?.toLowerCase()
-  if (d === 'approved') return 'bg-green-500/20 text-green-400 border-green-500/30'
-  if (d === 'escalated') return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-  if (d === 'denied') return 'bg-red-500/20 text-red-400 border-red-500/30'
+  if (d === 'approved') return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+  if (d === 'escalated') return 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+  if (d === 'denied') return 'bg-rose-500/15 text-rose-300 border-rose-500/30'
   return 'bg-slate-700 text-slate-400 border-slate-600'
 }
 
@@ -63,34 +67,34 @@ function verdictBadge(decision) {
 
 function DropdownMenu({ scanning, hasScanId, onAction }) {
   const items = [
-    { key: 'scan', icon: '▶', label: 'Start Scan', disabled: scanning },
-    { key: 'cancel', icon: '⏹', label: 'Stop Scan', disabled: !scanning },
-    { key: 'results', icon: '📋', label: 'Last Run Results', disabled: false },
-    { key: 'history', icon: '📊', label: 'History', disabled: false },
-    { key: 'log', icon: '📄', label: 'View Live Log', disabled: !hasScanId },
-    { key: 'details', icon: 'ℹ️', label: 'Agent Details', disabled: false },
+    { key: 'scan',    Icon: Play,          label: 'Start Scan',       disabled: scanning },
+    { key: 'cancel',  Icon: Square,        label: 'Stop Scan',        disabled: !scanning },
+    { key: 'results', Icon: ClipboardList, label: 'Last Run Results', disabled: false },
+    { key: 'history', Icon: BarChart2,     label: 'History',          disabled: false },
+    { key: 'log',     Icon: ScrollText,    label: 'View Live Log',    disabled: !hasScanId },
+    { key: 'details', Icon: Info,          label: 'Agent Details',    disabled: false },
   ]
 
   return (
     <div
-      className="absolute top-8 right-0 z-50 bg-slate-900 border border-slate-600 rounded-lg shadow-2xl py-1 w-48"
+      className="absolute top-8 right-0 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl py-1 w-48"
       onClick={e => e.stopPropagation()}
     >
-      {items.map(item => (
+      {items.map(({ key, Icon, label, disabled }) => (
         <button
-          key={item.key}
-          onClick={() => !item.disabled && onAction(item.key)}
-          disabled={item.disabled}
+          key={key}
+          onClick={() => !disabled && onAction(key)}
+          disabled={disabled}
           className={`
             flex items-center gap-2 w-full px-3 py-2 text-xs text-left transition-colors
-            ${item.disabled
+            ${disabled
               ? 'text-slate-600 cursor-not-allowed'
               : 'text-slate-300 hover:bg-slate-800 hover:text-slate-100 cursor-pointer'
             }
           `}
         >
-          <span>{item.icon}</span>
-          <span>{item.label}</span>
+          <Icon className="w-3.5 h-3.5 shrink-0" />
+          <span>{label}</span>
         </button>
       ))}
     </div>
@@ -130,12 +134,31 @@ function Modal({ title, children, onClose }) {
 // ── Panel: Last Run Results ────────────────────────────────────────────────
 
 function LastRunPanel({ agentName, data, onClose }) {
-  const evaluations = data?.evaluations ?? []
+  const evaluations   = data?.evaluations ?? []
   const proposedCount = data?.proposals_count ?? data?.proposed_actions?.length ?? 0
+  const isCleanScan   = evaluations.length === 0 && data?.status === 'complete'
 
   return (
     <Modal title={`Last Run — ${agentName}`} onClose={onClose}>
-      {evaluations.length === 0 ? (
+      {!data ? (
+        <p className="text-slate-500 text-sm text-center py-6">
+          No results found. Run a scan first.
+        </p>
+      ) : isCleanScan ? (
+        <div className="text-center py-6 space-y-2">
+          <div className="text-3xl">✅</div>
+          <p className="text-sm font-medium text-green-400">Scan completed — no issues found</p>
+          <p className="text-xs text-slate-500 space-y-0.5">
+            <span className="block">{formatTime(data.completed_at ?? data.started_at)}</span>
+            {data.scan_id && (
+              <span className="block font-mono text-slate-600">
+                scan {data.scan_id.slice(0, 8)}…
+              </span>
+            )}
+            <span className="block">{proposedCount} proposal(s) checked · 0 issues</span>
+          </p>
+        </div>
+      ) : evaluations.length === 0 ? (
         <p className="text-slate-500 text-sm text-center py-6">
           No results found. Run a scan first.
         </p>
@@ -171,11 +194,7 @@ function LastRunPanel({ agentName, data, onClose }) {
                 </p>
               </div>
               <div className="shrink-0 text-right">
-                <span
-                  className={`inline-block text-xs px-2 py-0.5 rounded-full border font-semibold uppercase ${verdictBadge(ev.decision)}`}
-                >
-                  {ev.decision}
-                </span>
+                <VerdictBadge verdict={ev.decision} />
                 {ev.sri_composite != null && (
                   <p className="text-xs text-slate-500 mt-1 font-mono">
                     SRI {ev.sri_composite.toFixed(1)}
@@ -214,11 +233,7 @@ function HistoryPanel({ agentName, data, onClose }) {
                   {rec.action_type?.replace(/_/g, ' ')} · {formatTime(rec.timestamp)}
                 </p>
               </div>
-              <span
-                className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-semibold uppercase ${verdictBadge(rec.decision)}`}
-              >
-                {rec.decision}
-              </span>
+              <VerdictBadge verdict={rec.decision} />
             </div>
           ))}
         </div>
@@ -267,7 +282,13 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
   const pct = (n) => (total > 0 ? (n / total) * 100 : 0)
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-4 flex flex-col gap-3 relative">
+    <GlowCard
+      color={scanning ? 'amber' : online ? 'green' : 'slate'}
+      intensity={online ? 'medium' : 'low'}
+      beam={online || scanning}
+      beamDuration={scanning ? 1.5 : 4}
+      className="p-4 flex flex-col gap-3 relative"
+    >
 
       {/* ── Name + status dot + 3-dot menu ── */}
       <div className="flex items-center gap-2">
@@ -311,29 +332,29 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
 
       {/* ── Mini coloured bar chart ── */}
       <div className="space-y-1.5">
-        <div className="flex h-2 rounded-full overflow-hidden bg-slate-700">
+        <div className="flex h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(30,41,59,0.8)' }}>
           {total === 0 ? (
-            <div className="w-full bg-slate-600 rounded-full" />
+            <div className="w-full rounded-full" style={{ background: 'rgba(51,65,85,0.5)' }} />
           ) : (
             <>
-              {approved > 0 && <div className="bg-green-500" style={{ width: `${pct(approved)}%` }} />}
-              {escalated > 0 && <div className="bg-yellow-500" style={{ width: `${pct(escalated)}%` }} />}
-              {denied > 0 && <div className="bg-red-500" style={{ width: `${pct(denied)}%` }} />}
+              {approved  > 0 && <div className="bg-emerald-500/80" style={{ width: `${pct(approved)}%` }} />}
+              {escalated > 0 && <div className="bg-amber-500/80"   style={{ width: `${pct(escalated)}%` }} />}
+              {denied    > 0 && <div className="bg-rose-500/80"    style={{ width: `${pct(denied)}%` }} />}
             </>
           )}
         </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-green-400">{approved} appr.</span>
-          <span className="text-yellow-400">{escalated} esc.</span>
-          <span className="text-red-400">{denied} denied</span>
+        <div className="flex justify-between text-[11px]">
+          <span className="text-emerald-400/80">{approved} appr.</span>
+          <span className="text-amber-400/80">{escalated} esc.</span>
+          <span className="text-rose-400/80">{denied} denied</span>
         </div>
       </div>
 
       {/* ── Last seen + scanning indicator ── */}
       <p className="text-xs text-slate-500 mt-auto">
         {scanning ? (
-          <span className="text-yellow-400 font-mono flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse inline-block" />
+          <span className="text-amber-400 font-mono flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
             Scanning…
           </span>
         ) : (
@@ -343,7 +364,7 @@ function AgentCard({ agent, menuOpen, onMenuToggle, onMenuAction, scanning, hasS
           </>
         )}
       </p>
-    </div>
+    </GlowCard>
   )
 }
 
@@ -484,7 +505,7 @@ export default function ConnectedAgents({ agents }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {agents.map((agent) => (
+          {[...agents].sort((a, b) => a.name.localeCompare(b.name)).map((agent) => (
             <AgentCard
               key={agent.name}
               agent={agent}

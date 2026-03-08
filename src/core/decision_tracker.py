@@ -194,4 +194,6 @@ class DecisionTracker:
             "action_reason": action.reason,
             "verdict_reason": verdict.reason,
             "violations": violations,
+            "triage_tier": verdict.triage_tier,  # None for pre-Phase-26 records
+            "triage_mode": verdict.triage_mode,
         }

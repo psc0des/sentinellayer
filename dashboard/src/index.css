@@ -1,3 +1,208 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DESIGN TOKENS — all colours, surfaces and typography in one place.
+   Change a variable here → it propagates everywhere.
+───────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-base:           #020817;
+  --bg-surface:        rgba(8, 14, 28, 0.90);
+  --bg-surface-raised: rgba(12, 20, 40, 0.95);
+  --bg-sidebar:        #030b1a;
+
+  /* Borders */
+  --border-subtle:  rgba(30, 58, 138, 0.18);
+  --border-default: rgba(30, 58, 138, 0.32);
+  --border-accent:  rgba(59, 130, 246, 0.45);
+
+  /* Accent palette */
+  --accent-blue:    #3b82f6;
+  --accent-teal:    #14b8a6;
+  --accent-amber:   #f59e0b;
+  --accent-emerald: #10b981;
+  --accent-rose:    #f43f5e;
+
+  /* Typography */
+  --font-ui:   'DM Sans', system-ui, sans-serif;
+  --font-data: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BASE
+───────────────────────────────────────────────────────────────────────────── */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--bg-base);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* All monospace elements inherit JetBrains Mono */
+code, pre, kbd, samp,
+.font-mono, [class*="tabular-nums"] {
+  font-family: var(--font-data);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SCROLLBAR
+───────────────────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 4px; height: 4px; }
+::-webkit-scrollbar-track      { background: #030b1a; }
+::-webkit-scrollbar-thumb      { background: rgba(30, 58, 138, 0.4); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover{ background: rgba(59, 130, 246, 0.5); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DOT-GRID BACKGROUND — barely perceptible depth, not graph paper.
+   Opacity 0.04: subconscious depth, not visible pattern.
+───────────────────────────────────────────────────────────────────────────── */
+.bg-dots {
+  background-image: radial-gradient(rgba(59, 130, 246, 0.045) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   KEYFRAMES
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Logo teal breathing glow — slow, alive, not distracting */
+@keyframes breathe {
+  0%, 100% {
+    box-shadow:
+      0 0  8px rgba(20, 184, 166, 0.40),
+      0 0 16px rgba(20, 184, 166, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 20px rgba(20, 184, 166, 0.80),
+      0 0 40px rgba(20, 184, 166, 0.25),
+      0 0 60px rgba(20, 184, 166, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  }
+}
+
+/* Pending reviews card — slow amber urgency pulse */
+@keyframes urgentPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 12px -4px rgba(245, 158, 11, 0.20),
+      inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 30px -4px rgba(245, 158, 11, 0.55),
+      0 0 60px -10px rgba(245, 158, 11, 0.15),
+      inset 0 0 0 1px rgba(245, 158, 11, 0.45);
+  }
+}
+
+/* Sidebar icon amber pulse when reviews pending */
+@keyframes iconUrgent {
+  0%, 100% { opacity: 0.65; filter: none; }
+  50%       { opacity: 1.00; filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.9)); }
+}
+
+/* Border beam scan across top edge of card */
+@keyframes scanBeam {
+  0%   { left: -35%; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { left: 135%; opacity: 0; }
+}
+
+/* Page entrance */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Shimmer skeleton */
+@keyframes shimmerSlide {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ANIMATION UTILITY CLASSES
+───────────────────────────────────────────────────────────────────────────── */
+.animate-breathe {
+  animation: breathe 3.5s ease-in-out infinite;
+}
+
+.animate-urgent-pulse {
+  animation: urgentPulse 2.2s ease-in-out infinite;
+}
+
+.animate-icon-urgent {
+  animation: iconUrgent 2s ease-in-out infinite;
+  color: var(--accent-amber) !important;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease-out both;
+}
+
+/* Staggered card entrance — apply to grid parent */
+.card-stagger > *:nth-child(1) { animation: fadeInUp 0.35s ease-out 0ms   both; }
+.card-stagger > *:nth-child(2) { animation: fadeInUp 0.35s ease-out 60ms  both; }
+.card-stagger > *:nth-child(3) { animation: fadeInUp 0.35s ease-out 120ms both; }
+.card-stagger > *:nth-child(4) { animation: fadeInUp 0.35s ease-out 180ms both; }
+
+/* Shimmer skeleton rows */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0)    0%,
+    rgba(255,255,255,0.04) 50%,
+    rgba(255,255,255,0)    100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerSlide 1.8s linear infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   METRIC VALUE GLOW — JetBrains Mono + colour glow on large numbers
+───────────────────────────────────────────────────────────────────────────── */
+.metric-value {
+  font-family: var(--font-data);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.metric-value-blue   { color: #93c5fd; text-shadow: 0 0 20px rgba(59,130,246,0.55); }
+.metric-value-green  { color: #6ee7b7; text-shadow: 0 0 20px rgba(16,185,129,0.55); }
+.metric-value-amber  { color: #fcd34d; text-shadow: 0 0 20px rgba(245,158,11,0.55); }
+.metric-value-red    { color: #fca5a5; text-shadow: 0 0 20px rgba(239,68,68,0.55); }
+.metric-value-slate  { color: #94a3b8; text-shadow: none; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLASS SURFACE — for cards that need depth
+───────────────────────────────────────────────────────────────────────────── */
+.glass {
+  background: var(--bg-surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   NAV ACTIVE INDICATOR — left bar that slides in
+───────────────────────────────────────────────────────────────────────────── */
+@keyframes indicatorIn {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+
+.nav-active-indicator {
+  animation: indicatorIn 0.2s ease-out both;
+  transform-origin: center;
+}

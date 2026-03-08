@@ -16,6 +16,7 @@
 import React, { useState, useRef, useCallback } from 'react'
 import { triggerScan, triggerAllScans, fetchScanStatus } from '../api'
 import LiveLogPanel from './LiveLogPanel'
+import { DollarSign, Activity, Shield, Zap, ClipboardList } from 'lucide-react'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -31,10 +32,10 @@ const AGENT_DESCRIPTIONS = {
   deploy:     'Audit NSG rules and config drift',
 }
 
-const AGENT_ICONS = {
-  cost:       '💰',
-  monitoring: '📡',
-  deploy:     '🔒',
+const AGENT_ICON_CMP = {
+  cost:       DollarSign,
+  monitoring: Activity,
+  deploy:     Shield,
 }
 
 // Status badge colours
@@ -75,7 +76,7 @@ function AgentButton({ type, scanning, lastStatus, onTrigger, onViewResults }) {
     >
       {/* Top row: icon + label + spinner */}
       <div className="flex items-center gap-2 w-full">
-        <span className="text-xl" aria-hidden="true">{AGENT_ICONS[type]}</span>
+        {(() => { const Icon = AGENT_ICON_CMP[type]; return Icon ? <Icon className="w-4 h-4 text-slate-400 shrink-0" /> : null })()}
         <span className="flex-1 text-sm font-semibold text-slate-200">
           {AGENT_LABELS[type]}
         </span>
@@ -275,9 +276,9 @@ export default function AgentControls({ onScanComplete, onViewVerdicts }) {
         {!liveLog.open && (liveLog.scanId || liveLog.scanEntries?.length) && (
           <button
             onClick={() => setLiveLog(prev => ({ ...prev, open: true }))}
-            className="w-full mb-3 py-2 rounded-xl text-sm font-semibold border border-slate-500/60 bg-slate-700/30 hover:bg-slate-700/50 text-slate-300 hover:text-slate-100 cursor-pointer transition-all"
+            className="w-full mb-3 py-2 rounded-xl text-sm font-semibold border border-slate-500/60 bg-slate-700/30 hover:bg-slate-700/50 text-slate-300 hover:text-slate-100 cursor-pointer transition-all flex items-center justify-center gap-2"
           >
-            📋 View Scan Log
+            <ClipboardList className="w-3.5 h-3.5" /> View Scan Log
           </button>
         )}
 
@@ -300,7 +301,9 @@ export default function AgentControls({ onScanComplete, onViewVerdicts }) {
               {allScanning ? 'Running all agents…' : 'Scan in progress…'}
             </span>
           ) : (
-            '⚡ Run All Agents'
+            <span className="flex items-center justify-center gap-2">
+              <Zap className="w-3.5 h-3.5" /> Run All Agents
+            </span>
           )}
         </button>
       </section>

@@ -1,34 +1,44 @@
 /**
- * App.jsx — root component of the RuriSkry Governance Dashboard.
+ * App.jsx — router shell for the RuriSkry Governance Dashboard.
  *
- * Layout (top to bottom):
- *   Header
- *   ConnectedAgents  (A2A agent cards — new)
- *   MetricsBar       (4 stat cards)
- *   SRIGauge  |  DecisionTable   (side by side, gauge shows triggering agent)
- *   LiveActivityFeed (real-time evaluation stream — new)
- *   EvaluationDetail (appears when a table row is selected)
- *
- * Data is fetched from the FastAPI backend at http://localhost:8000/api/.
- * A silent background refresh runs every 5 seconds to keep the feed current.
+ * Responsibilities:
+ *   - Set up React Router with five named pages
+ *   - Fetch evaluations, metrics, agents, and pending reviews on mount
+ *   - Run a silent 5-second background refresh
+ *   - Pass shared data to every page via Outlet context
+ *   - Render the left Sidebar and top header bar
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { fetchEvaluations, fetchMetrics, fetchAgents, fetchNotificationStatus, testTeamsNotification, adminReset } from './api'
-import MetricsBar from './components/MetricsBar'
-import SRIGauge from './components/SRIGauge'
-import DecisionTable from './components/DecisionTable'
-import EvaluationDetail from './components/EvaluationDetail'
-import ConnectedAgents from './components/ConnectedAgents'
-import LiveActivityFeed from './components/LiveActivityFeed'
-import AgentControls from './components/AgentControls'
-import EvaluationDrilldown from './components/EvaluationDrilldown'
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+} from 'react-router-dom'
+import {
+  fetchEvaluations,
+  fetchMetrics,
+  fetchAgents,
+  fetchPendingReviews,
+  fetchNotificationStatus,
+  testTeamsNotification,
+  adminReset,
+} from './api'
+import Sidebar from './components/Sidebar'
+import Overview  from './pages/Overview'
+import Scans     from './pages/Scans'
+import Agents    from './pages/Agents'
+import Decisions from './pages/Decisions'
+import AuditLog  from './pages/AuditLog'
+import { RefreshCw, Bell, Trash2 } from 'lucide-react'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
 function LoadingScreen() {
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
       <div className="text-center">
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
         <p className="text-slate-400 text-sm">Loading governance data…</p>
@@ -39,15 +49,15 @@ function LoadingScreen() {
 
 function ErrorScreen({ message, onRetry }) {
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
-      <div className="text-center bg-slate-800 rounded-2xl p-8 border border-red-500/30 max-w-md w-full shadow-xl">
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+      <div className="bg-slate-800 rounded-2xl p-8 border border-red-500/30 max-w-md w-full shadow-xl text-center">
         <div className="text-5xl mb-4">⚠️</div>
         <h2 className="text-xl font-bold text-red-400 mb-2">Connection Error</h2>
         <p className="text-slate-400 text-sm mb-4">{message}</p>
         <p className="text-slate-500 text-xs mb-6">
           Start the FastAPI server first:
           <code className="block mt-2 bg-slate-900 rounded px-3 py-2 text-slate-300 text-left">
-            python -m src.api.dashboard_api
+            uvicorn src.api.dashboard_api:app --reload
           </code>
         </p>
         <button
@@ -61,45 +71,36 @@ function ErrorScreen({ message, onRetry }) {
   )
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────
+// ── App Shell (layout + data fetching) ───────────────────────────────────
 
-export default function App() {
-  const [evaluations, setEvaluations] = useState([])
-  const [metrics, setMetrics] = useState(null)
-  const [agents, setAgents] = useState([])
-  const [selected, setSelected] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [teamsStatus, setTeamsStatus] = useState(null)
-  const [teamsBtnLabel, setTeamsBtnLabel] = useState('🔔 Teams Connected')
-  const [drilldownEval, setDrilldownEval] = useState(null)
+function AppShell() {
+  const [evaluations,    setEvaluations]    = useState([])
+  const [metrics,        setMetrics]        = useState(null)
+  const [agents,         setAgents]         = useState([])
+  const [pendingReviews, setPendingReviews] = useState([])
+  const [loading,        setLoading]        = useState(true)
+  const [error,          setError]          = useState(null)
+  const [teamsStatus,    setTeamsStatus]    = useState(null)
+  const [teamsBtnLabel,  setTeamsBtnLabel]  = useState('Teams Connected')
 
   /**
-   * fetchAll — fetches evaluations, metrics, and agents in parallel.
-   *
-   * This is extracted so it can be called both from the initial load
-   * (which shows the loading spinner) and from the background interval
-   * (which runs silently without touching loading/error state).
-   *
-   * useCallback with [] means this function is created once and never
-   * recreated — it's stable, so setInterval always calls the same reference.
-   * React guarantees that state setters (setEvaluations etc.) are stable too.
+   * fetchAll — fetch all shared data in parallel.
+   * Called by background poll and explicit refresh.
+   * pendingReviews silently falls back to [] if the gateway is disabled.
    */
   const fetchAll = useCallback(async () => {
-    const [evalsData, metricsData, agentsData] = await Promise.all([
-      fetchEvaluations(50),   // up to 50 for the Live Activity Feed
+    const [evalsData, metricsData, agentsData, reviewsData] = await Promise.all([
+      fetchEvaluations(200),
       fetchMetrics(),
       fetchAgents(),
+      fetchPendingReviews().catch(() => ({ pending_reviews: [] })),
     ])
     setEvaluations(evalsData.evaluations ?? [])
     setMetrics(metricsData)
     setAgents(agentsData.agents ?? [])
+    setPendingReviews(reviewsData.pending_reviews ?? [])
   }, [])
 
-  /**
-   * load — initial fetch with loading indicator and error handling.
-   * Called on mount and by the manual Refresh button.
-   */
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -112,203 +113,129 @@ export default function App() {
     }
   }, [fetchAll])
 
-  // Fetch data on first render
   useEffect(() => { load() }, [load])
 
-  // Fetch Teams notification status once on mount
   useEffect(() => {
     fetchNotificationStatus()
       .then(setTeamsStatus)
       .catch(() => setTeamsStatus(null))
   }, [])
 
-  /**
-   * Silent background refresh every 5 seconds.
-   * Errors are swallowed so a momentary network hiccup doesn't kill the UI.
-   * The cleanup function (return () => clearInterval) runs when the component
-   * unmounts so the interval doesn't leak.
-   */
+  // Silent background refresh — errors are swallowed
   useEffect(() => {
     const id = setInterval(async () => {
-      try { await fetchAll() } catch { /* ignore transient errors */ }
+      try { await fetchAll() } catch { /* ignore */ }
     }, 5_000)
     return () => clearInterval(id)
   }, [fetchAll])
 
   if (loading) return <LoadingScreen />
-  if (error) return <ErrorScreen message={error} onRetry={load} />
+  if (error)   return <ErrorScreen message={error} onRetry={load} />
 
-  const latestEval = evaluations[0] ?? null
-  const latestScore = latestEval?.sri_composite ?? 0
+  const context = { evaluations, metrics, agents, pendingReviews, fetchAll }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
+    <div className="min-h-screen text-slate-100 flex font-sans" style={{ background: 'var(--bg-base)', fontFamily: 'var(--font-ui)' }}>
+      <Sidebar pendingCount={pendingReviews.length} />
 
-      {/* ── Header ── */}
-      <header className="border-b border-slate-700/60 px-6 py-4 backdrop-blur-sm sticky top-0 z-20 bg-slate-900/95">
-        <div className="max-w-7xl mx-auto flex items-center gap-3">
-          {/* Logo mark */}
-          <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center font-black text-white text-sm shadow">
-            SL
-          </div>
-          <div>
-            <h1 className="text-lg font-bold leading-none">RuriSkry</h1>
-            <p className="text-xs text-slate-500 leading-none mt-0.5">AI Action Governance Dashboard</p>
-          </div>
+      <div className="flex-1 flex flex-col min-w-0 bg-dots">
 
-          {/* Spacer */}
-          <div className="ml-auto flex items-center gap-4">
-            {/* Teams notification indicator + test button */}
-            {teamsStatus && (
-              teamsStatus.teams_configured && teamsStatus.teams_enabled ? (
-                <button
-                  onClick={async () => {
-                    setTeamsBtnLabel('🔔 Sending…')
-                    try {
-                      const res = await testTeamsNotification()
-                      setTeamsBtnLabel(res.status === 'sent' ? '🔔 ✓ Sent!' : '🔔 ✗ Failed')
-                    } catch {
-                      setTeamsBtnLabel('🔔 ✗ Failed')
-                    }
-                    setTimeout(() => setTeamsBtnLabel('🔔 Teams Connected'), 2000)
-                  }}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer"
-                  title="Click to send a test notification to Teams"
-                >
-                  {teamsBtnLabel}
-                </button>
-              ) : (
-                <div
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-slate-700/50 border-slate-600/30 text-slate-500"
-                  title="Microsoft Teams chat alerts are off — set TEAMS_WEBHOOK_URL in .env to enable"
-                >
-                  💬 Teams Alerts: Off
-                </div>
-              )
-            )}
-            {/* Live indicator */}
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              Live
-            </div>
-            {/* Refresh button */}
-            <button
-              onClick={load}
-              className="text-slate-400 hover:text-slate-200 transition-colors text-sm"
-              title="Refresh data"
-            >
-              ↺ Refresh
-            </button>
+        {/* ── Top bar ── */}
+        <header className="shrink-0 px-6 py-3 flex items-center gap-3 sticky top-0 z-20" style={{
+          background: 'rgba(2,8,23,0.92)',
+          borderBottom: '1px solid rgba(30,45,74,0.6)',
+          backdropFilter: 'blur(12px)',
+        }}>
+          <div className="flex-1" />
 
-            {/* Dev/test reset button */}
+          {/* Teams notification button */}
+          {teamsStatus?.teams_configured && teamsStatus?.teams_enabled ? (
             <button
               onClick={async () => {
-                if (!window.confirm('⚠ Delete ALL local evaluation data and start fresh?')) return
+                setTeamsBtnLabel('Sending…')
                 try {
-                  const result = await adminReset()
-                  await load()
-                  alert(`Reset complete — deleted ${result.total} records (${result.deleted.decisions} decisions, ${result.deleted.executions} executions, ${result.deleted.scans} scans).`)
-                } catch (e) {
-                  alert(`Reset failed: ${e.message}`)
+                  const res = await testTeamsNotification()
+                  setTeamsBtnLabel(res.status === 'sent' ? 'Sent!' : 'Failed')
+                } catch {
+                  setTeamsBtnLabel('Failed')
                 }
+                setTimeout(() => setTeamsBtnLabel('Teams Connected'), 2000)
               }}
-              className="text-red-500/60 hover:text-red-400 transition-colors text-xs font-mono border border-red-500/20 hover:border-red-500/40 px-2 py-0.5 rounded"
-              title="Dev/test only — wipe all local data"
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+              title="Click to send a test notification to Teams"
             >
-              🗑 Reset
+              <Bell className="w-3 h-3" />
+              {teamsBtnLabel}
             </button>
-          </div>
-        </div>
-      </header>
-
-      {/* ── Main content ── */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-
-        {/* ── Drilldown view — replaces main dashboard when active ── */}
-        {drilldownEval ? (
-          <EvaluationDrilldown
-            evaluation={drilldownEval}
-            onBack={() => setDrilldownEval(null)}
-          />
-        ) : (
-          <>
-            {/* ① Connected Agents — at the top as required */}
-            <ConnectedAgents agents={agents} />
-
-            {/* ② Agent Controls — trigger scans from the dashboard */}
-            <AgentControls
-              onScanComplete={fetchAll}
-              onViewVerdicts={(actionId) => {
-                const ev = evaluations.find(e => e.action_id === actionId)
-                if (ev) setDrilldownEval(ev)
-              }}
-            />
-
-            {metrics && <MetricsBar metrics={metrics} />}
-
-            {/* ④ SRI Gauge + Decision table */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-              {/* SRI Gauge panel — updated to show which agent triggered latest eval */}
-              <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 flex flex-col items-center justify-center gap-4">
-                <h2 className="self-start text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                  Latest Evaluation
-                </h2>
-
-                <SRIGauge score={latestScore} />
-
-                {latestEval ? (
-                  <div className="text-center space-y-0.5">
-                    {/* Resource name */}
-                    <p className="text-sm font-mono font-medium text-slate-300">
-                      {latestEval.resource_id?.split('/').filter(Boolean).pop()}
-                    </p>
-                    {/* Action type */}
-                    <p className="text-xs text-slate-500">
-                      {latestEval.action_type?.replace(/_/g, ' ')}
-                    </p>
-                    {/* Triggering agent — NEW */}
-                    {latestEval.agent_id && (
-                      <p className="text-xs text-blue-400 font-mono pt-0.5">
-                        via {latestEval.agent_id}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500 text-center">
-                    No evaluations yet — run the demo to populate data.
-                  </p>
-                )}
-              </div>
-
-              {/* Decision history table */}
-              <div className="lg:col-span-2 bg-slate-800 rounded-xl border border-slate-700">
-                <DecisionTable
-                  evaluations={evaluations}
-                  selected={selected}
-                  onSelect={(ev) => { setSelected(ev); setDrilldownEval(ev); }}
-                />
-              </div>
+          ) : teamsStatus ? (
+            <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-slate-800 border-slate-700 text-slate-500"
+              title="Set TEAMS_WEBHOOK_URL in .env to enable"
+            >
+              <Bell className="w-3 h-3" />
+              Teams: Off
             </div>
+          ) : null}
 
-            {/* ⑤ Live Activity Feed */}
-            <LiveActivityFeed evaluations={evaluations} onDrilldown={setDrilldownEval} />
+          {/* Live indicator */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            Live
+          </div>
 
-            {/* ⑥ Evaluation detail (shown when a row is selected) */}
-            {selected && (
-              <EvaluationDetail
-                evaluation={selected}
-                onClose={() => setSelected(null)}
-              />
-            )}
+          {/* Refresh */}
+          <button
+            onClick={load}
+            className="text-slate-400 hover:text-slate-200 transition-colors p-1 rounded"
+            title="Refresh all data"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
 
-            {/* Footer */}
-            <footer className="text-center text-xs text-slate-600 pb-4">
-              RuriSkry · SRI™ Governance Engine · {new Date().getFullYear()}
-            </footer>
-          </>
-        )}
-      </main>
+          {/* Dev reset */}
+          <button
+            onClick={async () => {
+              if (!window.confirm('Delete ALL local evaluation data and start fresh?')) return
+              try {
+                const result = await adminReset()
+                await load()
+                alert(`Reset complete — deleted ${result.total} records.`)
+              } catch (e) {
+                alert(`Reset failed: ${e.message}`)
+              }
+            }}
+            className="text-red-500/50 hover:text-red-400 transition-colors p-1 rounded"
+            title="Dev/test only — wipe all local data"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </header>
+
+        {/* ── Page content ── */}
+        <main className="flex-1 overflow-auto">
+          <Outlet context={context} />
+        </main>
+      </div>
     </div>
+  )
+}
+
+// ── Root component — sets up BrowserRouter + routes ──────────────────────
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<AppShell />}>
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="overview"    element={<Overview />} />
+          <Route path="scans"       element={<Scans />} />
+          <Route path="agents"      element={<Agents />} />
+          <Route path="decisions"   element={<Decisions />} />
+          <Route path="decisions/:id" element={<Decisions />} />
+          <Route path="audit"       element={<AuditLog />} />
+          <Route path="*"           element={<Navigate to="/overview" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }

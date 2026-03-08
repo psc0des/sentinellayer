@@ -220,7 +220,8 @@ class CostOptimizationAgent:
         azure_openai = AsyncAzureOpenAI(
             azure_endpoint=self._cfg.azure_openai_endpoint,
             azure_ad_token_provider=token_provider,
-            api_version="2025-03-01-preview",
+            api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+            timeout=float(self._cfg.llm_timeout),
         )
         client = OpenAIResponsesClient(
             async_client=azure_openai,

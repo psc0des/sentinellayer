@@ -16,11 +16,18 @@ Operational Agent (proposes action)
     ▼ (all three paths converge here)
 RuriSkryPipeline.evaluate(action)
     │
+    ├─ Risk Triage (Phase 26) — compute_fingerprint() + classify_tier()  ← <1 ms, 0 LLM calls
+    │   Tier 1: non-production + isolated blast radius → deterministic only (0 LLM) ← ACTIVE (Phase 27A)
+    │   Tier 2: production + service blast + no network → single LLM call (Phase 27B, future)
+    │   Tier 3: compliance scope / network / destructive+critical → full pipeline
+    │   force_deterministic = (triage_tier == 1) passed to all 4 agents
+    │
     ├─ asyncio.gather() ──────────────────────────────────┐
-    │   ├── BlastRadiusAgent.evaluate()   → SRI:Infrastructure (weight 0.30)
-    │   ├── PolicyComplianceAgent.evaluate() → SRI:Policy (weight 0.25)
-    │   ├── HistoricalPatternAgent.evaluate() → SRI:Historical (weight 0.25)
-    │   └── FinancialImpactAgent.evaluate()   → SRI:Cost (weight 0.20)
+    │   ├── BlastRadiusAgent.evaluate(force_deterministic)   → SRI:Infrastructure (weight 0.30)
+    │   ├── PolicyComplianceAgent.evaluate(force_deterministic) → SRI:Policy (weight 0.25)
+    │   ├── HistoricalPatternAgent.evaluate(force_deterministic) → SRI:Historical (weight 0.25)
+    │   └── FinancialImpactAgent.evaluate(force_deterministic)   → SRI:Cost (weight 0.20)
+    │   Each agent: if not use_framework OR force_deterministic → skip LLM, use rules
     │                                                      │
     │   All 4 run concurrently (async-first)  ◄────────────┘
     │
@@ -34,9 +41,12 @@ GovernanceDecisionEngine.evaluate()
     │  4. ESCALATED if any HIGH violation (not llm_override) — Rule 3.5 verdict floor
     │  5. APPROVED  otherwise
     │
+    │  verdict.triage_tier = 1 | 2 | 3  ← stamped after engine returns
+    │  verdict.triage_mode = "deterministic" | "full"  ← Phase 27A
+    │
     ▼
 DecisionTracker.record(verdict)     ← writes to Cosmos DB (live) / JSON (mock)
-    │
+    │                                   triage_tier + triage_mode stored in every record
     ▼
 GovernanceVerdict returned to caller
 ```
@@ -130,6 +140,20 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 8. **Configurable thresholds** — `SRI_AUTO_APPROVE_THRESHOLD` (default 25) and
    `SRI_HUMAN_REVIEW_THRESHOLD` (default 60) are environment-variable driven.
+
+9. **Risk Triage (Phase 26)** — before any governance agent runs, `compute_fingerprint()`
+   derives an `ActionFingerprint` from the action and resource metadata in <1 ms (no I/O,
+   no LLM). `classify_tier()` then routes the action to Tier 1 (0 LLM calls), Tier 2 (1
+   consolidated call — Phase 27), or Tier 3 (full 4-agent pipeline). Four deterministic
+   rules drive routing; ambiguous cases default to Tier 3 (conservative). The `OrgContext`
+   (compliance frameworks, risk tolerance, business-critical RGs) loaded from env vars at
+   startup informs compliance-scope detection — a production resource in a regulated org
+   with `ORG_COMPLIANCE_FRAMEWORKS` set is always Tier 3 regardless of other signals.
+   **Phase 27A (active)**: Tier 1 short-circuit is live. `force_deterministic = (triage_tier == 1)`
+   is computed in the pipeline and passed to all four agents. Each agent's `evaluate()` signature
+   accepts `force_deterministic: bool = False`; when True, the `if not use_framework or force_deterministic`
+   branch skips the LLM entirely. The verdict's `triage_mode` field (`"deterministic"` | `"full"`)
+   is stored in every record. `/api/metrics` reports `deterministic_evaluations` and `full_evaluations`.
 
 ---
 
@@ -567,12 +591,28 @@ src/
 │   └── secrets.py             # Key Vault secret resolver (env → KV → empty string)
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
 dashboard/
-└── src/components/
-    ├── AgentControls.jsx      # Scan trigger panel: per-agent buttons, RG filter, 2 s polling, LiveLogPanel
-    ├── LiveLogPanel.jsx        # SSE slide-out log panel: 9 event type styles, auto-scroll
-    ├── ConnectedAgents.jsx    # Agent card grid: ⋮ action menu, scan/log/results/history/details panels
-    ├── EvaluationDrilldown.jsx # Full-page drilldown: SRI bars, explanation, counterfactuals, reasoning, JSON audit
-    └── LiveActivityFeed.jsx   # Real-time verdict feed; rows clickable → opens EvaluationDrilldown
+└── src/
+    ├── pages/
+    │   ├── Overview.jsx          # Landing: NumberTicker metrics, gradient SRI AreaChart, pending reviews, scan history
+    │   ├── Scans.jsx             # Scan trigger panel + scan history table
+    │   ├── Agents.jsx            # ConnectedAgents wrapper page
+    │   ├── Decisions.jsx         # DecisionTable + EvaluationDrilldown (breadcrumb nav)
+    │   └── AuditLog.jsx          # Chronological audit log with filters + CSV/JSON export
+    ├── components/
+    │   ├── magicui/
+    │   │   ├── NumberTicker.jsx  # Count-up animation (RAF + easeOutQuart); used on metric cards
+    │   │   ├── GlowCard.jsx      # Card wrapper: color-coded glow + backdrop-blur glass + border beam + urgent pulse
+    │   │   ├── VerdictBadge.jsx  # Dot + pill verdict labels (emerald/amber/rose) with glow; used sitewide
+    │   │   └── TableSkeleton.jsx # Shimmer placeholder rows for tables while data loads
+    │   ├── Sidebar.jsx           # Left nav: teal breathe logo, animated active indicator, amber urgency pulse on Decisions
+    │   ├── DecisionTable.jsx     # Sortable/filterable/paginated verdict table + CSV/JSON export
+    │   ├── ConnectedAgents.jsx   # Agent card grid (GlowCard): ⋮ menu, scan/log/results/history/details panels
+    │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel
+    │   ├── AgentControls.jsx     # Scan trigger panel: per-agent buttons, RG filter, 2 s polling
+    │   ├── LiveLogPanel.jsx      # SSE slide-out log: 9 event type styles, auto-scroll
+    │   └── LiveActivityFeed.jsx  # Real-time verdict feed; rows open EvaluationDrilldown
+    ├── index.css                 # Design token system (CSS :root vars) + all keyframes (breathe/urgentPulse/scanBeam/fadeInUp) + utility classes (.animate-breathe, .animate-urgent-pulse, .bg-dots, .metric-value, .shimmer)
+    └── App.jsx                   # Router shell: bg-dots dot-grid on content area, --font-ui/--bg-base tokens applied
 data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── decisions/                 # Governance verdict audit trail (mock mode)

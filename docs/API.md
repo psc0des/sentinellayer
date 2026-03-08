@@ -135,7 +135,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 |--------|----------|-------------|
 | GET | `/api/evaluations` | List recent governance decisions (newest-first) |
 | GET | `/api/evaluations/{evaluation_id}` | Full record for one evaluation by UUID |
-| GET | `/api/metrics` | Aggregate stats: decision counts, SRI avg/min/max, top violations |
+| GET | `/api/metrics` | Aggregate stats: decision counts, SRI avg/min/max, top violations, triage tier distribution |
 | GET | `/api/resources/{resource_id}/risk` | Risk profile for one resource |
 | GET | `/api/agents` | List operational agents connected via A2A |
 | GET | `/api/agents/{agent_name}/history` | Recent decisions for one A2A agent |
@@ -187,8 +187,26 @@ All endpoints are `async def` (FastAPI manages the event loop).
   ],
   "most_evaluated_resources": [
     {"resource_id": "web-tier-01", "count": 3}
-  ]
+  ],
+  "triage": {
+    "tier_counts": {"tier_1": 2, "tier_2": 1, "tier_3": 1, "unknown": 0},
+    "tier_percentages": {"tier_1": 50.0, "tier_2": 25.0, "tier_3": 25.0, "unknown": 0.0},
+    "llm_calls_saved": 8,
+    "deterministic_evaluations": 2,
+    "full_evaluations": 2
+  }
 }
+```
+
+`triage.llm_calls_saved` = `tier_1 count × 4` — each Tier 1 action skips all four governance
+agent LLM calls. Short-circuiting is active as of Phase 27A.
+
+`triage.deterministic_evaluations` = count of verdicts where `triage_mode == "deterministic"` (Tier 1 short-circuit, no LLM).
+
+`triage.full_evaluations` = count of verdicts where `triage_mode == "full"` (Tier 2/3, LLM engaged).
+
+Records that pre-date Phase 26 have `triage_tier: null` and are counted under `unknown`. Records
+that pre-date Phase 27A have `triage_mode: null` and are not counted in either mode bucket.
 ```
 
 ---
@@ -486,6 +504,7 @@ Return the most recent completed scan results for one agent. Prefers the durable
   "source": "scan_tracker",
   "scan_id": "b3e7c1a2-...",
   "status": "complete",
+  "scan_error": null,
   "agent_type": "cost",
   "started_at": "2026-03-02T10:00:00+00:00",
   "completed_at": "2026-03-02T10:00:15+00:00",
@@ -498,6 +517,7 @@ Return the most recent completed scan results for one agent. Prefers the durable
 ```
 
 `source` is `"scan_tracker"` if found in durable store, `"tracker"` if from audit trail only.
+`status` is `"complete"` for successful scans, `"error"` when the LLM/agent framework timed out or threw (in which case `scan_error` contains the error message and `proposals_count`/`evaluations_count` will be 0).
 Unknown agent names return an empty `no_data` response (not 404).
 
 ---

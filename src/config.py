@@ -100,6 +100,16 @@ class Settings(BaseSettings):
     # Env var: LLM_CONCURRENCY_LIMIT=3
     llm_concurrency_limit: int = 3
 
+    # Hard wall-clock timeout (seconds) for any single agentic LLM call.
+    # Applied in two layers:
+    #   1. AsyncAzureOpenAI(timeout=) — caps each individual HTTP request.
+    #   2. asyncio.wait_for() in run_with_throttle — caps the ENTIRE agent.run() loop
+    #      (which may make many tool-call round-trips).
+    # If the call exceeds this limit it is cancelled and scan_error is set so the
+    # dashboard shows a red "Error" badge instead of a frozen scan.
+    # Env var: LLM_TIMEOUT=120
+    llm_timeout: int = 120
+
     # When true, pipeline.py runs governance agents sequentially (one at a time) instead
     # of asyncio.gather(). Use this when the Azure OpenAI quota is so tight that the
     # semaphore alone does not help (e.g. quota is 1 RPM).
@@ -125,6 +135,17 @@ class Settings(BaseSettings):
     # Set to true to enable PR generation for APPROVED + IaC-managed verdicts.
     # Env var: EXECUTION_GATEWAY_ENABLED=true
     execution_gateway_enabled: bool = False
+
+    # --- Org Context (Phase 26 — Risk Triage) ---
+    # Injected into the triage fingerprint so the engine can route compliance-
+    # sensitive actions to Tier 3 even when a resource has no explicit tags.
+    # Env var: ORG_NAME, ORG_RESOURCE_COUNT, ORG_COMPLIANCE_FRAMEWORKS (comma-
+    # separated), ORG_RISK_TOLERANCE, ORG_BUSINESS_CRITICAL_RGS (comma-separated)
+    org_name: str = "Contoso"
+    org_resource_count: int = 0
+    org_compliance_frameworks: str = ""   # e.g. "HIPAA,PCI-DSS,SOC2" → split on ","
+    org_risk_tolerance: str = "moderate"  # "conservative" | "moderate" | "aggressive"
+    org_business_critical_rgs: str = ""   # e.g. "rg-prod-payments,rg-prod-identity"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

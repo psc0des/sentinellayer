@@ -275,6 +275,16 @@ export async function fetchTerraformStub(executionId) {
 }
 
 /**
+ * Fetch all execution records currently awaiting human review.
+ * @returns {{ pending_reviews: object[] }}
+ */
+export async function fetchPendingReviews() {
+  const res = await fetch(`${BASE}/execution/pending-reviews`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch pending reviews`)
+  return res.json()
+}
+
+/**
  * ⚠ Dev/test only — wipe all local JSON data and reset in-memory state.
  * Deletes data/decisions/, data/executions/, data/scans/ JSON files.
  * Cosmos DB data is never touched.

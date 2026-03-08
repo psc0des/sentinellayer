@@ -73,6 +73,12 @@ uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 # 7c. Start RuriSkry — Dashboard REST API
 uvicorn src.api.dashboard_api:app --reload
 
+# 7d. Start React dashboard (separate terminal)
+cd dashboard && npm install && npm run dev
+# → opens at http://localhost:5173 (or 5174 if port is busy)
+# Fonts (DM Sans + JetBrains Mono) load from Google Fonts — internet connection required.
+# Offline: dashboard renders with system-ui / monospace fallbacks.
+
 # 8. Run demos
 python demo.py        # direct Python pipeline demo (3 scenarios)
 python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
@@ -89,6 +95,9 @@ in live demos — turning mock IDs into actual Azure resource IDs on the dashboa
 cd infrastructure/terraform-prod
 cp terraform.tfvars.example terraform.tfvars
 # Fill in: subscription_id, suffix (e.g. "abc1234"), vm_admin_password, alert_email
+# Optional: alert_webhook_url = "http://<your-host>/api/alert-trigger"
+#   → wires Azure Monitor CPU/heartbeat alerts to POST directly into RuriSkry
+#   → leave empty to disable (alerts will email only)
 terraform init
 terraform apply
 
@@ -234,3 +243,10 @@ See `Adding-Terraform-Feature.md` for full implementation guide.
 | `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `psc0des/ruriskry`). |
 | `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-prod` | Path within the repo to the Terraform config directory. |
 | `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |
+| `LLM_TIMEOUT` | No | `120` | Hard timeout (seconds) for any single agentic LLM call. Applied at two layers: (1) each individual HTTP request to Azure OpenAI, (2) the entire `agent.run()` agentic loop via `asyncio.wait_for`. Scans that exceed this limit set `scan_error` and show a red Error badge in the dashboard. Increase this if you have a slow Azure quota tier. |
+| `LLM_CONCURRENCY_LIMIT` | No | `3` | Maximum simultaneous LLM calls across all governance agents (shared semaphore). Set to `1` for very tight quota deployments. |
+| `ORG_NAME` | No | `Contoso` | Display name for your organisation — used in triage context and future reporting. |
+| `ORG_RESOURCE_COUNT` | No | `0` | Approximate total Azure resources under management. Used by risk triage for scale-aware context. |
+| `ORG_COMPLIANCE_FRAMEWORKS` | No | `""` | Comma-separated compliance frameworks in scope (e.g. `HIPAA,PCI-DSS,SOC2`). Any production resource is treated as compliance-scoped when this is non-empty, routing it to Tier 3 governance. |
+| `ORG_RISK_TOLERANCE` | No | `moderate` | Organisation-wide risk posture: `conservative`, `moderate`, or `aggressive`. Informs triage context; `conservative` is recommended for regulated industries. |
+| `ORG_BUSINESS_CRITICAL_RGS` | No | `""` | Comma-separated resource group names that contain P0 workloads (e.g. `rg-prod-payments,rg-prod-identity`). Actions targeting these RGs are always scoped as compliance-relevant (Tier 3 minimum). |

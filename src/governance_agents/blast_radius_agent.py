@@ -199,7 +199,7 @@ class BlastRadiusAgent:
     # Public API
     # ------------------------------------------------------------------
 
-    async def evaluate(self, action: ProposedAction) -> BlastRadiusResult:
+    async def evaluate(self, action: ProposedAction, force_deterministic: bool = False) -> BlastRadiusResult:
         """Evaluate the blast radius of a proposed infrastructure action.
 
         Async-first: safe to call from FastAPI, MCP, asyncio.gather(), or any
@@ -219,7 +219,7 @@ class BlastRadiusAgent:
             * ``availability_zones_impacted`` — Azure regions affected
             * ``reasoning`` — human-readable explanation of the score
         """
-        if not self._use_framework:
+        if not self._use_framework or force_deterministic:
             if self._rg_client is not None:
                 # Live topology: use the fully async path so Azure SDK calls
                 # don't block the event loop (Phase 20 — async end-to-end).
@@ -256,6 +256,7 @@ class BlastRadiusAgent:
             azure_endpoint=self._cfg.azure_openai_endpoint,
             azure_ad_token_provider=token_provider,
             api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+            timeout=float(self._cfg.llm_timeout),
         )
         client = OpenAIResponsesClient(
             async_client=azure_openai,

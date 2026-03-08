@@ -123,8 +123,8 @@ class TestListEvaluations:
         assert data["count"] == 2
         assert len(data["evaluations"]) == 2
 
-    def test_limit_max_is_100(self, client):
-        response = client.get("/api/evaluations?limit=200")
+    def test_limit_max_is_500(self, client):
+        response = client.get("/api/evaluations?limit=501")
         assert response.status_code == 422  # FastAPI validation error
 
     def test_limit_min_is_1(self, client):

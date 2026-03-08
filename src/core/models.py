@@ -181,6 +181,44 @@ class GovernanceVerdict(BaseModel):
         "auto_approve": 25,
         "human_review": 60,
     }
+    triage_tier: Optional[int] = None  # 1 | 2 | 3 — set by risk_triage (Phase 26)
+    triage_mode: Optional[str] = None  # "full" | "deterministic" | None (pre-Phase-27)
+
+
+# ============================================
+# Risk Triage Models (Phase 26)
+# ============================================
+
+class ActionFingerprint(BaseModel):
+    """Deterministic risk descriptor for an action — computed without any LLM call.
+
+    All fields are derived from the ProposedAction and resource metadata in <1 ms.
+    Used by ``classify_tier()`` to route actions to a processing tier (1, 2, or 3).
+    """
+    action_type: str
+    resource_type: str
+    environment: str                   # "production" | "staging" | "development" | "unknown"
+    compliance_scope: bool             # True → resource is in a compliance-relevant context
+    has_network_exposure: bool         # True → action touches network security surface
+    has_data_plane_impact: bool        # True → action affects data storage/databases
+    is_production: bool
+    is_critical_resource: bool         # Tagged critical / disaster-recovery
+    estimated_blast_radius: str        # "isolated" | "service" | "environment" | "global"
+    change_reversibility: str          # "reversible" | "semi-reversible" | "destructive"
+
+
+class OrgContext(BaseModel):
+    """Organizational knowledge injected into governance evaluation.
+
+    Provides the triage engine with context it cannot derive from a single
+    resource: compliance obligations, risk posture, and critical workloads.
+    Loaded from config at startup and shared across all evaluations.
+    """
+    org_name: str = "Contoso"
+    resource_count: int = 0                    # Total resources under management
+    compliance_frameworks: list[str] = []      # e.g. ["HIPAA", "PCI-DSS", "SOC2"]
+    risk_tolerance: str = "moderate"           # "conservative" | "moderate" | "aggressive"
+    business_critical_rgs: list[str] = []      # Resource groups with P0 workloads
 
 
 # ============================================

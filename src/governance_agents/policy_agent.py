@@ -179,6 +179,7 @@ class PolicyComplianceAgent:
         action: ProposedAction,
         resource_metadata: dict | None = None,
         now: datetime | None = None,
+        force_deterministic: bool = False,
     ) -> PolicyResult:
         """Evaluate *action* against all loaded governance policies.
 
@@ -201,7 +202,7 @@ class PolicyComplianceAgent:
             * ``total_policies_checked`` / ``policies_passed``
             * ``reasoning`` — human-readable summary
         """
-        if not self._use_framework:
+        if not self._use_framework or force_deterministic:
             return self._evaluate_rules(action, resource_metadata, now)
 
         try:
@@ -236,6 +237,7 @@ class PolicyComplianceAgent:
             azure_endpoint=self._cfg.azure_openai_endpoint,
             azure_ad_token_provider=token_provider,
             api_version="2025-03-01-preview",  # Responses API requires >=2025-03-01-preview
+            timeout=float(self._cfg.llm_timeout),
         )
         client = OpenAIResponsesClient(
             async_client=azure_openai,

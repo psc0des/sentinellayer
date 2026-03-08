@@ -598,7 +598,8 @@ async def _run_agent_scan(
         summary = f"{approved} approved, {escalated} escalated, {denied} denied"
         _scans[scan_id].update(
             {
-                "status": "complete",
+                "status": "error" if scan_error else "complete",
+                "scan_error": scan_error,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "proposed_actions": [p.model_dump(mode="json") for p in proposals],
                 "evaluations": evaluations,
@@ -720,7 +721,7 @@ def _get_scan_record(scan_id: str) -> dict | None:
 
 @app.get("/api/evaluations")
 async def list_evaluations(
-    limit: int = Query(default=20, ge=1, le=100, description="Max records to return"),
+    limit: int = Query(default=20, ge=1, le=500, description="Max records to return"),
     resource_id: str | None = Query(
         default=None, description="Filter by resource ID substring"
     ),
@@ -728,7 +729,7 @@ async def list_evaluations(
     """Return recent governance decisions, newest-first.
 
     Query parameters:
-    - **limit**: 1–100, default 20
+    - **limit**: 1–500, default 20
     - **resource_id**: optional substring filter on the resource ID field
     """
     tracker = _get_tracker()
@@ -795,6 +796,13 @@ async def get_metrics() -> dict:
             },
             "top_violations": [],
             "most_evaluated_resources": [],
+            "triage": {
+                "tier_counts": {"tier_1": 0, "tier_2": 0, "tier_3": 0, "unknown": 0},
+                "tier_percentages": {"tier_1": 0.0, "tier_2": 0.0, "tier_3": 0.0, "unknown": 0.0},
+                "llm_calls_saved": 0,
+                "deterministic_evaluations": 0,
+                "full_evaluations": 0,
+            },
         }
 
     total = len(records)
@@ -855,6 +863,23 @@ async def get_metrics() -> dict:
         )[:5]
     ]
 
+    # --- Triage tier distribution (Phase 26) ---
+    tier_counts: dict[str, int] = {"tier_1": 0, "tier_2": 0, "tier_3": 0, "unknown": 0}
+    for r in records:
+        tier = r.get("triage_tier")
+        if tier == 1:
+            tier_counts["tier_1"] += 1
+        elif tier == 2:
+            tier_counts["tier_2"] += 1
+        elif tier == 3:
+            tier_counts["tier_3"] += 1
+        else:
+            tier_counts["unknown"] += 1
+    tier_percentages = {k: round(v / total * 100, 1) for k, v in tier_counts.items()}
+    # LLM calls saved = all Tier 1 actions × 4 agents (no LLM in Tier 1)
+    llm_calls_saved = tier_counts["tier_1"] * 4
+    deterministic_count = sum(1 for r in records if r.get("triage_mode") == "deterministic")
+
     return {
         "total_evaluations": total,
         "decisions": counts,
@@ -863,6 +888,13 @@ async def get_metrics() -> dict:
         "sri_dimensions": sri_dimensions,
         "top_violations": top_violations,
         "most_evaluated_resources": most_evaluated,
+        "triage": {
+            "tier_counts": tier_counts,
+            "tier_percentages": tier_percentages,
+            "llm_calls_saved": llm_calls_saved,
+            "deterministic_evaluations": deterministic_count,
+            "full_evaluations": total - deterministic_count,
+        },
     }
 
 

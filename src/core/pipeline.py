@@ -67,6 +67,7 @@ from pathlib import Path
 from src.config import settings
 from src.core.governance_engine import GovernanceDecisionEngine
 from src.core.models import GovernanceVerdict, ProposedAction
+from src.core.risk_triage import build_org_context, classify_tier, compute_fingerprint
 from src.governance_agents.blast_radius_agent import BlastRadiusAgent
 from src.governance_agents.financial_agent import FinancialImpactAgent
 from src.governance_agents.historical_agent import HistoricalPatternAgent
@@ -129,9 +130,19 @@ class RuriSkryPipeline:
         # seed_resources.json, we load them here and pass them per-call.
         self._resources: dict[str, dict] = self._load_resource_graph()
 
+        # ── Org context (Phase 26 — Risk Triage) ──────────────────────────
+        # Built once from config and reused for every evaluate() call.
+        # Provides compliance frameworks, risk tolerance, and critical RG list
+        # to the triage fingerprint engine.
+        self._org_context = build_org_context()
+
         logger.info(
-            "RuriSkryPipeline initialised — %d resources in topology graph",
+            "RuriSkryPipeline initialised — %d resources in topology graph | "
+            "org=%s frameworks=%s tolerance=%s",
             len(self._resources),
+            self._org_context.org_name,
+            self._org_context.compliance_frameworks or "none",
+            self._org_context.risk_tolerance,
         )
 
     # ------------------------------------------------------------------
@@ -167,11 +178,35 @@ class RuriSkryPipeline:
         resource = self._find_resource(action.target.resource_id)
         resource_metadata = self._build_policy_metadata(resource)
 
+        # ── Risk Triage (Phases 26 + 27A) ─────────────────────────────────
+        # Classify the action before running any governance agent (<1 ms).
+        # Phase 26: fingerprint derived, tier computed, stamped on verdict.
+        # Phase 27A: Tier 1 short-circuits LLM — force_deterministic=True
+        #            skips the Agent Framework in all 4 governance agents.
+        # Phase 27B (future): Tier 2 single consolidated LLM call;
+        #            Decision Memory — precedent matching for repeat actions.
+        fingerprint = compute_fingerprint(action, resource_metadata, self._org_context)
+        triage_tier = classify_tier(fingerprint)
+
+        force_deterministic = (triage_tier == 1)
+
+        if force_deterministic:
+            logger.info(
+                "Pipeline: Tier 1 short-circuit — skipping LLM for '%s' on '%s' "
+                "(env=%s, blast_radius=%s)",
+                action.action_type.value,
+                action.target.resource_id,
+                fingerprint.environment,
+                fingerprint.estimated_blast_radius,
+            )
+
         logger.info(
-            "Pipeline: evaluating '%s' on '%s' (agent=%s, sequential_llm=%s)",
+            "Pipeline: evaluating '%s' on '%s' (agent=%s, tier=%d, "
+            "sequential_llm=%s)",
             action.action_type.value,
             action.target.resource_id,
             action.agent_id,
+            triage_tier,
             settings.sequential_llm,
         )
 
@@ -184,10 +219,10 @@ class RuriSkryPipeline:
             # deployments (e.g. 1 RPM) where the semaphore alone is not enough.
             # Trade-off: ~4x higher latency vs the default parallel mode.
             # ------------------------------------------------------------------
-            blast_result = await self._blast.evaluate(action)
-            policy_result = await self._policy.evaluate(action, resource_metadata)
-            historical_result = await self._historical.evaluate(action)
-            financial_result = await self._financial.evaluate(action)
+            blast_result = await self._blast.evaluate(action, force_deterministic=force_deterministic)
+            policy_result = await self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic)
+            historical_result = await self._historical.evaluate(action, force_deterministic=force_deterministic)
+            financial_result = await self._financial.evaluate(action, force_deterministic=force_deterministic)
         else:
             # ------------------------------------------------------------------
             # Parallel mode (default)
@@ -203,10 +238,10 @@ class RuriSkryPipeline:
                 historical_result,
                 financial_result,
             ) = await asyncio.gather(
-                self._blast.evaluate(action),
-                self._policy.evaluate(action, resource_metadata),
-                self._historical.evaluate(action),
-                self._financial.evaluate(action),
+                self._blast.evaluate(action, force_deterministic=force_deterministic),
+                self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic),
+                self._historical.evaluate(action, force_deterministic=force_deterministic),
+                self._financial.evaluate(action, force_deterministic=force_deterministic),
             )
 
         # ------------------------------------------------------------------
@@ -216,11 +251,16 @@ class RuriSkryPipeline:
             action, blast_result, policy_result, historical_result, financial_result
         )
 
+        # Stamp the triage tier and mode on the verdict for storage and metrics.
+        verdict.triage_tier = triage_tier
+        verdict.triage_mode = "deterministic" if force_deterministic else "full"
+
         logger.info(
-            "Pipeline: verdict=%s composite=%.1f (infra=%.1f policy=%.1f "
+            "Pipeline: verdict=%s composite=%.1f tier=%d (infra=%.1f policy=%.1f "
             "hist=%.1f cost=%.1f) agent=%s",
             verdict.decision.value,
             verdict.skry_risk_index.sri_composite,
+            triage_tier,
             blast_result.sri_infrastructure,
             policy_result.sri_policy,
             historical_result.sri_historical,

@@ -23,6 +23,8 @@ src/
 │   ├── models.py                # ALL Pydantic data models (READ THIS FIRST)
 │   ├── pipeline.py              # asyncio.gather() orchestration — 4 governance agents concurrent
 │   ├── governance_engine.py     # Calculates SRI™ Composite + verdict
+│   ├── risk_triage.py           # Phase 26: compute_fingerprint, classify_tier, build_org_context
+│   │                            #   Routes actions to Tier 1/2/3 before governance agents run
 │   ├── decision_tracker.py      # Audit trail storage (verdicts → Cosmos / JSON)
 │   ├── scan_run_tracker.py      # Scan-run lifecycle store (scan records → Cosmos / JSON)
 │   ├── explanation_engine.py    # DecisionExplainer — factors, counterfactuals, LLM summary
@@ -214,6 +216,36 @@ STATUS.md for full phase breakdown.
 
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
+
+**Bug Fixes + Test Hardening (post-Phase 24, COMPLETE)**
+
+- `src/api/dashboard_api.py`: `_run_agent_scan()` now persists `"status": "error"` (+ `"scan_error"` message) when the agent's LLM call fails or times out. Previously always wrote `"status": "complete"`, making timed-out scans indistinguishable from clean scans.
+- `dashboard/src/pages/Scans.jsx`: Added `AGENT_TYPE_LABELS` map keyed by `scan.agent_type` (`"deploy"/"monitoring"/"cost"`). Label lookup now uses `agent_type` first — fixes `scan_tracker` showing in the Agent column. Added `AlertTriangle` red "Error" badge for `status === "error"` with tooltip showing the error message.
+- `infrastructure/terraform-prod/main.tf`: `azurerm_monitor_action_group` now includes a `dynamic webhook_receiver` block that fires when `var.alert_webhook_url != ""`. This wires Azure Monitor CPU/heartbeat alerts to POST to RuriSkry's `/api/alert-trigger`, completing the automatic alert → governance evaluation pipeline.
+- `infrastructure/terraform-prod/variables.tf`: New `alert_webhook_url` variable (optional, empty default).
+- `dashboard/tests/regression.spec.js` + `e2e.spec.js`: Fixed 5 brittle test assertions (metrics contract `approval_rate` → `decisions`/`decision_percentages`; verdict badge locator scoped to `tbody`; Agents heading strict-mode `.first()`; table header waits via `locator('table').filter`; deploy scan e2e accepts framework error outcome).
+
+**Phase 24 — Magic UI Visual Redesign + Ops Nerve Center Aesthetic (COMPLETE)**
+
+Dashboard visual overhaul — production-grade "aerospace ops center" aesthetic implemented as bespoke components (no runtime library dependency):
+
+**Phase 24a — Magic UI Components:**
+- `dashboard/src/components/magicui/NumberTicker.jsx` — count-up animation via `requestAnimationFrame` + easeOutQuart. Animates metric values when data refreshes.
+- `dashboard/src/components/magicui/GlowCard.jsx` — card wrapper with color-coded box-shadow glow (`blue/green/amber/red/slate`) + optional border beam (gradient light scanning across top edge via `@keyframes scanBeam`) + `urgent` prop → slow amber `animate-urgent-pulse` + `backdrop-filter: blur(12px)` glass depth.
+- `dashboard/src/components/magicui/VerdictBadge.jsx` — unified verdict labels sitewide: dot indicator + uppercase pill + glow `text-shadow`. Emerald = approved, amber = escalated, rose = denied.
+- `dashboard/src/components/magicui/TableSkeleton.jsx` — shimmer placeholder rows for tables during data load (avoids blank flash). Uses `.shimmer` CSS animation.
+- `dashboard/src/pages/Overview.jsx` — NumberTicker on all 4 metric cards; `AreaChart` + `linearGradient` SVG for SRI trend (filled gradient area); GlowCard on every panel; staggered `.card-stagger` entrance animation; `urgent` prop on Pending Reviews card when HITL reviews are pending. **Triage Intelligence card (Phase 26/27A)**: teal GlowCard showing LLM calls saved (NumberTicker), Tier 1/2/3 counts with percentages, stacked progress bar (emerald=Tier1 / amber=Tier2 / rose=Tier3). Reads from `metrics.triage` API field; only renders when metrics loaded.
+- `dashboard/src/components/ConnectedAgents.jsx` — GlowCard on every agent card: green glow when online, amber + fast beam when scanning, slate when offline.
+- `AuditLog.jsx`, `DecisionTable.jsx`, `Decisions.jsx` — all replaced inline verdict spans with shared `VerdictBadge`; SRI colors updated to emerald/amber/rose throughout.
+- `dashboard/src/components/AgentControls.jsx` — replaced emoji icons (💰🤖🔒) with Lucide SVG (`DollarSign`, `Activity`, `Shield`, `Zap`, `ClipboardList`).
+
+**Phase 24b — Ops Nerve Center Design System:**
+- `dashboard/index.html` — Google Fonts preconnect + load: DM Sans (UI text) + JetBrains Mono (all data values).
+- `dashboard/tailwind.config.js` — `fontFamily.sans = ["DM Sans", ...]`, `fontFamily.mono = ["JetBrains Mono", ...]`.
+- `dashboard/src/index.css` — Full CSS design token system in `:root`: `--bg-base/#020817`, `--bg-surface`, `--border-subtle/default/accent`, `--accent-blue/teal/amber/emerald/rose`, `--font-ui`, `--font-data`. Keyframes: `breathe` (teal logo pulse 3.5s), `urgentPulse` (amber card glow 2.2s), `iconUrgent` (sidebar icon amber drop-shadow 2s), `scanBeam`, `fadeInUp`, `shimmerSlide`, `indicatorIn`. Utility classes: `.animate-breathe`, `.animate-urgent-pulse`, `.animate-icon-urgent`, `.animate-fade-in-up`, `.card-stagger`, `.shimmer`, `.metric-value`, `.metric-value-{blue/green/amber/red/slate}`, `.glass`, `.bg-dots`.
+- `dashboard/src/components/Sidebar.jsx` — teal `animate-breathe` glow on SL logo; `animate-icon-urgent` amber pulse on Decisions icon when `pendingCount > 0`; amber badge with glow on both Overview and Decisions links; animated left-bar active indicator; pulsing "System online" status.
+- `dashboard/src/App.jsx` — `bg-dots` dot-grid texture on main content area; `--font-ui` / `--bg-base` CSS variables applied to root layout.
+- **Tests: 666 passed (unchanged — frontend-only change, no backend touched)**
 
 **Phase 21 — Execution Gateway & Human-in-the-Loop (COMPLETE)**
 

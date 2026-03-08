@@ -351,6 +351,7 @@ resource "azurerm_linux_virtual_machine" "web01" {
 
   tags = merge(local.common_tags, {
     tier        = "web"
+    criticality = "critical"
     environment = "production"
     owner       = "web-team"
     cost-center = "frontend"
@@ -515,6 +516,20 @@ resource "azurerm_monitor_action_group" "prod" {
   email_receiver {
     name          = "ops-team"
     email_address = var.alert_email
+  }
+
+  # Wire Azure Monitor alerts into the RuriSkry governance engine.
+  # When an alert fires (CPU spike, heartbeat loss), Azure POSTs the payload
+  # to /api/alert-trigger, which triggers the monitoring agent to propose an
+  # action (scale-up or idle-resource deletion) for governance evaluation.
+  # Set alert_webhook_url in terraform.tfvars to enable this flow.
+  dynamic "webhook_receiver" {
+    for_each = var.alert_webhook_url != "" ? [1] : []
+    content {
+      name                    = "ruriskry-alert-trigger"
+      service_uri             = var.alert_webhook_url
+      use_common_alert_schema = true
+    }
   }
 }
 
