@@ -206,7 +206,9 @@ output "next_steps" {
          cd dashboard && npm run build
 
     3. Deploy using SWA CLI:
-         npx @azure/static-web-apps-cli deploy ./dist --deployment-token <run: terraform output -raw dashboard_deployment_token>
+         npx @azure/static-web-apps-cli deploy ./dist \
+           --deployment-token <run: terraform output -raw dashboard_deployment_token> \
+           --env production
 
     4. Dashboard is live at:
          https://${azurerm_static_web_app.dashboard.default_host_name}
