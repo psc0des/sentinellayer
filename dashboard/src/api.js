@@ -5,7 +5,7 @@
  * message that the UI can display.
  */
 
-export const BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000') + '/api'
+export const BASE = import.meta.env.VITE_API_URL + '/api'
 
 /** Fetch recent evaluations, optionally filtered by resource ID substring. */
 export async function fetchEvaluations(limit = 20, resourceId = null) {
