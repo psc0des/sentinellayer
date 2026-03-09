@@ -249,6 +249,10 @@ az containerapp update \
 ### Dashboard changed
 
 ```bash
+# Ensure dashboard/.env.production exists with the correct backend URL.
+# VITE_API_URL has no fallback — missing env file = broken build.
+# cat dashboard/.env.production  →  VITE_API_URL=https://ruriskry-backend-<suffix>...
+
 cd dashboard
 npm run build
 
