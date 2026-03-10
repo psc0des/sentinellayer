@@ -119,27 +119,52 @@ ok "Terraform initialised"
 
 if [[ "$STAGE2_ONLY" == true ]]; then
   warn "--stage2 flag set — skipping Stage 1 and Docker build"
-  warn "Assuming ACR exists and image is already pushed."
+  warn "Assuming ACR and Static Web App already exist with URL patched into tfvars."
   ACR_NAME=$(terraform output -raw acr_name)
   ACR_SERVER=$(terraform output -raw acr_login_server)
+  DASHBOARD_URL=$(terraform output -raw dashboard_url)
 else
-  # ── Detect if Stage 1 is already done ────────────────────────────────────
-  # If ACR is already in state AND the image already exists, skip the 90s
-  # sleep and Docker rebuild (safe to re-run — targeted apply is a no-op).
-  ACR_IN_STATE=$(terraform state list 2>/dev/null | grep -c "azurerm_container_registry.ruriskry" || true)
-
-  step "Stage 1 — Provisioning ACR, Managed Identity, and role assignment"
+  step "Stage 1 — Provisioning ACR, Managed Identity, role assignment, and Static Web App"
+  # Why SWA is in Stage 1 (not Stage 2 with everything else):
+  #   Azure SWA generates a random subdomain on creation. The Container App
+  #   needs the exact SWA URL as its DASHBOARD_URL env var (for CORS and for
+  #   Teams notification links). By creating the SWA here, before docker push
+  #   and before the Container App exists, we can patch the real URL into
+  #   terraform.tfvars so Stage 2 creates the Container App with the correct
+  #   value already set — no re-apply needed, no stale CORS window.
 
   terraform apply -auto-approve \
     -target=azurerm_resource_group.ruriskry \
     -target=azurerm_container_registry.ruriskry \
     -target=azurerm_user_assigned_identity.acr_pull \
     -target=azurerm_role_assignment.acr_pull \
-    -target=time_sleep.acr_role_propagation
+    -target=time_sleep.acr_role_propagation \
+    -target=azurerm_static_web_app.dashboard
 
   ACR_NAME=$(terraform output -raw acr_name)
   ACR_SERVER=$(terraform output -raw acr_login_server)
+  DASHBOARD_URL=$(terraform output -raw dashboard_url)
   ok "ACR ready: $ACR_SERVER (role assignment propagated)"
+
+  # Patch the real dashboard URL into terraform.tfvars immediately.
+  # Stage 2 will create the Container App with DASHBOARD_URL already correct —
+  # no wire-back step, no re-apply after dashboard deploy.
+  log "Patching dashboard_url into terraform.tfvars..."
+  "$PYTHON" - <<PYEOF
+import re, pathlib
+tfvars = pathlib.Path("terraform.tfvars")
+content = tfvars.read_text()
+url = "$DASHBOARD_URL".rstrip("/")
+updated = re.sub(
+    r'^dashboard_url\s*=.*',
+    f'dashboard_url = "{url}"',
+    content,
+    flags=re.MULTILINE,
+)
+tfvars.write_text(updated)
+print(f"  dashboard_url = {url}")
+PYEOF
+  ok "terraform.tfvars patched: dashboard_url = $DASHBOARD_URL"
 
   # =============================================================================
   # 3. Docker build + push
@@ -214,36 +239,6 @@ npx @azure/static-web-apps-cli deploy ./dist \
   --deployment-token "$DEPLOY_TOKEN" \
   --env production
 ok "Dashboard deployed: $DASHBOARD_URL"
-
-# =============================================================================
-# 6. Wire dashboard URL back into tfvars + re-apply
-# =============================================================================
-# The Container App needs DASHBOARD_URL as an env var so the "View in Dashboard"
-# button in Teams notifications points to the real URL.
-step "Wiring dashboard URL into Container App"
-
-cd "$TF_DIR"
-
-# Update dashboard_url in terraform.tfvars.
-# Uses Python (cross-platform) instead of sed — avoids sed -i backup file
-# behaviour differences between GNU sed (Linux) and BSD sed (macOS/Git Bash).
-"$PYTHON" - <<PYEOF
-import re, pathlib
-tfvars = pathlib.Path("terraform.tfvars")
-content = tfvars.read_text()
-url = "$DASHBOARD_URL".rstrip("/")
-updated = re.sub(
-    r'^dashboard_url\s*=.*',
-    f'dashboard_url = "{url}"',
-    content,
-    flags=re.MULTILINE,
-)
-tfvars.write_text(updated)
-print(f"  dashboard_url = {url}")
-PYEOF
-
-terraform apply -auto-approve
-ok "Container App updated with dashboard URL"
 
 # =============================================================================
 # 7. Health check

@@ -102,13 +102,12 @@ The script handles everything in the correct order:
 |------|--------------|
 | 0 | Checks all tools are installed, Docker is running, `az login` is active |
 | 1 | `terraform init` |
-| 2 | **Stage 1 targeted apply** — creates ACR, User-Assigned Managed Identity, AcrPull role, waits 90s for role propagation |
+| 2 | **Stage 1 targeted apply** — creates ACR, User-Assigned Managed Identity, AcrPull role, 90s propagation sleep, **and Static Web App** — SWA URL is immediately patched into `terraform.tfvars` |
 | 3 | Docker build + push to ACR (skipped if image already exists) |
-| 4 | **Stage 2 full apply** — Container App, Cosmos, Foundry, Search, SWA, everything else |
+| 4 | **Stage 2 full apply** — Container App created with correct `DASHBOARD_URL` already set (Cosmos, Foundry, Search, everything else) |
 | 5 | React dashboard build + deploy to Static Web Apps |
-| 6 | Writes the real dashboard URL back into `terraform.tfvars`, re-applies so Container App picks it up |
-| 7 | Backend health check |
-| 8 | Prints live URLs and the 3 remaining manual steps |
+| 6 | Backend health check |
+| 7 | Prints live URLs and the 3 remaining manual steps |
 
 When it finishes:
 ```
@@ -126,7 +125,6 @@ The script is designed to be re-run safely. Use the table below to decide:
 | Docker build or push | Fix the error (Docker running? `az login` expired?), re-run `bash scripts/deploy.sh` — script detects image already in ACR and skips rebuild if push succeeded |
 | **Stage 2 (full apply)** | Re-run with `bash scripts/deploy.sh --stage2` — skips the 90s wait and Docker rebuild entirely |
 | Dashboard build/deploy | Re-run with `bash scripts/deploy.sh --stage2` — Stage 2 is a no-op if infra already exists |
-| tfvars URL wiring | Run `cd infrastructure/terraform-core && terraform apply` directly |
 
 ---
 
@@ -180,8 +178,10 @@ use_github_pat     = false                          # set true after you store t
 ```
 
 > **Do not pre-fill `dashboard_url`.** Azure Static Web Apps generates a random subdomain on
-> first deploy. `deploy.sh` reads the real URL from Terraform outputs and patches `terraform.tfvars`
-> automatically. If you are running the manual deploy path, fill it in after step 5 (dashboard deploy).
+> creation. `deploy.sh` creates the SWA in Stage 1, reads the URL immediately from Terraform
+> outputs, and patches `terraform.tfvars` before Stage 2 runs — so the Container App is created
+> with the correct `DASHBOARD_URL` on first apply (no re-apply needed).
+> If running the manual deploy path, fill it in after Step 2 (Stage 1 apply).
 
 ---
 
@@ -293,7 +293,7 @@ terraform init -upgrade
 terraform validate
 ```
 
-### 2. Stage 1 — ACR + identity + role (targeted apply)
+### 2. Stage 1 — ACR + identity + role + Static Web App (targeted apply)
 
 ```bash
 terraform apply -auto-approve \
@@ -301,10 +301,18 @@ terraform apply -auto-approve \
   -target=azurerm_container_registry.ruriskry \
   -target=azurerm_user_assigned_identity.acr_pull \
   -target=azurerm_role_assignment.acr_pull \
-  -target=time_sleep.acr_role_propagation
+  -target=time_sleep.acr_role_propagation \
+  -target=azurerm_static_web_app.dashboard
 ```
 
-This includes a 90-second sleep for role propagation.
+This includes a 90-second sleep for role propagation. The SWA is created here
+so its URL is known before the Container App is provisioned — patch it into
+`terraform.tfvars` immediately:
+
+```bash
+DASHBOARD_URL=$(terraform output -raw dashboard_url)
+# Update dashboard_url in terraform.tfvars with the real URL before Stage 2
+```
 
 ### 3. Build and push Docker image
 

@@ -151,9 +151,13 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# SEC-06: Restrict CORS to the dashboard origin.
-# In Azure, DASHBOARD_URL is set by Terraform from tfvars.
-# Locally, it falls back to localhost so dev still works.
+# SEC-06: CORS is restricted to the exact dashboard origin + localhost.
+# DASHBOARD_URL is set by Terraform from the Static Web App URL, which is
+# known before the Container App is created (SWA is provisioned in Stage 1
+# of scripts/deploy.sh, its URL is patched into terraform.tfvars, and the
+# Container App is created in Stage 2 with the correct value already set).
+# This avoids URL rotation issues without loosening CORS to a wildcard or
+# domain-pattern match (which would allow any Azure SWA to call the API).
 _dashboard_url = settings.dashboard_url.rstrip("/") if settings.dashboard_url else ""
 _allowed_origins = (
     [_dashboard_url, "http://localhost:5173", "http://localhost:4173"]
