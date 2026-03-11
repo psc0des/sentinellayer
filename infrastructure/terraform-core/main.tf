@@ -742,6 +742,26 @@ resource "azurerm_role_assignment" "subscription_reader" {
 }
 
 # =============================================================================
+# 10d. Network Contributor — execute NSG rule remediation via Azure SDK
+# =============================================================================
+# When a governance verdict is APPROVED or manually actioned, the Execution
+# Gateway calls the Azure SDK to delete or modify NSG security rules
+# (_execute_fix_via_sdk in execution_gateway.py → NetworkManagementClient).
+# The MI needs Network Contributor on the subscription to delete securityRules
+# across all resource groups it manages.
+#
+# Scope: subscription-level so it covers all managed resource groups.
+# If you want tighter scope, change to the specific resource group:
+#   scope = azurerm_resource_group.rg.id
+resource "azurerm_role_assignment" "network_contributor" {
+  scope                = "/subscriptions/${var.subscription_id}"
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+
+  depends_on = [azurerm_container_app.backend]
+}
+
+# =============================================================================
 # 11. Static Web App — React Dashboard
 # =============================================================================
 # Hosts the compiled React dashboard (dashboard/dist/).
