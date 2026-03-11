@@ -10,6 +10,7 @@
  */
 
 import React, { useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useOutletContext } from 'react-router-dom'
 import { Download, Search, Filter, X, ChevronRight, Copy, Check } from 'lucide-react'
 import VerdictBadge from '../components/magicui/VerdictBadge'
@@ -117,16 +118,19 @@ function DetailsPanel({ ev, onClose }) {
                     tirageTier === 3 ? 'Tier 3 — Full LLM governance' :
                     tirageTier != null ? `Tier ${tirageTier}` : null
 
-  return (
+  // Render into document.body via portal — escapes any overflow/backdrop-filter
+  // ancestors in the layout that would otherwise trap position:fixed children.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/40 z-40"
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9998 }}
         onClick={onClose}
       />
 
       {/* Slide-in panel */}
-      <div className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-slate-950 border-l border-slate-800 z-50 overflow-y-auto shadow-2xl flex flex-col">
+      <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: '100%', maxWidth: '520px', zIndex: 9999 }}
+           className="bg-slate-950 border-l border-slate-800 overflow-y-auto shadow-2xl flex flex-col">
 
         {/* Header */}
         <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-5 py-4 flex items-start justify-between gap-3 z-10">
@@ -267,7 +271,8 @@ function DetailsPanel({ ev, onClose }) {
 
         </div>
       </div>
-    </>
+    </>,
+    document.body
   )
 }
 
