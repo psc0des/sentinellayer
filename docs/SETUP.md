@@ -261,11 +261,15 @@ az acr login --name $ACR_NAME
 docker build -t $ACR_SERVER/ruriskry-backend:latest .
 docker push $ACR_SERVER/ruriskry-backend:latest
 
-# Update the Container App to pull the new image
+# Update the Container App to pull the new image.
+# Use --revision-suffix to force a new revision — Azure Container Apps caches
+# the image digest per revision, so updating a mutable tag (e.g. :latest) without
+# creating a new revision will NOT pull the updated image.
 az containerapp update \
   --name $(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_name) \
   --resource-group ruriskry-core-engine-rg \
-  --image $ACR_SERVER/ruriskry-backend:latest
+  --image $ACR_SERVER/ruriskry-backend:latest \
+  --revision-suffix "r$(date +%Y%m%d%H%M)"
 
 # Get the backend URL
 terraform -chdir=infrastructure/terraform-core output backend_url
