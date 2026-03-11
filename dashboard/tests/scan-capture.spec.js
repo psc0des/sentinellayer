@@ -16,6 +16,7 @@
 import { test, expect } from '@playwright/test'
 
 const BACKEND = 'https://ruriskry-core-backend-psc0des.icygrass-1e4512b3.eastus2.azurecontainerapps.io'
+const DASHBOARD = 'https://agreeable-pond-05f59310f.2.azurestaticapps.net'
 
 test.describe('Scan run capture — end-to-end', () => {
 
@@ -34,7 +35,7 @@ test.describe('Scan run capture — end-to-end', () => {
     console.log('Polling scan status...')
     let status = 'running'
     let proposals = 0
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 30; i++) {  // 30 × 5s = 150s — covers 120s LLM_TIMEOUT + margin
       await page.waitForTimeout(5_000)
       const statusResp = await request.get(`${BACKEND}/api/scan/${scanId}/status`)
       if (statusResp.ok()) {
@@ -64,7 +65,7 @@ test.describe('Scan run capture — end-to-end', () => {
 
     // ── Step 4: Scans page shows this scan in history ────────────────────────
     console.log('Checking Scans page history table...')
-    await page.goto('/scans')
+    await page.goto(`${DASHBOARD}/scans`)
     await expect(page.getByText(/scan history/i)).toBeVisible({ timeout: 10_000 })
 
     // History table should have at least 1 row (not the empty-state message)
@@ -102,7 +103,7 @@ test.describe('Scan run capture — end-to-end', () => {
       console.log(`  Latest decision: resource=${latestEval.resource_id}, verdict=${latestEval.verdict}`)
 
       // Decisions page should show a row
-      await page.goto('/decisions')
+      await page.goto(`${DASHBOARD}/decisions`)
       await expect(page.getByRole('heading', { name: /decisions/i })).toBeVisible()
       await expect(
         page.locator('tbody tr').first(),
