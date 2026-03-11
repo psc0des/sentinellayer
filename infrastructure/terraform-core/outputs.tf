@@ -139,16 +139,6 @@ output "acr_name" {
   value       = azurerm_container_registry.ruriskry.name
 }
 
-output "acr_admin_username" {
-  description = "ACR admin username (for docker login)"
-  value       = azurerm_container_registry.ruriskry.admin_username
-}
-
-output "acr_admin_password" {
-  description = "ACR admin password (for docker login)"
-  value       = azurerm_container_registry.ruriskry.admin_password
-  sensitive   = true
-}
 
 # --- Container App (backend) ---
 
@@ -183,46 +173,21 @@ output "dashboard_deployment_token" {
 # --- Helpful summary ---
 
 output "next_steps" {
-  description = "What to do after terraform apply"
+  description = "Live URLs and next steps after deployment"
   value       = <<-EOT
 
     ✅ Infrastructure deployed.
 
-    ── Deploy FastAPI backend ─────────────────────────────────────
-    1. Build and push Docker image:
-         az acr login --name ${azurerm_container_registry.ruriskry.name}
-         docker build -t ${azurerm_container_registry.ruriskry.login_server}/ruriskry-backend:latest .
-         docker push ${azurerm_container_registry.ruriskry.login_server}/ruriskry-backend:latest
+    ── Live endpoints ─────────────────────────────────────────────
+      Dashboard  →  https://${azurerm_static_web_app.dashboard.default_host_name}
+      Backend    →  https://${azurerm_container_app.backend.ingress[0].fqdn}
 
-    2. Update the Container App to pull the new image:
-         az containerapp update \
-           --name ${azurerm_container_app.backend.name} \
-           --resource-group ${azurerm_resource_group.ruriskry.name} \
-           --image ${azurerm_container_registry.ruriskry.login_server}/ruriskry-backend:latest
+    ── If you used deploy.sh ──────────────────────────────────────
+      Deployment is complete. See the script output for remaining manual steps.
 
-    3. Backend is live at:
-         https://${azurerm_container_app.backend.ingress[0].fqdn}
-
-    ── Deploy React dashboard ──────────────────────────────────────
-    1. Set backend URL before building — create dashboard/.env.production:
-         VITE_API_URL=https://${azurerm_container_app.backend.ingress[0].fqdn}
-
-    2. Build the React app:
-         cd dashboard && npm run build
-
-    3. Deploy using SWA CLI:
-         npx @azure/static-web-apps-cli deploy ./dist \
-           --deployment-token <run: terraform output -raw dashboard_deployment_token> \
-           --env production
-
-    4. Dashboard is live at:
-         https://${azurerm_static_web_app.dashboard.default_host_name}
-
-    ── Local .env values ──────────────────────────────────────────
-      AZURE_OPENAI_ENDPOINT = ${azurerm_ai_services.foundry.endpoint}
-      COSMOS_ENDPOINT       = ${azurerm_cosmosdb_account.ruriskry.endpoint}
-      AZURE_SEARCH_ENDPOINT = https://${azurerm_search_service.ruriskry.name}.search.windows.net
-      AZURE_KEYVAULT_URL    = ${azurerm_key_vault.ruriskry.vault_uri}
+    ── If you ran terraform apply manually ────────────────────────
+      See infrastructure/terraform-core/deploy.md § Manual Deploy
+      for the Docker build/push and dashboard deploy commands.
 
   EOT
 }

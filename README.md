@@ -255,8 +255,9 @@ bash scripts/setup_env.sh
 # For CI/non-interactive mode:
 # bash scripts/setup_env.sh --no-prompt
 
-# Seed demo data
-python scripts/seed_data.py
+# (Optional) Seed demo incidents into AI Search — for local/mock dev only.
+# In production, historical context builds up organically via DecisionTracker.
+# python scripts/seed_data.py
 
 # Run RuriSkry — MCP stdio server (for Claude Desktop)
 python -m src.mcp_server.server

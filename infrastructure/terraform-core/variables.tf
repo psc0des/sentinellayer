@@ -13,7 +13,13 @@ variable "subscription_id" {
 variable "resource_group_name" {
   description = "Name of the Azure Resource Group to create"
   type        = string
-  default     = "ruriskry-core-rg"
+  default     = "ruriskry-core-engine-rg"
+}
+
+variable "enable_rg_lock" {
+  description = "Enable CanNotDelete management lock on the resource group. Set false during development to allow clean terraform destroy without ScopeLocked errors."
+  type        = bool
+  default     = false
 }
 
 variable "location" {
@@ -191,8 +197,8 @@ variable "backend_image" {
       az acr login --name ruriskry<suffix>
       docker push <acr_login_server>/ruriskry-backend:latest
   EOT
-  type    = string
-  default = "ruriskry-backend:latest"
+  type        = string
+  default     = "ruriskry-backend:latest"
 }
 
 variable "backend_cpu" {
@@ -248,12 +254,6 @@ variable "teams_webhook_url" {
   sensitive   = true
 }
 
-variable "dashboard_url" {
-  description = "Public URL of the dashboard — embedded in Teams card 'View in Dashboard' button."
-  type        = string
-  default     = ""
-}
-
 # ---------------------------------------------------------------------------
 # Org context (risk triage env vars)
 # ---------------------------------------------------------------------------
@@ -295,8 +295,8 @@ variable "use_github_pat" {
     When true, the Container App wires GITHUB_TOKEN from that Key Vault secret
     via its Managed Identity. The PAT value never enters Terraform or tfstate.
   EOT
-  type    = bool
-  default = false
+  type        = bool
+  default     = false
 }
 
 variable "iac_github_repo" {
@@ -320,6 +320,6 @@ variable "static_web_app_location" {
     Azure region for Static Web Apps. Limited availability — use one of:
     eastus2, centralus, westus2, westeurope, eastasia, southeastasia.
   EOT
-  type    = string
-  default = "eastus2"
+  type        = string
+  default     = "eastus2"
 }

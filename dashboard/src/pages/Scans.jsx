@@ -59,9 +59,9 @@ export default function Scans() {
     Promise.all(AGENT_NAMES.map(name => fetchAgentLastRun(name).catch(() => null)))
       .then(results => {
         setRecentScans(
-          results.filter(Boolean).sort((a, b) =>
-            (b.started_at ?? '').localeCompare(a.started_at ?? '')
-          )
+          results
+            .filter(r => r && r.status !== 'no_data')
+            .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
         )
         setScansLoading(false)
       })

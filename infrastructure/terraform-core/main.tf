@@ -60,13 +60,21 @@ data "azurerm_client_config" "current" {}
 locals {
   name_suffix = var.suffix
 
+  # Consistent name prefix for all hyphenated resources.
+  # "ruriskry-core" is the longest prefix that satisfies every Azure name
+  # length constraint, including Key Vault (max 24 chars):
+  #   ruriskry-core-kv-<suffix> → 24 chars with a 7-char suffix.
+  # ACR names are alphanumeric-only (no hyphens) — use acr_prefix instead.
+  name_prefix = "ruriskry-core"
+  acr_prefix  = "ruriskrycore"
+
   common_tags = {
     project     = "ruriskry"
     environment = var.env
     managed_by  = "terraform"
   }
 
-  default_foundry_name = "ruriskry-foundry-${local.name_suffix}"
+  default_foundry_name = "${local.name_prefix}-foundry-${local.name_suffix}"
   foundry_account_name = var.foundry_account_name != "" ? var.foundry_account_name : local.default_foundry_name
   foundry_subdomain    = var.foundry_custom_subdomain_name != "" ? var.foundry_custom_subdomain_name : local.foundry_account_name
 }
@@ -86,7 +94,7 @@ resource "azurerm_resource_group" "ruriskry" {
 # =============================================================================
 
 resource "azurerm_log_analytics_workspace" "ruriskry" {
-  name                = "ruriskry-log-${local.name_suffix}"
+  name                = "${local.name_prefix}-log-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
   sku                 = "PerGB2018"
@@ -99,17 +107,18 @@ resource "azurerm_log_analytics_workspace" "ruriskry" {
 # =============================================================================
 
 resource "azurerm_key_vault" "ruriskry" {
-  name                = "ruriskry-kv-${local.name_suffix}"
+  name                = "${local.name_prefix}-kv-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
 
-  # SEC-03: Purge protection prevents permanent deletion of secrets even by
-  # admins. Once enabled it cannot be disabled — secrets can only be recovered
-  # or expire after the soft-delete retention period (90 days default).
-  purge_protection_enabled   = true
-  soft_delete_retention_days = 90
+  # Purge protection disabled — allows clean redeploys with the same KV name
+  # without hitting the 90-day soft-delete retention window. Acceptable for
+  # this project; enable in regulated production environments where accidental
+  # permanent deletion must be prevented.
+  purge_protection_enabled   = false
+  soft_delete_retention_days = 7
 
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
@@ -138,11 +147,11 @@ resource "azurerm_key_vault_access_policy" "managed_identity_readers" {
 # =============================================================================
 
 resource "azurerm_ai_services" "foundry" {
-  name                               = local.foundry_account_name
-  custom_subdomain_name              = local.foundry_subdomain
-  resource_group_name                = azurerm_resource_group.ruriskry.name
-  location                           = var.foundry_location
-  sku_name                           = "S0"
+  name                  = local.foundry_account_name
+  custom_subdomain_name = local.foundry_subdomain
+  resource_group_name   = azurerm_resource_group.ruriskry.name
+  location              = var.foundry_location
+  sku_name              = "S0"
   # SEC-05: Disable local key authentication — all access must go through
   # Managed Identity (DefaultAzureCredential). Keys are still stored in Key
   # Vault as a fallback for local dev, but the API rejects key-based calls
@@ -161,8 +170,8 @@ resource "azurerm_ai_services" "foundry" {
   # be in state, so Terraform can't delete them automatically. This provisioner
   # runs on destroy and removes any projects that exist under the account first.
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when       = destroy
+    command    = <<-EOT
       for project in $(az rest --method GET \
         --url "https://management.azure.com${self.id}/projects?api-version=2025-04-01-preview" \
         --query "value[].name" -o tsv 2>/dev/null); do
@@ -191,6 +200,16 @@ resource "azurerm_ai_services" "foundry" {
 # azapi_resource — creates the Foundry project under the account. Uses the
 #   2025-04-01-preview API which is the current Foundry project API version.
 
+# Azure AIServices accounts report Succeeded before all internal provisioning
+# is complete. Patching allowProjectManagement immediately after creation
+# causes a 409 RequestConflict. A 90-second wait is sufficient for the account
+# to reach a fully terminal state before the AzAPI patch runs.
+resource "time_sleep" "foundry_ready" {
+  count           = var.create_foundry_project ? 1 : 0
+  create_duration = "90s"
+  depends_on      = [azurerm_ai_services.foundry]
+}
+
 resource "azapi_update_resource" "foundry_allow_projects" {
   count       = var.create_foundry_project ? 1 : 0
   type        = "Microsoft.CognitiveServices/accounts@2025-04-01-preview"
@@ -201,6 +220,8 @@ resource "azapi_update_resource" "foundry_allow_projects" {
       allowProjectManagement = true
     }
   }
+
+  depends_on = [time_sleep.foundry_ready]
 }
 
 resource "azapi_resource" "foundry_project" {
@@ -242,7 +263,7 @@ resource "azurerm_cognitive_deployment" "foundry_primary" {
 # =============================================================================
 
 resource "azurerm_search_service" "ruriskry" {
-  name                = "ruriskry-search-${local.name_suffix}"
+  name                = "${local.name_prefix}-search-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
   sku                 = var.search_sku
@@ -258,7 +279,7 @@ resource "azurerm_search_service" "ruriskry" {
 # =============================================================================
 
 resource "azurerm_cosmosdb_account" "ruriskry" {
-  name                = "ruriskry-cosmos-${local.name_suffix}"
+  name                = "${local.name_prefix}-cosmos-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = var.cosmos_location
   offer_type          = "Standard"
@@ -392,7 +413,7 @@ resource "azurerm_key_vault_secret" "teams_webhook" {
 #   (secrets, API keys). The User-Assigned identity is only for ACR pull.
 
 resource "azurerm_user_assigned_identity" "acr_pull" {
-  name                = "ruriskry-acr-pull-${local.name_suffix}"
+  name                = "${local.name_prefix}-acr-pull-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
 }
@@ -405,15 +426,15 @@ resource "azurerm_user_assigned_identity" "acr_pull" {
 # admin_enabled = false — image pull uses the User-Assigned Managed Identity.
 
 resource "azurerm_container_registry" "ruriskry" {
-  name                = "ruriskry${local.name_suffix}"
+  name                = "${local.acr_prefix}${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
   sku                 = "Basic"
   # SEC-02: Admin auth disabled — shared password would appear in tfstate in
   # plaintext. The Container App pulls images using the User-Assigned Managed
   # Identity (azurerm_user_assigned_identity.acr_pull) via the AcrPull role.
-  admin_enabled       = false
-  tags                = local.common_tags
+  admin_enabled = false
+  tags          = local.common_tags
 }
 
 # Grant the User-Assigned Managed Identity permission to pull images from ACR.
@@ -435,10 +456,10 @@ resource "azurerm_role_assignment" "acr_pull" {
 # terraform apply reaches the Container App, the permission is live.
 # Docker build/push is handled by scripts/deploy.sh (not in Terraform) —
 # this sleep is enough because the script runs docker push before the full apply.
-resource "time_sleep" "acr_role_propagation" {
-  create_duration = "90s"
-  depends_on      = [azurerm_role_assignment.acr_pull]
-}
+# NOTE: time_sleep for ACR role propagation is no longer needed.
+# The Container App starts with a public MCR placeholder image (no ACR auth),
+# and deploy.sh updates to the real ACR image after Stage 2 completes —
+# by which time 15+ minutes have passed since the role assignment.
 
 # =============================================================================
 # 9. Container Apps Environment
@@ -447,7 +468,7 @@ resource "time_sleep" "acr_role_propagation" {
 # Wired to the Log Analytics workspace so container logs appear in Azure Monitor.
 
 resource "azurerm_container_app_environment" "ruriskry" {
-  name                       = "ruriskry-env-${local.name_suffix}"
+  name                       = "${local.name_prefix}-env-${local.name_suffix}"
   resource_group_name        = azurerm_resource_group.ruriskry.name
   location                   = azurerm_resource_group.ruriskry.location
   log_analytics_workspace_id = azurerm_log_analytics_workspace.ruriskry.id
@@ -463,18 +484,25 @@ resource "azurerm_container_app_environment" "ruriskry" {
 # Key design:
 #   - SystemAssigned managed identity → Key Vault Get/List access granted below
 #   - Non-secret env vars set inline (endpoints, flags, timeouts)
-#   - Secrets (ACR password) passed via Container App secret mechanism
+#   - ACR pull uses User-Assigned Managed Identity (no password — admin_enabled = false)
 #   - AZURE_KEYVAULT_URL env var lets secrets.py resolve API keys at runtime
 #     using DefaultAzureCredential (Managed Identity in Azure, az login locally)
 #
 resource "azurerm_container_app" "backend" {
-  name                         = "ruriskry-backend-${local.name_suffix}"
+  name                         = "${local.name_prefix}-backend-${local.name_suffix}"
   resource_group_name          = azurerm_resource_group.ruriskry.name
   container_app_environment_id = azurerm_container_app_environment.ruriskry.id
   revision_mode                = "Single"
   tags                         = local.common_tags
 
-  depends_on = [time_sleep.acr_role_propagation]
+  # Lifecycle: image is managed by deploy.sh (az containerapp update), not Terraform.
+  # Terraform creates the app with a public MCR placeholder; deploy.sh swaps in
+  # the real ACR image after the full apply, when AcrPull role is guaranteed
+  # propagated.  This eliminates the race condition that caused "unable to pull
+  # image using Managed identity" on first deploy.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
 
   # SystemAssigned — used for Key Vault access (secrets, API keys at runtime).
   # UserAssigned (acr_pull) — used exclusively for ACR image pull.
@@ -520,8 +548,11 @@ resource "azurerm_container_app" "backend" {
     max_replicas = var.backend_max_replicas
 
     container {
-      name   = "backend"
-      image  = "${azurerm_container_registry.ruriskry.login_server}/${var.backend_image}"
+      name = "backend"
+      # Placeholder image — deploy.sh replaces this with the real ACR image
+      # after Stage 2 (az containerapp update --image).  Using a public MCR
+      # image avoids the need for ACR auth at Container App creation time.
+      image  = "mcr.microsoft.com/k8se/quickstart:latest"
       cpu    = var.backend_cpu
       memory = var.backend_memory
 
@@ -588,7 +619,7 @@ resource "azurerm_container_app" "backend" {
       }
       env {
         name  = "DASHBOARD_URL"
-        value = var.dashboard_url
+        value = "https://${azurerm_static_web_app.dashboard.default_host_name}"
       }
 
       # ── Org context (risk triage) ─────────────────────────────────────────
@@ -663,7 +694,7 @@ resource "azurerm_key_vault_access_policy" "backend_identity" {
 # The governance agents scan Azure resources across all resource groups in the
 # subscription using Azure Resource Graph and the Azure SDK. The Container App's
 # Managed Identity needs Reader at the subscription scope to query resources
-# outside ruriskry-core-rg.
+# outside ruriskry-core-engine-rg.
 #
 # For cross-SUBSCRIPTION scanning (e.g. a hub-spoke or multi-sub org), grant
 # the same Reader role on each additional subscription manually:
@@ -697,7 +728,7 @@ resource "azurerm_role_assignment" "subscription_reader" {
 #     --deployment-token $(terraform output -raw dashboard_deployment_token)
 
 resource "azurerm_static_web_app" "dashboard" {
-  name                = "ruriskry-dashboard-${local.name_suffix}"
+  name                = "${local.name_prefix}-dashboard-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = var.static_web_app_location
   sku_tier            = "Free"
@@ -730,15 +761,13 @@ resource "azurerm_static_web_app" "dashboard" {
 # SEC-08: Lock the main resource group to prevent accidental deletion of all
 # production resources in a single az group delete command.
 #
-# Why depends_on all major resources?
-#   Terraform destroys resources in reverse dependency order.
-#   By declaring that the lock logically "depends on" all the key resources
-#   (i.e., it is applied AFTER they all exist), Terraform will destroy the
-#   lock FIRST during `terraform destroy` — before any child resource
-#   attempts its own deletion. Without this, Terraform destroys in parallel
-#   and every resource deletion fails with ScopeLocked 409.
+# enable_rg_lock = true → adds a CanNotDelete lock on the RG.
+# Recommended for production; disable during active development to avoid
+# ScopeLocked 409 errors on terraform destroy / reapply cycles.
 resource "azurerm_management_lock" "ruriskry_rg" {
-  name       = "ruriskry-core-rg-lock"
+  count = var.enable_rg_lock ? 1 : 0
+
+  name       = "ruriskry-core-engine-rg-lock"
   scope      = azurerm_resource_group.ruriskry.id
   lock_level = "CanNotDelete"
   notes      = "Prevents accidental deletion of production infrastructure. Managed by Terraform — removed automatically during terraform destroy."

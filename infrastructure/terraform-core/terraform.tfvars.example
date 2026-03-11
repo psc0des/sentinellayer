@@ -9,10 +9,11 @@
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # Core resources
-resource_group_name = "ruriskry-core-rg"
+resource_group_name = "ruriskry-core-engine-rg"
 location            = "eastus2"
 env                 = "core"
 suffix              = "replace-me"   # e.g. "jd4821" — short, globally unique, no spaces
+enable_rg_lock      = false          # set true in production to protect against accidental deletion
 
 # Search and Cosmos
 search_sku       = "free"
@@ -77,10 +78,6 @@ org_risk_tolerance        = "moderate"
 
 # Teams notifications (optional — leave empty to disable)
 teams_webhook_url = ""
-
-# dashboard_url: leave empty on first apply, then set to the Static Web App URL
-# from `terraform output dashboard_url` and re-apply.
-dashboard_url = ""
 
 # Static Web App location (limited regions — leave as eastus2 unless needed)
 static_web_app_location = "eastus2"

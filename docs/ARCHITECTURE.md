@@ -202,13 +202,13 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 | Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; `network_acl_bypass_for_azure_services=true` |
 | Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` | Managed Identity auth |
 | Azure Cosmos DB — `governance-scan-runs` | `ScanRunTracker` | `COSMOS_CONTAINER_SCAN_RUNS` | Managed Identity auth |
-| Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` | `purge_protection_enabled=true`; `soft_delete_retention_days=90` |
-| Azure Container Registry | Backend image pull | — | `admin_enabled=false`; Container App MI has `AcrPull` role — no credentials in tfstate |
+| Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` | `purge_protection_enabled=false`; `soft_delete_retention_days=7` (set purge protection true in regulated production) |
+| Azure Container Registry | Backend image pull | — | `admin_enabled=false`; User-Assigned MI has `AcrPull` role — no credentials in tfstate. Container App starts with MCR placeholder image; `deploy.sh` swaps to ACR image after role propagates. |
 
 Additional security controls managed by Terraform:
 - **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. The lock `depends_on` all major resources so `terraform destroy` removes it automatically before deleting anything else — no manual step required
 - **Subscription-level Reader** — `azurerm_role_assignment.subscription_reader` grants the Container App's Managed Identity `Reader` at subscription scope for cross-RG Resource Graph scanning
-- **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` with exact origin matching against `DASHBOARD_URL`. The SWA is provisioned in Stage 1 of `scripts/deploy.sh` (before the Container App), its URL is immediately patched into `terraform.tfvars`, and the Container App is created in Stage 2 with `DASHBOARD_URL` already correct — no stale CORS window, no wildcard patterns needed
+- **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` with exact origin matching against `DASHBOARD_URL`. The Container App references `azurerm_static_web_app.dashboard.default_host_name` directly in `main.tf` — Terraform creates the SWA first (implicit dependency), reads the URL in-memory, and passes the exact value into `DASHBOARD_URL` in the same apply — no tfvars patching, no re-apply, no stale CORS window, no wildcard patterns needed
 - **Teams webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files

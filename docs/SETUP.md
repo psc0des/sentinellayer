@@ -15,7 +15,7 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 
 Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp/azurerm` ~> 4.0 and `azure/azapi` ~> 2.0):
 
-1. Azure Resource Group (`ruriskry-core-rg`) — with a CanNotDelete management lock
+1. Azure Resource Group (`ruriskry-core-engine-rg`) — with a CanNotDelete management lock
 2. Azure AI Foundry account (`azurerm_ai_services`)
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1`)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
@@ -68,8 +68,9 @@ bash scripts/setup_env.sh
 # Optional CI/non-interactive mode (no prompts)
 # bash scripts/setup_env.sh --no-prompt
 
-# 5. Seed demo data
-python scripts/seed_data.py
+# 5. (Optional) Seed demo incidents — for local/mock dev only.
+#    In production, historical context builds up organically via DecisionTracker.
+# python scripts/seed_data.py
 
 # 6. Run tests (pytest-asyncio required — installs via requirements.txt)
 pytest tests/ -v
@@ -212,11 +213,17 @@ Run `terraform apply` to push the tags to Azure.
 3. Permissions: Contents (Read & Write), Pull requests (Read & Write)
 4. Copy the token
 
-**Step 3 — Set the env vars:**
+**Step 3 — Store the PAT:**
+
+In a production (Azure) deployment, `deploy.sh` prompts for the PAT during deployment and
+stores it in Key Vault automatically. The Container App reads it via Managed Identity —
+it never appears in `.env` or Terraform state.
+
+For local development only:
 ```bash
 # .env
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-IAC_GITHUB_REPO=psc0des/ruriskry
+IAC_GITHUB_REPO=owner/ruriskry
 IAC_TERRAFORM_PATH=infrastructure/terraform-prod
 EXECUTION_GATEWAY_ENABLED=true
 ```
@@ -257,7 +264,7 @@ docker push $ACR_SERVER/ruriskry-backend:latest
 # Update the Container App to pull the new image
 az containerapp update \
   --name $(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_name) \
-  --resource-group ruriskry-core-rg \
+  --resource-group ruriskry-core-engine-rg \
   --image $ACR_SERVER/ruriskry-backend:latest
 
 # Get the backend URL

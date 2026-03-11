@@ -6,14 +6,14 @@
 # and React dashboard in the correct order.
 #
 # Usage (from repo root):
-#   bash scripts/deploy.sh           # full first-time deploy
-#   bash scripts/deploy.sh --stage2  # skip ACR/Docker, jump straight to full apply
-#                                     # use this if Stage 1 succeeded but Stage 2 failed
+#   bash scripts/deploy.sh                      # full first-time deploy
+#   bash scripts/deploy.sh --stage2             # skip Stage 1 + Docker; use if Stage 1 succeeded but Stage 2 failed
+#   bash scripts/deploy.sh --upgrade-providers  # re-resolve Terraform providers within version constraints
 #
 # NOTE: This script is for FIRST-TIME deploys only.
 # For subsequent code or infra changes, use the "Redeploy Workflows" section
 # in infrastructure/terraform-core/deploy.md — those are faster and skip the
-# 90-second role propagation wait and Docker rebuild.
+# Docker rebuild and full Terraform apply.
 #
 # Prerequisites:
 #   1. Copy and fill in terraform.tfvars:
@@ -36,9 +36,11 @@ DASHBOARD_DIR="$REPO_ROOT/dashboard"
 
 # ── Flags ─────────────────────────────────────────────────────────────────────
 STAGE2_ONLY=false
+UPGRADE_PROVIDERS=false
 for arg in "$@"; do
   case "$arg" in
-    --stage2) STAGE2_ONLY=true ;;
+    --stage2)            STAGE2_ONLY=true ;;
+    --upgrade-providers) UPGRADE_PROVIDERS=true ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
@@ -85,8 +87,10 @@ PYTHON=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true
 az account show &>/dev/null \
   || die "Not logged in to Azure. Run: az login"
 
-docker info &>/dev/null \
-  || die "Docker daemon not running. Start Docker Desktop and try again."
+if [[ "$STAGE2_ONLY" == false ]]; then
+  docker info &>/dev/null \
+    || die "Docker daemon not running. Start Docker Desktop and try again."
+fi
 
 [[ -f "$TF_DIR/terraform.tfvars" ]] \
   || die "terraform.tfvars not found.\n   Run: cp $TF_DIR/terraform.tfvars.example $TF_DIR/terraform.tfvars\n   Then fill in subscription_id and suffix."
@@ -99,7 +103,11 @@ ok "All prerequisites satisfied"
 step "Initialising Terraform"
 
 cd "$TF_DIR"
-terraform init -upgrade
+if [[ "$UPGRADE_PROVIDERS" == true ]]; then
+  terraform init -upgrade
+else
+  terraform init
+fi
 ok "Terraform initialised"
 
 # =============================================================================
@@ -119,52 +127,56 @@ ok "Terraform initialised"
 
 if [[ "$STAGE2_ONLY" == true ]]; then
   warn "--stage2 flag set — skipping Stage 1 and Docker build"
-  warn "Assuming ACR and Static Web App already exist with URL patched into tfvars."
-  ACR_NAME=$(terraform output -raw acr_name)
+  warn "Assuming ACR already exists from a previous Stage 1 run."
+  ACR_NAME=$(terraform output -raw acr_name 2>/dev/null || true)
+  [[ -n "$ACR_NAME" ]] \
+    || die "Terraform state has no acr_name output.\n   Stage 1 has not completed yet.\n   Re-run without --stage2 to run the full deploy."
   ACR_SERVER=$(terraform output -raw acr_login_server)
-  DASHBOARD_URL=$(terraform output -raw dashboard_url)
+  # Parse full repo:tag from backend_image var — default "ruriskry-backend:latest"
+  BACKEND_IMAGE_FULL=$(grep -E '^backend_image\s*=' terraform.tfvars 2>/dev/null \
+    | sed 's/.*=\s*"\([^"]*\)".*/\1/')
+  BACKEND_IMAGE_FULL=${BACKEND_IMAGE_FULL:-ruriskry-backend:latest}
+  BACKEND_IMAGE_REPO="${BACKEND_IMAGE_FULL%%:*}"
+  BACKEND_IMAGE_TAG="${BACKEND_IMAGE_FULL##*:}"
+  # Guard: image must already exist since --stage2 skips Docker build
+  if ! az acr repository show-tags \
+         --name "$ACR_NAME" \
+         --repository "$BACKEND_IMAGE_REPO" \
+         --query "[?@=='$BACKEND_IMAGE_TAG']" \
+         --output tsv 2>/dev/null | grep -q "$BACKEND_IMAGE_TAG"; then
+    die "Image $BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG not found in ACR $ACR_NAME.\n   Docker push did not complete. Re-run without --stage2 to build and push the image."
+  fi
+  ok "Image $BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG confirmed in ACR"
 else
-  step "Stage 1 — Provisioning ACR, Managed Identity, role assignment, and Static Web App"
-  # Why SWA is in Stage 1 (not Stage 2 with everything else):
-  #   Azure SWA generates a random subdomain on creation. The Container App
-  #   needs the exact SWA URL as its DASHBOARD_URL env var (for CORS and for
-  #   Teams notification links). By creating the SWA here, before docker push
-  #   and before the Container App exists, we can patch the real URL into
-  #   terraform.tfvars so Stage 2 creates the Container App with the correct
-  #   value already set — no re-apply needed, no stale CORS window.
+  step "Stage 1 — Provisioning ACR, Managed Identity, and role assignment"
+  # Stage 1 creates only the resources needed before Docker push:
+  #   - ACR (registry must exist before we can push the image)
+  #   - User-Assigned Managed Identity + AcrPull role assignment
+  #
+  # No propagation sleep needed — the Container App starts with a public MCR
+  # placeholder image (no ACR auth). deploy.sh swaps in the real ACR image
+  # after Stage 2, by which time 15+ minutes have passed since role assignment.
+  #
+  # The Static Web App is created in Stage 2 alongside the Container App.
+  # Terraform resolves the SWA → Container App dependency automatically:
+  # it creates the SWA first, reads default_host_name, and passes the exact
+  # URL into DASHBOARD_URL — no tfvars patching or re-apply needed.
 
   terraform apply -auto-approve \
     -target=azurerm_resource_group.ruriskry \
     -target=azurerm_container_registry.ruriskry \
     -target=azurerm_user_assigned_identity.acr_pull \
-    -target=azurerm_role_assignment.acr_pull \
-    -target=time_sleep.acr_role_propagation \
-    -target=azurerm_static_web_app.dashboard
+    -target=azurerm_role_assignment.acr_pull
 
   ACR_NAME=$(terraform output -raw acr_name)
   ACR_SERVER=$(terraform output -raw acr_login_server)
-  DASHBOARD_URL=$(terraform output -raw dashboard_url)
-  ok "ACR ready: $ACR_SERVER (role assignment propagated)"
-
-  # Patch the real dashboard URL into terraform.tfvars immediately.
-  # Stage 2 will create the Container App with DASHBOARD_URL already correct —
-  # no wire-back step, no re-apply after dashboard deploy.
-  log "Patching dashboard_url into terraform.tfvars..."
-  "$PYTHON" - <<PYEOF
-import re, pathlib
-tfvars = pathlib.Path("terraform.tfvars")
-content = tfvars.read_text()
-url = "$DASHBOARD_URL".rstrip("/")
-updated = re.sub(
-    r'^dashboard_url\s*=.*',
-    f'dashboard_url = "{url}"',
-    content,
-    flags=re.MULTILINE,
-)
-tfvars.write_text(updated)
-print(f"  dashboard_url = {url}")
-PYEOF
-  ok "terraform.tfvars patched: dashboard_url = $DASHBOARD_URL"
+  # Parse full repo:tag from backend_image var — default "ruriskry-backend:latest"
+  BACKEND_IMAGE_FULL=$(grep -E '^backend_image\s*=' terraform.tfvars 2>/dev/null \
+    | sed 's/.*=\s*"\([^"]*\)".*/\1/')
+  BACKEND_IMAGE_FULL=${BACKEND_IMAGE_FULL:-ruriskry-backend:latest}
+  BACKEND_IMAGE_REPO="${BACKEND_IMAGE_FULL%%:*}"
+  BACKEND_IMAGE_TAG="${BACKEND_IMAGE_FULL##*:}"
+  ok "ACR ready: $ACR_SERVER"
 
   # =============================================================================
   # 3. Docker build + push
@@ -173,16 +185,16 @@ PYEOF
   IMAGE_EXISTS=false
   if az acr repository show-tags \
        --name "$ACR_NAME" \
-       --repository ruriskry-backend \
-       --query "[?@=='latest']" \
-       --output tsv 2>/dev/null | grep -q "latest"; then
+       --repository "$BACKEND_IMAGE_REPO" \
+       --query "[?@=='$BACKEND_IMAGE_TAG']" \
+       --output tsv 2>/dev/null | grep -q "$BACKEND_IMAGE_TAG"; then
     IMAGE_EXISTS=true
   fi
 
   if [[ "$IMAGE_EXISTS" == true ]]; then
-    warn "Image ruriskry-backend:latest already exists in ACR — skipping Docker build."
+    warn "Image $BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG already exists in ACR — skipping Docker build."
     warn "To force a rebuild, delete the tag first:"
-    warn "  az acr repository delete --name $ACR_NAME --image ruriskry-backend:latest --yes"
+    warn "  az acr repository delete --name $ACR_NAME --image $BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG --yes"
   else
     step "Building and pushing Docker image"
 
@@ -192,11 +204,11 @@ PYEOF
     az acr login --name "$ACR_NAME"
 
     log "Building backend image..."
-    docker build -t "$ACR_SERVER/ruriskry-backend:latest" .
+    docker build -t "$ACR_SERVER/$BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG" .
 
     log "Pushing to ACR..."
-    docker push "$ACR_SERVER/ruriskry-backend:latest"
-    ok "Image pushed: $ACR_SERVER/ruriskry-backend:latest"
+    docker push "$ACR_SERVER/$BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG"
+    ok "Image pushed: $ACR_SERVER/$BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG"
   fi
 fi
 
@@ -210,7 +222,85 @@ terraform apply -auto-approve
 ok "Infrastructure fully provisioned"
 
 BACKEND_URL=$(terraform output -raw backend_url)
+RG_NAME=$(terraform output -raw resource_group_name)
+KV_NAME=$(terraform output -raw keyvault_name 2>/dev/null || echo "")
+APP_NAME=$(terraform output -raw backend_container_app_name)
+ACR_NAME=$(terraform output -raw acr_name)
+ACR_SERVER=$(terraform output -raw acr_login_server)
 ok "Backend URL: $BACKEND_URL"
+
+# Parse image repo:tag (needed for --stage2 path where it wasn't set earlier)
+if [[ -z "${BACKEND_IMAGE_REPO:-}" ]]; then
+  BACKEND_IMAGE_FULL=$(grep -E '^backend_image\s*=' terraform.tfvars 2>/dev/null \
+    | sed 's/.*=\s*"\([^"]*\)".*/\1/')
+  BACKEND_IMAGE_FULL=${BACKEND_IMAGE_FULL:-ruriskry-backend:latest}
+  BACKEND_IMAGE_REPO="${BACKEND_IMAGE_FULL%%:*}"
+  BACKEND_IMAGE_TAG="${BACKEND_IMAGE_FULL##*:}"
+fi
+
+# =============================================================================
+# 4a. Swap placeholder image → real ACR image
+# =============================================================================
+# Terraform creates the Container App with a public MCR placeholder image
+# (no ACR auth needed). Now that Stage 2 is done — and 15+ minutes have passed
+# since the AcrPull role was assigned in Stage 1 — the role is guaranteed
+# propagated.  We update the Container App to pull from ACR.
+step "Updating Container App image to ACR"
+
+log "Swapping placeholder → $ACR_SERVER/$BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG"
+az containerapp update \
+  --name "$APP_NAME" \
+  --resource-group "$RG_NAME" \
+  --image "$ACR_SERVER/$BACKEND_IMAGE_REPO:$BACKEND_IMAGE_TAG" \
+  --output none
+ok "Container App now running real backend image"
+
+# =============================================================================
+# 4b. GitHub PAT — store in Key Vault if use_github_pat = true
+# =============================================================================
+# The Container App needs the github-pat KV secret to exist before it can start.
+# We prompt here so the user doesn't have to do it manually after deployment.
+USE_GITHUB_PAT=$(grep -E '^use_github_pat\s*=\s*true' terraform.tfvars 2>/dev/null | wc -l)
+if [[ "$USE_GITHUB_PAT" -gt 0 && -n "$KV_NAME" ]]; then
+  if az keyvault secret show --vault-name "$KV_NAME" --name github-pat &>/dev/null; then
+    ok "github-pat already exists in Key Vault — skipping"
+  else
+    echo ""
+    warn "use_github_pat = true but github-pat is not in Key Vault."
+    warn "The Container App cannot start without it."
+    # Check env var first — allows non-interactive CI/CD deploys:
+    #   export GITHUB_PAT="github_pat_xxx..."
+    #   bash scripts/deploy.sh
+    if [[ -z "${GITHUB_PAT:-}" ]]; then
+      echo -e "  ${BOLD}Enter your GitHub PAT${NC} (fine-grained or classic with 'repo' scope)."
+      echo    "  Or export GITHUB_PAT=... before running to skip this prompt."
+      echo    "  Press Enter to skip and disable Execution Gateway for now."
+      echo -n "  GitHub PAT: "
+      read -r GITHUB_PAT
+    else
+      log "Using GITHUB_PAT from environment variable."
+    fi
+    if [[ -n "$GITHUB_PAT" ]]; then
+      az keyvault secret set \
+        --vault-name "$KV_NAME" \
+        --name github-pat \
+        --value "$GITHUB_PAT" \
+        --output none
+      ok "GitHub PAT stored in Key Vault: $KV_NAME"
+      log "Restarting Container App to pick up the new secret..."
+      az containerapp update \
+        --name "$APP_NAME" \
+        --resource-group "$RG_NAME" \
+        --output none
+      ok "Container App restarted"
+    else
+      warn "Skipping PAT — setting use_github_pat = false and re-applying Container App..."
+      sed -i 's/^use_github_pat\s*=\s*true/use_github_pat = false/' terraform.tfvars
+      terraform apply -auto-approve -target=azurerm_container_app.backend
+      ok "Execution Gateway disabled — re-enable by setting use_github_pat = true and re-running terraform apply"
+    fi
+  fi
+fi
 
 # =============================================================================
 # 5. Dashboard build + deploy
@@ -222,7 +312,11 @@ echo "VITE_API_URL=$BACKEND_URL" > "$DASHBOARD_DIR/.env.production"
 
 cd "$DASHBOARD_DIR"
 log "Installing dependencies..."
-npm install --silent
+if [[ -f "package-lock.json" ]]; then
+  npm ci --silent
+else
+  npm install --silent
+fi
 
 log "Building..."
 npm run build
@@ -241,25 +335,43 @@ npx @azure/static-web-apps-cli deploy ./dist \
 ok "Dashboard deployed: $DASHBOARD_URL"
 
 # =============================================================================
-# 7. Health check
+# 6. Health check
 # =============================================================================
 step "Verifying deployment"
 
-log "Checking backend health..."
-HEALTH=$("$PYTHON" -c "
-import urllib.request, json, sys
+log "Checking backend health (up to 3 attempts — Container App may need a cold start)..."
+HEALTH_URL="$BACKEND_URL/health"
+HEALTH="unreachable after 3 attempts — check Container App logs"
+for attempt in 1 2 3; do
+  RESULT=$("$PYTHON" -c "
+import urllib.request, json
 try:
-    with urllib.request.urlopen('$BACKEND_URL/health', timeout=15) as r:
+    with urllib.request.urlopen('$HEALTH_URL', timeout=15) as r:
         print(json.load(r).get('status', '?'))
-except Exception as e:
-    print('unreachable — may need 30s cold start')
+except Exception:
+    pass
 " 2>/dev/null)
-ok "Backend health: $HEALTH"
+  if [[ -n "$RESULT" ]]; then
+    HEALTH="$RESULT"
+    break
+  fi
+  if [[ "$attempt" -lt 3 ]]; then
+    warn "Attempt $attempt failed — retrying in 15s (Container App cold start)..."
+    sleep 15
+  fi
+done
+if [[ "$HEALTH" == "ok" ]]; then
+  ok "Backend health: ok"
+else
+  warn "Backend health: $HEALTH"
+  warn "The infrastructure is deployed. The Container App may still be starting."
+  warn "Check logs: az containerapp logs show --name \$(terraform -chdir=$TF_DIR output -raw backend_container_app_name) --resource-group $RG_NAME --follow"
+fi
 
 # =============================================================================
-# 8. Summary
+# 7. Summary
 # =============================================================================
-KV_NAME=$(terraform output -raw keyvault_name 2>/dev/null || echo "ruriskry-kv-<suffix>")
+KV_NAME=${KV_NAME:-"ruriskry-kv-<suffix>"}
 
 echo ""
 echo -e "${GREEN}${BOLD}═══════════════════════════════════════════════════════${NC}"
@@ -270,15 +382,11 @@ echo -e "  Dashboard  →  ${BOLD}$DASHBOARD_URL${NC}"
 echo -e "  Backend    →  ${BOLD}$BACKEND_URL${NC}"
 echo ""
 echo "  Remaining manual steps:"
-echo "  1. Seed AI Search index:"
-echo "       cd $REPO_ROOT && python scripts/seed_data.py"
-echo ""
-echo "  2. Store GitHub PAT in Key Vault (for Execution Gateway):"
-echo "       az keyvault secret set --vault-name $KV_NAME --name github-pat --value 'github_pat_xxx'"
-echo "       # Then set use_github_pat = true in terraform.tfvars and re-apply"
-echo ""
-echo "  3. Generate local .env for development:"
+echo "  1. Generate local .env for development:"
 echo "       cd $REPO_ROOT && bash scripts/setup_env.sh"
+echo ""
+echo "  (GitHub PAT was handled during deploy. To rotate it later:"
+echo "   az keyvault secret set --vault-name $KV_NAME --name github-pat --value 'github_pat_xxx')"
 echo ""
 echo "  For subsequent code or infra changes, see:"
 echo "  infrastructure/terraform-core/deploy.md § Redeploy Workflows"

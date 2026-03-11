@@ -25,31 +25,17 @@ LLM / Search / Cosmos / Key Vault  →  provisioned by Terraform
 
 | Resource | Name pattern | Purpose |
 |----------|-------------|---------|
-| Resource Group | `ruriskry-core-rg` | Container for all resources |
-| Log Analytics | `ruriskry-log-<suffix>` | Container + infra logs |
-| Key Vault | `ruriskry-kv-<suffix>` | Runtime secrets (API keys) |
-| Azure AI Foundry | `ruriskry-foundry-<suffix>` | GPT-4.1 LLM |
-| Azure AI Search | `ruriskry-search-<suffix>` | Historical incident BM25 |
-| Cosmos DB | `ruriskry-cosmos-<suffix>` | Audit trail + agent registry |
-| Container Registry | `ruriskry<suffix>` | Docker image store |
-| User-Assigned MI | `ruriskry-acr-pull-<suffix>` | ACR pull identity for Container App |
-| Container Apps Env | `ruriskry-env-<suffix>` | Managed runtime environment |
-| Container App | `ruriskry-backend-<suffix>` | FastAPI + all agents |
-| Static Web App | `ruriskry-dashboard-<suffix>` | React dashboard (global CDN) |
-
----
-
-## Providers
-
-This configuration uses three Terraform providers:
-
-| Provider | Source | Used for |
-|----------|--------|----------|
-| AzureRM | `hashicorp/azurerm` | All core Azure resources (RG, KV, Search, Cosmos, ACR, Container Apps, SWA) |
-| AzAPI | `azure/azapi` | Foundry project management — patches `allowProjectManagement` and creates the project via the Azure REST API directly. Used because AzureRM doesn't expose these Foundry-specific fields yet. |
-| Time | `hashicorp/time` | 90-second sleep after role assignment — waits for `AcrPull` to propagate before the Container App starts pulling the image |
-
-All providers authenticate using the same `az login` session — no extra credentials needed.
+| Resource Group | `ruriskry-core-engine-rg` | Container for all resources |
+| Log Analytics | `ruriskry-core-log-<suffix>` | Container + infra logs |
+| Key Vault | `ruriskry-core-kv-<suffix>` | Runtime secrets (API keys) |
+| Azure AI Foundry | `ruriskry-core-foundry-<suffix>` | GPT-4.1 LLM |
+| Azure AI Search | `ruriskry-core-search-<suffix>` | Historical incident BM25 |
+| Cosmos DB | `ruriskry-core-cosmos-<suffix>` | Audit trail + agent registry |
+| Container Registry | `ruriskrycore<suffix>` | Docker image store (alphanumeric only) |
+| User-Assigned MI | `ruriskry-core-acr-pull-<suffix>` | ACR pull identity for Container App |
+| Container Apps Env | `ruriskry-core-env-<suffix>` | Managed runtime environment |
+| Container App | `ruriskry-core-backend-<suffix>` | FastAPI + all agents |
+| Static Web App | `ruriskry-core-dashboard-<suffix>` | React dashboard (global CDN) |
 
 ---
 
@@ -62,78 +48,30 @@ All providers authenticate using the same `az login` session — no extra creden
 | Docker Desktop (or [Rancher Desktop](https://rancherdesktop.io)) | any | `docker info` |
 | Node.js | 18+ | `node --version` |
 | npm + npx | ships with Node 18 | `npx --version` |
-| Python | 3.6+ | `python3 --version` or `python --version` |
 
 Run `az login` before starting.
 
 **Windows users:** `deploy.sh` is a bash script. Run it in **Git Bash** (ships with Git for Windows) or **WSL**. Do not use PowerShell or CMD — they cannot run `.sh` files directly. All other commands in this doc that start with `az`, `terraform`, `docker`, and `npm` work fine in PowerShell too.
 
-**One-time: register the Container Apps provider** (required before first apply —
-Azure subscriptions don't have this enabled by default):
+---
+
+## One-time Setup
+
+Complete these steps once before running `deploy.sh` for the first time.
+
+### Step 1 — Register the Container Apps provider
+
+Azure subscriptions don't have this enabled by default:
 
 ```bash
 az provider register --namespace Microsoft.App --wait
 ```
 
----
+### Step 2 — Create remote state storage
 
-## Quick Start (Recommended)
+Terraform stores state in Azure Blob Storage. Run once in **PowerShell** (Git Bash mangles storage account names on some systems):
 
-For a first-time deploy, run the one-command script from the repo root:
-
-```bash
-# 1. Create your tfvars (from repo root)
-cp infrastructure/terraform-core/terraform.tfvars.example \
-   infrastructure/terraform-core/terraform.tfvars
-# Edit terraform.tfvars — fill in at minimum:
-#   subscription_id = "your-azure-sub-id"
-#   suffix          = "yourname"   (short, globally unique)
-# Leave dashboard_url = "" — the script fills it in automatically.
-
-# 2. Create remote state storage (one-time — see section below)
-
-# 3. Deploy everything (from repo root, in Git Bash or WSL)
-bash scripts/deploy.sh
-```
-
-The script handles everything in the correct order:
-
-| Step | What happens |
-|------|--------------|
-| 0 | Checks all tools are installed, Docker is running, `az login` is active |
-| 1 | `terraform init` |
-| 2 | **Stage 1 targeted apply** — creates ACR, User-Assigned Managed Identity, AcrPull role, 90s propagation sleep, **and Static Web App** — SWA URL is immediately patched into `terraform.tfvars` |
-| 3 | Docker build + push to ACR (skipped if image already exists) |
-| 4 | **Stage 2 full apply** — Container App created with correct `DASHBOARD_URL` already set (Cosmos, Foundry, Search, everything else) |
-| 5 | React dashboard build + deploy to Static Web Apps |
-| 6 | Backend health check |
-| 7 | Prints live URLs and the 3 remaining manual steps |
-
-When it finishes:
-```
-  Dashboard  →  https://calm-cliff-xxxxxxx.eastus2.azurestaticapps.net
-  Backend    →  https://ruriskry-backend-<suffix>.<hash>.eastus2.azurecontainerapps.io
-```
-
-### If the script fails partway through
-
-The script is designed to be re-run safely. Use the table below to decide:
-
-| Where it failed | What to do |
-|-----------------|------------|
-| Stage 1 (targeted apply) | Fix the error, re-run `bash scripts/deploy.sh` |
-| Docker build or push | Fix the error (Docker running? `az login` expired?), re-run `bash scripts/deploy.sh` — script detects image already in ACR and skips rebuild if push succeeded |
-| **Stage 2 (full apply)** | Re-run with `bash scripts/deploy.sh --stage2` — skips the 90s wait and Docker rebuild entirely |
-| Dashboard build/deploy | Re-run with `bash scripts/deploy.sh --stage2` — Stage 2 is a no-op if infra already exists |
-
----
-
-## Create Remote State Storage (one-time)
-
-Terraform state is stored in Azure Blob Storage — required before `terraform init` will work.
-Run once in PowerShell (Git Bash mangles the storage account name on some systems).
-
-> Replace `<suffix>` with your actual suffix from `terraform.tfvars` (e.g. `jd4821`).
+> Replace `<suffix>` with the short unique suffix you'll use in `terraform.tfvars` (e.g. `jd4821`).
 > The storage account name must be globally unique and lowercase alphanumeric only.
 
 ```powershell
@@ -142,23 +80,23 @@ az storage account create --name ruriskrytfstate<suffix> --resource-group rurisk
 az storage container create --name tfstate --account-name ruriskrytfstate<suffix>
 ```
 
-Then lock the storage account and enable blob versioning so every state write is recoverable (SEC-08):
+Then lock the storage account and enable blob versioning so every state write is recoverable:
 
 ```powershell
 az lock create --name ruriskry-tfstate-lock --resource-group ruriskry-tfstate-rg --lock-type CanNotDelete --notes "Protects Terraform state from accidental deletion"
 az storage account blob-service-properties update --account-name ruriskrytfstate<suffix> --enable-versioning true
 ```
 
-> Skip this step if the storage account already exists (e.g. after a `terraform destroy` —
-> the tfstate storage account is intentionally NOT managed by Terraform so it survives destroys).
+> Skip this step if the storage account already exists — the tfstate storage account is
+> intentionally NOT managed by Terraform so it survives `terraform destroy`.
+>
+> If you deleted and recreated the container, just recreate the container (`az storage container create`) — the account stays.
 
----
-
-## Configure tfvars
+### Step 3 — Configure tfvars
 
 ```bash
-cd infrastructure/terraform-core
-cp terraform.tfvars.example terraform.tfvars
+cp infrastructure/terraform-core/terraform.tfvars.example \
+   infrastructure/terraform-core/terraform.tfvars
 ```
 
 Edit `terraform.tfvars` — mandatory fields:
@@ -168,57 +106,79 @@ subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 suffix          = "yourname"   # globally unique — used in all resource names
 ```
 
-Other fields to fill in:
+Other fields to review:
 
 ```hcl
 iac_github_repo    = "owner/repo"                   # for Execution Gateway PR creation
 iac_terraform_path = "infrastructure/terraform-prod"
-dashboard_url      = ""                             # leave empty — deploy.sh writes this automatically
-use_github_pat     = false                          # set true after you store the PAT in Key Vault
+use_github_pat     = false                          # set true after you store the PAT
+enable_rg_lock     = false                          # set true in production
 ```
 
-> **Do not pre-fill `dashboard_url`.** Azure Static Web Apps generates a random subdomain on
-> creation. `deploy.sh` creates the SWA in Stage 1, reads the URL immediately from Terraform
-> outputs, and patches `terraform.tfvars` before Stage 2 runs — so the Container App is created
-> with the correct `DASHBOARD_URL` on first apply (no re-apply needed).
-> If running the manual deploy path, fill it in after Step 2 (Stage 1 apply).
+> **`dashboard_url` is not a tfvars variable.** Terraform reads the SWA URL directly from
+> `azurerm_static_web_app.dashboard.default_host_name` and wires it into `DASHBOARD_URL`
+> automatically — no patching or re-apply required.
+
+> **`enable_rg_lock`** defaults to `false` — no CanNotDelete lock on the RG, allowing
+> clean `terraform destroy` and redeploys. Set `true` in production.
+
+---
+
+## Quick Start
+
+Once the one-time setup is done, deploy everything with one command from the repo root:
+
+```bash
+# Run in Git Bash or WSL from the repo root
+bash scripts/deploy.sh
+```
+
+The script handles everything in the correct order:
+
+| Step | What happens |
+|------|--------------|
+| 0 | Checks all tools are installed, Docker is running, `az login` is active |
+| 1 | `terraform init` |
+| 2 | **Stage 1 targeted apply** — creates ACR, User-Assigned Managed Identity, AcrPull role assignment |
+| 3 | Docker build + push to ACR (skipped if image already exists) |
+| 4 | **Stage 2 full apply** — creates all remaining resources; Terraform resolves the SWA URL natively and passes it into `DASHBOARD_URL` automatically |
+| 4a | **Image swap** — `az containerapp update --image` replaces the MCR placeholder with the real ACR image (AcrPull role is guaranteed propagated by now) |
+| 4b | GitHub PAT prompt — stores in Key Vault if `use_github_pat = true` and secret is missing |
+| 5 | React dashboard build + deploy to Static Web Apps |
+| 6 | Backend health check |
+| 7 | Prints live URLs |
+
+When it finishes:
+```
+  Dashboard  →  https://calm-cliff-xxxxxxx.eastus2.azurestaticapps.net
+  Backend    →  https://ruriskry-core-backend-<suffix>.<hash>.eastus2.azurecontainerapps.io
+```
+
+### GitHub PAT (Execution Gateway)
+
+If `use_github_pat = true` in `terraform.tfvars`, the script will prompt for the PAT and store it in Key Vault automatically. To skip the prompt, export it before running:
+
+```bash
+export GITHUB_PAT="github_pat_xxx..."
+bash scripts/deploy.sh
+```
+
+Press Enter at the prompt to skip — the script will disable Execution Gateway gracefully.
+
+### If the script fails partway through
+
+The script is safe to re-run. Use the table below to decide:
+
+| Where it failed | What to do |
+|-----------------|------------|
+| Stage 1 (targeted apply) | Fix the error, re-run `bash scripts/deploy.sh` |
+| Docker build or push | Fix the error, re-run `bash scripts/deploy.sh` — already-pushed layers are cached in ACR |
+| **Stage 2 (full apply)** | Re-run with `bash scripts/deploy.sh --stage2` — skips Stage 1 and Docker build entirely |
+| Image swap / PAT / dashboard | Re-run with `bash scripts/deploy.sh --stage2` — Stage 2 is a no-op if infra already exists |
 
 ---
 
 ## After Deployment
-
-> `deploy.sh` handles infrastructure, backend, and dashboard automatically.
-> The steps below are the three things it intentionally leaves for you to do manually.
-
-### Store GitHub PAT (for Execution Gateway)
-
-Required for Terraform PR creation. Skip if not using it.
-
-```bash
-az keyvault secret set \
-  --vault-name ruriskry-kv-<suffix> \
-  --name github-pat \
-  --value "github_pat_xxx..."
-```
-
-Then in `terraform.tfvars` set `use_github_pat = true` and re-apply:
-
-```bash
-cd infrastructure/terraform-core
-terraform plan -out=tfplan
-terraform apply tfplan
-```
-
-### Seed the AI Search index
-
-Required for `HistoricalPatternAgent` to find incidents in live mode.
-Run from the **repo root**:
-
-```bash
-python scripts/seed_data.py
-```
-
-Expected output: `Uploaded 7/7 incidents`
 
 ### Generate local .env (for local development)
 
@@ -228,24 +188,36 @@ bash scripts/setup_env.sh
 
 Writes endpoints and Key Vault secret names to `.env` from Terraform outputs.
 
+### (Optional) Seed demo incidents
+
+> **Not required for production.** Historical context builds up organically as the
+> system runs real scans — each governance decision is recorded by `DecisionTracker`
+> (Cosmos DB in production, `data/decisions/` in mock mode). The `seed_data.py` script
+> uploads 7 fictional incidents to AI Search and is intended for local dev/demo only.
+
+```bash
+# Only if you want demo data in AI Search for local testing:
+python scripts/seed_data.py
+```
+
 ---
 
 ## Redeploy Workflows
 
 ### Backend code changed
 
-Run from repo root:
+Run from the repo root:
 
 ```bash
-ACR=ruriskry<suffix>.azurecr.io
+ACR=ruriskrycore<suffix>.azurecr.io
 
-az acr login --name ruriskry<suffix>
+az acr login --name ruriskrycore<suffix>
 docker build -t $ACR/ruriskry-backend:latest .
 docker push $ACR/ruriskry-backend:latest
 
 az containerapp update \
-  --name ruriskry-backend-<suffix> \
-  --resource-group ruriskry-core-rg \
+  --name ruriskry-core-backend-<suffix> \
+  --resource-group ruriskry-core-engine-rg \
   --image $ACR/ruriskry-backend:latest
 ```
 
@@ -281,6 +253,37 @@ terraform apply tfplan
 
 ---
 
+## Validation Checklist
+
+After a fresh deploy, verify each layer:
+
+```bash
+# 1. Terraform state is clean
+cd infrastructure/terraform-core
+terraform state list
+terraform output
+
+# 2. Key Vault secrets are accessible
+KV=ruriskry-core-kv-<suffix>
+az keyvault secret show --vault-name $KV --name foundry-primary-key --query id -o tsv
+az keyvault secret show --vault-name $KV --name search-primary-key  --query id -o tsv
+az keyvault secret show --vault-name $KV --name cosmos-primary-key  --query id -o tsv
+
+# 3. Backend health check
+curl https://<backend_url>/health
+
+# 4. Container App logs (if something looks wrong)
+az containerapp logs show \
+  --name ruriskry-core-backend-<suffix> \
+  --resource-group ruriskry-core-engine-rg \
+  --follow
+
+# 5. Run test suite
+pytest tests/ -v
+```
+
+---
+
 ## Manual Deploy (Advanced)
 
 If you prefer to run each step individually instead of using `deploy.sh`:
@@ -289,30 +292,23 @@ If you prefer to run each step individually instead of using `deploy.sh`:
 
 ```bash
 cd infrastructure/terraform-core
-terraform init -upgrade
+terraform init
 terraform validate
 ```
 
-### 2. Stage 1 — ACR + identity + role + Static Web App (targeted apply)
+### 2. Stage 1 — ACR + identity + role (targeted apply)
 
 ```bash
 terraform apply -auto-approve \
   -target=azurerm_resource_group.ruriskry \
   -target=azurerm_container_registry.ruriskry \
   -target=azurerm_user_assigned_identity.acr_pull \
-  -target=azurerm_role_assignment.acr_pull \
-  -target=time_sleep.acr_role_propagation \
-  -target=azurerm_static_web_app.dashboard
+  -target=azurerm_role_assignment.acr_pull
 ```
 
-This includes a 90-second sleep for role propagation. The SWA is created here
-so its URL is known before the Container App is provisioned — patch it into
-`terraform.tfvars` immediately:
-
-```bash
-DASHBOARD_URL=$(terraform output -raw dashboard_url)
-# Update dashboard_url in terraform.tfvars with the real URL before Stage 2
-```
+No propagation sleep needed — the Container App starts with a public MCR
+placeholder image (no ACR auth). The real ACR image is swapped in after
+the full apply in Step 4a below.
 
 ### 3. Build and push Docker image
 
@@ -322,9 +318,9 @@ Run from the **repo root** (the directory that contains `Dockerfile`):
 # From infrastructure/terraform-core/, go up two levels to repo root:
 cd ../..
 
-az acr login --name ruriskry<suffix>
-docker build -t ruriskry<suffix>.azurecr.io/ruriskry-backend:latest .
-docker push ruriskry<suffix>.azurecr.io/ruriskry-backend:latest
+az acr login --name ruriskrycore<suffix>
+docker build -t ruriskrycore<suffix>.azurecr.io/ruriskry-backend:latest .
+docker push ruriskrycore<suffix>.azurecr.io/ruriskry-backend:latest
 ```
 
 ### 4. Full apply
@@ -338,11 +334,24 @@ terraform apply tfplan
 > **Full apply takes ~10-15 minutes** on first run.
 >
 > If apply fails partway through, some resources may exist in Azure but not in state.
-> Check with `az containerapp show --name ruriskry-backend-<suffix> --resource-group ruriskry-core-rg --query provisioningState -o tsv`
+> Check with `az containerapp show --name ruriskry-core-backend-<suffix> --resource-group ruriskry-core-engine-rg --query provisioningState -o tsv`
 > and import if needed (use PowerShell, not Git Bash):
 > ```powershell
-> terraform import azurerm_container_app.backend "/subscriptions/<sub-id>/resourceGroups/ruriskry-core-rg/providers/Microsoft.App/containerApps/ruriskry-backend-<suffix>"
+> terraform import azurerm_container_app.backend "/subscriptions/<sub-id>/resourceGroups/ruriskry-core-engine-rg/providers/Microsoft.App/containerApps/ruriskry-core-backend-<suffix>"
 > ```
+
+### 4a. Swap placeholder image → real ACR image
+
+The Container App was created with a public MCR placeholder image (no ACR auth
+needed at creation time). Now swap to the real ACR image — by this point 15+
+minutes have passed since the AcrPull role assignment, so propagation is guaranteed.
+
+```bash
+az containerapp update \
+  --name ruriskry-core-backend-<suffix> \
+  --resource-group ruriskry-core-engine-rg \
+  --image ruriskrycore<suffix>.azurecr.io/ruriskry-backend:latest
+```
 
 ### 5. Build and deploy the React dashboard
 
@@ -352,12 +361,12 @@ cd infrastructure/terraform-core
 terraform output backend_url
 
 # Create env file
-echo "VITE_API_URL=https://ruriskry-backend-<suffix>.<hash>.<region>.azurecontainerapps.io" \
+echo "VITE_API_URL=https://ruriskry-core-backend-<suffix>.<hash>.<region>.azurecontainerapps.io" \
   > ../../dashboard/.env.production
 
 # Build
 cd ../../dashboard
-npm install
+npm ci
 npm run build
 
 # Deploy
@@ -370,56 +379,6 @@ npx @azure/static-web-apps-cli deploy ./dist \
   --env production
 ```
 
-### 6. Wire dashboard URL back
-
-After getting the Static Web App URL, add it to `terraform.tfvars`:
-
-```hcl
-dashboard_url = "https://calm-cliff-xxxxxxx.eastus2.azurestaticapps.net"
-```
-
-Re-apply so the Container App picks it up as the `DASHBOARD_URL` env var:
-
-```bash
-cd infrastructure/terraform-core
-terraform plan -out=tfplan
-terraform apply tfplan
-```
-
----
-
-## Validation Checklist
-
-After a fresh deploy, verify each layer:
-
-```bash
-# 1. Terraform state is clean
-cd infrastructure/terraform-core
-terraform state list
-terraform output
-
-# 2. Key Vault secrets are accessible
-KV=ruriskry-kv-<suffix>
-az keyvault secret show --vault-name $KV --name foundry-primary-key --query id -o tsv
-az keyvault secret show --vault-name $KV --name search-primary-key  --query id -o tsv
-az keyvault secret show --vault-name $KV --name cosmos-primary-key  --query id -o tsv
-
-# 3. Backend health check
-curl https://<backend_url>/health
-
-# 4. Container App logs (if something looks wrong)
-az containerapp logs show \
-  --name ruriskry-backend-<suffix> \
-  --resource-group ruriskry-core-rg \
-  --follow
-
-# 5. Search index seeded
-python scripts/seed_data.py
-
-# 6. Run test suite
-pytest tests/ -v
-```
-
 ---
 
 ## Known Gotchas
@@ -427,24 +386,22 @@ pytest tests/ -v
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | `MissingSubscriptionRegistration: Microsoft.App` | Container Apps provider not registered | `az provider register --namespace Microsoft.App --wait` |
-| `MANIFEST_UNKNOWN: manifest tagged by "latest" is not found` | Docker image not pushed before Container App creation | Use `deploy.sh` — it pushes the image between stage 1 and stage 2. If running manually, follow the staged apply order in Manual Deploy above. |
+| `MANIFEST_UNKNOWN: manifest tagged by "latest" is not found` | Docker image not pushed before Container App creation | Use `deploy.sh` — it pushes the image between Stage 1 and Stage 2. If running manually, follow the staged apply order above. |
 | `BadRequest: allowProjectManagement set to true` | AzAPI `azapi_update_resource` failed | Check `az login` is active and AzAPI provider version is `~> 2.0` |
 | `resource already exists — needs to be imported` | Apply failed mid-way; resource created in Azure but not in state | `terraform import` the resource (use PowerShell, not Git Bash) |
 | Git Bash mangles resource ID (`C:/Program Files/Git/subscriptions/...`) | Git Bash converts leading `/` to Windows path | Run `terraform import` in PowerShell |
 | SWA Production slot stuck on "Waiting for deployment" | SWA CLI deployed to preview slot (missing `--env production`) | Redeploy with `--env production` flag |
 | `Cannot delete resource while nested resources exist` on `terraform destroy` | Foundry project created outside Terraform | Handled automatically by a `destroy` provisioner — deletes all projects via `az rest` before removing the account |
-| `terraform destroy` fails with `ScopeLocked` | Lock not removed in time — should not occur (lock `depends_on` all major resources so Terraform removes it first). If it does occur: `az lock delete --name ruriskry-core-rg-lock --resource-group ruriskry-core-rg`, then retry |
-| Container App `Operation expired` after 16+ minutes | Previously a chicken-and-egg issue with System-Assigned identity. Fixed: a User-Assigned Managed Identity is created first and AcrPull is granted before the Container App exists. Should not occur. |
+| `terraform destroy` fails with `ScopeLocked` | Only occurs if `enable_rg_lock = true` and lock removal fails. Default is `false` so this should not occur. | Remove manually: `az lock delete --name ruriskry-core-engine-rg-lock --resource-group ruriskry-core-engine-rg`, then retry |
+| `409 Conflict: ResourceGroupBeingDeleted` on fresh deploy | Key Vault soft-delete recovery put the new RG into a deprovisioning state | Purge the soft-deleted KV first: `az keyvault purge --name ruriskry-core-kv-<suffix> --location eastus2`, wait, then re-run |
+| Container App `unable to pull image using Managed identity` | Azure IAM role propagation race condition | Fixed by placeholder image pattern — should not occur with `deploy.sh` |
+| State lock stuck after network drop | Connection reset before Terraform could release the blob lease | Break the lease: `az storage blob lease break --account-name ruriskrytfstate<suffix> --container-name tfstate --blob-name terraform-core.tfstate` |
 
 ---
 
 ## Teardown
 
 Deletes all Terraform-managed resources. Use after a demo to stop charges.
-
-The `CanNotDelete` lock on the resource group is managed by Terraform and is
-automatically removed first during `terraform destroy` (the lock `depends_on`
-all major resources, so Terraform removes it before anything else).
 
 ```bash
 cd infrastructure/terraform-core
@@ -454,21 +411,18 @@ terraform destroy
 > **Container App Environment deletion can take 10-30 minutes** — this is an Azure
 > platform limitation. Let it run to completion.
 
-**If `terraform destroy` fails with `ScopeLocked`** (e.g. state is out of sync
-or lock was manually created), remove it first:
+**RG lock** — disabled by default (`enable_rg_lock = false`). If you enabled it,
+Terraform removes the lock automatically before destroying anything else. If it fails:
 
 ```bash
-az lock delete --name ruriskry-core-rg-lock --resource-group ruriskry-core-rg
+az lock delete --name ruriskry-core-engine-rg-lock --resource-group ruriskry-core-engine-rg
 # then retry:
 terraform destroy
 ```
 
-The mini prod environment has its own teardown:
-
-```bash
-cd infrastructure/terraform-prod
-terraform destroy
-```
+> The tfstate storage account (`ruriskry-tfstate-rg`) is **not** managed by Terraform
+> and will survive `terraform destroy` — this is intentional so state history is preserved.
+> Delete it manually only if you are fully done with the project.
 
 ---
 
