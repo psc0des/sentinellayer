@@ -127,16 +127,31 @@ class AzureSearchClient:
             filters.append(f"resource_type eq '{resource_type}'")
         filter_str = " and ".join(filters) if filters else None
 
-        results = self._search_client.search(
-            search_text=query,
-            filter=filter_str,
-            top=top,
-            select=[
-                "incident_id", "description", "action_taken", "outcome",
-                "lesson", "service", "severity", "date", "resource_type",
-            ],
-        )
-        hits = [dict(r) for r in results]
+        try:
+            results = self._search_client.search(
+                search_text=query,
+                filter=filter_str,
+                top=top,
+                select=[
+                    "incident_id", "description", "action_taken", "outcome",
+                    "lesson", "service", "severity", "date", "resource_type",
+                ],
+            )
+            hits = [dict(r) for r in results]
+        except Exception as exc:  # pylint: disable=broad-except
+            # On a fresh deployment the index doesn't exist yet — Azure Search
+            # raises HttpResponseError 404. Return empty results rather than
+            # crashing the scan; history accumulates organically over time.
+            status = getattr(exc, "status_code", None)
+            if status == 404 or "was not found" in str(exc):
+                logger.warning(
+                    "AzureSearchClient: index '%s' not found — no historical "
+                    "context available yet (fresh deployment). Returning empty "
+                    "results. History will accumulate as governance decisions are made.",
+                    self._cfg.azure_search_index,
+                )
+                return []
+            raise
 
         # Post-filter by action_type (Azure Search OData doesn't support
         # substring matching on this field without a custom analyzer)
