@@ -130,6 +130,15 @@ resource "azurerm_key_vault" "ruriskry" {
   }
 
   tags = local.common_tags
+
+  # The Container App's Managed Identity is granted access via a separate
+  # azurerm_key_vault_access_policy resource (backend_identity). Mixing inline
+  # access_policy blocks with standalone resources causes perpetual drift in
+  # terraform plan. ignore_changes prevents Terraform from trying to "correct"
+  # the KV's access_policy list on every apply.
+  lifecycle {
+    ignore_changes = [access_policy]
+  }
 }
 
 resource "azurerm_key_vault_access_policy" "managed_identity_readers" {
@@ -689,7 +698,25 @@ resource "azurerm_key_vault_access_policy" "backend_identity" {
 }
 
 # =============================================================================
-# 10b. Subscription-level Reader — cross-RG scanning
+# 10b. Azure AI Foundry — Cognitive Services OpenAI User role
+# =============================================================================
+# local_authentication_enabled = false on the Foundry account means API keys
+# are rejected. All callers must authenticate via Managed Identity (RBAC).
+# The Container App's SystemAssigned MI needs the "Cognitive Services OpenAI
+# User" role on the Foundry account to call POST /openai/responses.
+# Without this, every agent scan fails with:
+#   401 PermissionDenied: lacks Microsoft.CognitiveServices/accounts/OpenAI/responses/write
+
+resource "azurerm_role_assignment" "foundry_openai_user" {
+  scope                = azurerm_ai_services.foundry.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+
+  depends_on = [azurerm_container_app.backend]
+}
+
+# =============================================================================
+# 10c. Subscription-level Reader — cross-RG scanning
 # =============================================================================
 # The governance agents scan Azure resources across all resource groups in the
 # subscription using Azure Resource Graph and the Azure SDK. The Container App's
