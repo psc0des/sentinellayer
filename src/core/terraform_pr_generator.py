@@ -241,6 +241,10 @@ class TerraformPRGenerator:
 
                 if brace_depth <= 0 and i > resource_start:
                     if rule_found:
+                        logger.info(
+                            "TerraformPRGenerator: found rule '%s' as standalone resource at line %d",
+                            rule_name, resource_start + 1,
+                        )
                         return self._patch_block(lines, resource_start, i)
                     resource_start = None
                     rule_found = False
@@ -253,13 +257,15 @@ class TerraformPRGenerator:
         for i, line in enumerate(lines):
             stripped = line.strip()
 
-            if sr_start is None and stripped.startswith("security_rule") and "{" in stripped:
+            # Match both "security_rule {" (same line) and "security_rule" (next line brace)
+            if sr_start is None and re.match(r'security_rule\b', stripped):
                 sr_start = i
                 sr_brace_depth = stripped.count("{") - stripped.count("}")
                 sr_rule_found = False
-                continue  # don't process rule-name check on the opening line
+                if "{" in stripped:
+                    continue  # brace already counted; skip name check on opening line
 
-            if sr_start is not None:
+            if sr_start is not None and i > sr_start:
                 sr_brace_depth += stripped.count("{") - stripped.count("}")
 
                 if re.search(
@@ -267,12 +273,20 @@ class TerraformPRGenerator:
                 ):
                     sr_rule_found = True
 
-                if sr_brace_depth <= 0 and i > sr_start:
+                if sr_brace_depth <= 0:
                     if sr_rule_found:
+                        logger.info(
+                            "TerraformPRGenerator: found rule '%s' as inline security_rule at line %d",
+                            rule_name, sr_start + 1,
+                        )
                         return self._patch_block(lines, sr_start, i)
                     sr_start = None
                     sr_rule_found = False
 
+        logger.debug(
+            "TerraformPRGenerator: rule '%s' not found in content (%d lines)",
+            rule_name, len(lines),
+        )
         return None
 
     def _patch_block(self, lines: list[str], start: int, end: int) -> str | None:
@@ -320,12 +334,20 @@ class TerraformPRGenerator:
             r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
         ) or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
         if not rule_match:
+            logger.warning(
+                "TerraformPRGenerator: cannot extract rule name from reason — "
+                "falling back to stub. Reason: %.120s", action.reason
+            )
             return None
         rule_name = rule_match.group(1)
+        logger.info("TerraformPRGenerator: extracted rule_name='%s' from reason", rule_name)
 
         try:
             items = repo.get_contents(iac_path)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "TerraformPRGenerator: get_contents('%s') failed — %s", iac_path, exc
+            )
             return None
 
         # Collect .tf files one level deep (including one layer of subdirectories)
@@ -339,6 +361,11 @@ class TerraformPRGenerator:
                     tf_files.extend(f for f in sub_items if f.name.endswith(".tf"))
                 except Exception:  # noqa: BLE001
                     pass
+
+        logger.info(
+            "TerraformPRGenerator: scanning %d .tf file(s) in '%s' for rule '%s'",
+            len(tf_files), iac_path, rule_name,
+        )
 
         for tf_file in tf_files:
             try:
@@ -357,7 +384,16 @@ class TerraformPRGenerator:
                         f"'{rule_name}' in {tf_file.name}"
                     ),
                 }
+            logger.debug(
+                "TerraformPRGenerator: rule '%s' not found (or already Deny) in '%s'",
+                rule_name, tf_file.path,
+            )
 
+        logger.warning(
+            "TerraformPRGenerator: rule '%s' not found in any .tf file under '%s' "
+            "— falling back to stub",
+            rule_name, iac_path,
+        )
         return None
 
     def _generate_terraform_stub(

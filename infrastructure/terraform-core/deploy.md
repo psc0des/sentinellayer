@@ -218,8 +218,11 @@ docker push $ACR/ruriskry-backend:latest
 az containerapp update \
   --name ruriskry-core-backend-<suffix> \
   --resource-group ruriskry-core-engine-rg \
-  --image $ACR/ruriskry-backend:latest
+  --image $ACR/ruriskry-backend:latest \
+  --revision-suffix "r$(date +%Y%m%d%H%M)"
 ```
+
+> **Why `--revision-suffix`?** Container Apps uses revision-based deployment. Without a new revision suffix, the update may serve the cached `:latest` digest from the previous push rather than the newly pushed image. The suffix forces a fresh pull every time.
 
 ### Dashboard changed
 
