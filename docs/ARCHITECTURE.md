@@ -197,7 +197,7 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 
 | Service | Used by | Config var | Security posture |
 |---|---|---|---|
-| Azure OpenAI / GPT-4.1 (Foundry) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only |
+| Azure OpenAI / GPT-4.1 (Foundry) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only; Container App MI has `Cognitive Services OpenAI User` role (`azurerm_role_assignment.foundry_openai_user`) |
 | Azure AI Search | `HistoricalPatternAgent` | `AZURE_SEARCH_ENDPOINT` | — |
 | Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; `network_acl_bypass_for_azure_services=true` |
 | Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` | Managed Identity auth |

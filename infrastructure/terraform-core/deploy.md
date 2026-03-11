@@ -395,6 +395,7 @@ npx @azure/static-web-apps-cli deploy ./dist \
 | `terraform destroy` fails with `ScopeLocked` | Only occurs if `enable_rg_lock = true` and lock removal fails. Default is `false` so this should not occur. | Remove manually: `az lock delete --name ruriskry-core-engine-rg-lock --resource-group ruriskry-core-engine-rg`, then retry |
 | `409 Conflict: ResourceGroupBeingDeleted` on fresh deploy | Key Vault soft-delete recovery put the new RG into a deprovisioning state | Purge the soft-deleted KV first: `az keyvault purge --name ruriskry-core-kv-<suffix> --location eastus2`, wait, then re-run |
 | Container App `unable to pull image using Managed identity` | Azure IAM role propagation race condition | Fixed by placeholder image pattern — should not occur with `deploy.sh` |
+| All agent scans return `401 PermissionDenied ... lacks Microsoft.CognitiveServices/accounts/OpenAI/responses/write` | `local_authentication_enabled = false` on Foundry disables API key auth; the Container App MI is missing the `Cognitive Services OpenAI User` role | Handled automatically by `azurerm_role_assignment.foundry_openai_user` in Terraform. If you're hitting this on an existing deploy that pre-dates the fix, run `terraform apply` to add the role assignment. |
 | State lock stuck after network drop | Connection reset before Terraform could release the blob lease | Break the lease: `az storage blob lease break --account-name ruriskrytfstate<suffix> --container-name tfstate --blob-name terraform-core.tfstate` |
 
 ---

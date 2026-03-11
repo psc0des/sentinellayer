@@ -29,7 +29,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 
 Security notes:
 - ACR `admin_enabled = false` — credentials never appear in tfstate or env vars
-- Foundry `local_authentication_enabled = false` — Managed Identity only; agents use `DefaultAzureCredential` so local dev (`az login`) still works unchanged
+- Foundry `local_authentication_enabled = false` — Managed Identity only; agents use `DefaultAzureCredential` so local dev (`az login`) still works unchanged. The Container App MI is granted the `Cognitive Services OpenAI User` role via `azurerm_role_assignment.foundry_openai_user` in Terraform — without this role, all agent scans fail with 401 PermissionDenied.
 - Cosmos DB and Key Vault accessed via Managed Identity (no API keys in tfstate)
 - Teams webhook stored as a Key Vault secret, injected via Container App secret mechanism
 - CORS enforced at the FastAPI application layer using `DASHBOARD_URL` env var
