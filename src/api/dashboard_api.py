@@ -44,7 +44,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import uvicorn
@@ -1530,12 +1530,23 @@ async def trigger_alert(
     resource_id = alert.get("resource_id", "")
     resource_name = alert.get("resource_name") or (resource_id.split("/")[-1] if "/" in resource_id else resource_id)
 
-    # Check for duplicate: same resource + metric already firing/investigating
+    # Check for duplicate: same resource + metric already firing/investigating,
+    # or resolved/investigated within the last 30 minutes (cooldown window).
+    # Azure Monitor evaluates every 5 min — without cooldown, a persistent outage
+    # generates a new alert every cycle after each one resolves.
+    _ALERT_COOLDOWN_MINUTES = 30
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=_ALERT_COOLDOWN_MINUTES)).isoformat()
     for existing in _alerts.values():
         if (
-            existing.get("status") in ("firing", "investigating")
-            and existing.get("resource_id") == resource_id
+            existing.get("resource_id") == resource_id
             and existing.get("metric") == alert.get("metric")
+            and (
+                existing.get("status") in ("firing", "investigating")
+                or (
+                    existing.get("status") in ("resolved", "investigated")
+                    and (existing.get("resolved_at") or "") >= cutoff
+                )
+            )
         ):
             logger.info(
                 "alert-trigger: duplicate for %s/%s — returning existing %s",

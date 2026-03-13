@@ -649,14 +649,17 @@ class ExecutionAgent:
         async def tool_start_vm(resource_group: str, vm_name: str) -> str:
             from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
-            async with AioCredential() as cred:
-                async with ComputeManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    poller = await client_.virtual_machines.begin_start(resource_group, vm_name)
-                    await poller.result()
-            return json.dumps({
-                "success": True,
-                "message": f"Started VM '{vm_name}' in '{resource_group}'",
-            })
+            try:
+                async with AioCredential() as cred:
+                    async with ComputeManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        poller = await client_.virtual_machines.begin_start(resource_group, vm_name)
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": f"Started VM '{vm_name}' in '{resource_group}'",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="restart_vm",
@@ -665,14 +668,17 @@ class ExecutionAgent:
         async def tool_restart_vm(resource_group: str, vm_name: str) -> str:
             from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
-            async with AioCredential() as cred:
-                async with ComputeManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    poller = await client_.virtual_machines.begin_restart(resource_group, vm_name)
-                    await poller.result()
-            return json.dumps({
-                "success": True,
-                "message": f"Restarted VM '{vm_name}' in '{resource_group}'",
-            })
+            try:
+                async with AioCredential() as cred:
+                    async with ComputeManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        poller = await client_.virtual_machines.begin_restart(resource_group, vm_name)
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": f"Restarted VM '{vm_name}' in '{resource_group}'",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="resize_vm",
@@ -681,17 +687,20 @@ class ExecutionAgent:
         async def tool_resize_vm(resource_group: str, vm_name: str, new_size: str) -> str:
             from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
-            async with AioCredential() as cred:
-                async with ComputeManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    poller = await client_.virtual_machines.begin_update(
-                        resource_group, vm_name,
-                        {"hardware_profile": {"vm_size": new_size}},
-                    )
-                    await poller.result()
-            return json.dumps({
-                "success": True,
-                "message": f"Resized VM '{vm_name}' to '{new_size}' in '{resource_group}'",
-            })
+            try:
+                async with AioCredential() as cred:
+                    async with ComputeManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        poller = await client_.virtual_machines.begin_update(
+                            resource_group, vm_name,
+                            {"hardware_profile": {"vm_size": new_size}},
+                        )
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": f"Resized VM '{vm_name}' to '{new_size}' in '{resource_group}'",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="delete_nsg_rule",
@@ -702,16 +711,19 @@ class ExecutionAgent:
         ) -> str:
             from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.network.aio import NetworkManagementClient  # noqa: PLC0415
-            async with AioCredential() as cred:
-                async with NetworkManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    poller = await client_.security_rules.begin_delete(
-                        resource_group, nsg_name, rule_name
-                    )
-                    await poller.result()
-            return json.dumps({
-                "success": True,
-                "message": f"Deleted NSG rule '{rule_name}' from '{nsg_name}' in '{resource_group}'",
-            })
+            try:
+                async with AioCredential() as cred:
+                    async with NetworkManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        poller = await client_.security_rules.begin_delete(
+                            resource_group, nsg_name, rule_name
+                        )
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": f"Deleted NSG rule '{rule_name}' from '{nsg_name}' in '{resource_group}'",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="create_nsg_rule",
@@ -747,19 +759,22 @@ class ExecutionAgent:
                 "destination_port_range": destination_port,
                 "source_port_range": "*",
             }
-            async with AioCredential() as cred:
-                async with NetworkManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    poller = await client_.security_rules.begin_create_or_update(
-                        resource_group, nsg_name, rule_name, rule_params
-                    )
-                    await poller.result()
-            return json.dumps({
-                "success": True,
-                "message": (
-                    f"Created/updated NSG rule '{rule_name}' on '{nsg_name}' "
-                    f"in '{resource_group}'"
-                ),
-            })
+            try:
+                async with AioCredential() as cred:
+                    async with NetworkManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        poller = await client_.security_rules.begin_create_or_update(
+                            resource_group, nsg_name, rule_name, rule_params
+                        )
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": (
+                        f"Created/updated NSG rule '{rule_name}' on '{nsg_name}' "
+                        f"in '{resource_group}'"
+                    ),
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="delete_resource",
@@ -768,17 +783,20 @@ class ExecutionAgent:
         async def tool_delete_resource(resource_id: str) -> str:
             from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.resource.resources.aio import ResourceManagementClient  # noqa: PLC0415
-            async with AioCredential() as cred:
-                async with ResourceManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    poller = await client_.resources.begin_delete_by_id(
-                        resource_id, api_version="2023-07-01"
-                    )
-                    await poller.result()
-            name = resource_id.split("/")[-1]
-            return json.dumps({
-                "success": True,
-                "message": f"Deleted resource '{name}' (ARM ID: {resource_id})",
-            })
+            try:
+                async with AioCredential() as cred:
+                    async with ResourceManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        poller = await client_.resources.begin_delete_by_id(
+                            resource_id, api_version="2023-07-01"
+                        )
+                        await poller.result()
+                name = resource_id.split("/")[-1]
+                return json.dumps({
+                    "success": True,
+                    "message": f"Deleted resource '{name}' (ARM ID: {resource_id})",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="update_resource_tags",
@@ -794,25 +812,28 @@ class ExecutionAgent:
                 new_tags = json.loads(tags_json)
             except json.JSONDecodeError:
                 new_tags = {}
-            # Get current resource to merge tags
-            async with AioCredential() as cred:
-                async with ResourceManagementClient(cred, cfg.azure_subscription_id) as client_:
-                    resource = await client_.resources.get_by_id(
-                        resource_id, api_version="2023-07-01"
-                    )
-                    existing_tags = resource.tags or {}
-                    merged_tags = {**existing_tags, **new_tags}
-                    poller = await client_.resources.begin_update_by_id(
-                        resource_id,
-                        api_version="2023-07-01",
-                        parameters={"tags": merged_tags},
-                    )
-                    await poller.result()
-            name = resource_id.split("/")[-1]
-            return json.dumps({
-                "success": True,
-                "message": f"Updated tags on '{name}': {merged_tags}",
-            })
+            try:
+                # Get current resource to merge tags
+                async with AioCredential() as cred:
+                    async with ResourceManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        resource = await client_.resources.get_by_id(
+                            resource_id, api_version="2023-07-01"
+                        )
+                        existing_tags = resource.tags or {}
+                        merged_tags = {**existing_tags, **new_tags}
+                        poller = await client_.resources.begin_update_by_id(
+                            resource_id,
+                            api_version="2023-07-01",
+                            parameters={"tags": merged_tags},
+                        )
+                        await poller.result()
+                name = resource_id.split("/")[-1]
+                return json.dumps({
+                    "success": True,
+                    "message": f"Updated tags on '{name}': {merged_tags}",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
 
         @af.tool(
             name="report_step_result",
@@ -1025,33 +1046,42 @@ class ExecutionAgent:
         @af.tool(name="start_vm", description="Start a stopped/deallocated Azure VM.")
         async def tool_start_vm(resource_group: str, vm_name: str) -> str:
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
-            async with DefaultAzureCredential() as cred:
-                async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
-                    poller = await cc.virtual_machines.begin_start(resource_group, vm_name)
-                    await poller.result()
-            return json.dumps({"status": "started", "vm": vm_name})
+            try:
+                async with DefaultAzureCredential() as cred:
+                    async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
+                        poller = await cc.virtual_machines.begin_start(resource_group, vm_name)
+                        await poller.result()
+                return json.dumps({"status": "started", "vm": vm_name})
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"status": "failed", "vm": vm_name, "error": str(exc)})
 
         @af.tool(name="deallocate_vm", description="Deallocate (stop) an Azure VM.")
         async def tool_deallocate_vm(resource_group: str, vm_name: str) -> str:
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
-            async with DefaultAzureCredential() as cred:
-                async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
-                    poller = await cc.virtual_machines.begin_deallocate(resource_group, vm_name)
-                    await poller.result()
-            return json.dumps({"status": "deallocated", "vm": vm_name})
+            try:
+                async with DefaultAzureCredential() as cred:
+                    async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
+                        poller = await cc.virtual_machines.begin_deallocate(resource_group, vm_name)
+                        await poller.result()
+                return json.dumps({"status": "deallocated", "vm": vm_name})
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"status": "failed", "vm": vm_name, "error": str(exc)})
 
         @af.tool(name="resize_vm", description="Resize an Azure VM to a different SKU.")
         async def tool_resize_vm(resource_group: str, vm_name: str, new_size: str) -> str:
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
             from azure.mgmt.compute.models import VirtualMachineUpdate  # noqa: PLC0415
-            async with DefaultAzureCredential() as cred:
-                async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
-                    poller = await cc.virtual_machines.begin_update(
-                        resource_group, vm_name,
-                        VirtualMachineUpdate(hardware_profile={"vm_size": new_size}),
-                    )
-                    await poller.result()
-            return json.dumps({"status": "resized", "vm": vm_name, "size": new_size})
+            try:
+                async with DefaultAzureCredential() as cred:
+                    async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
+                        poller = await cc.virtual_machines.begin_update(
+                            resource_group, vm_name,
+                            VirtualMachineUpdate(hardware_profile={"vm_size": new_size}),
+                        )
+                        await poller.result()
+                return json.dumps({"status": "resized", "vm": vm_name, "size": new_size})
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"status": "failed", "vm": vm_name, "error": str(exc)})
 
         @af.tool(name="create_nsg_rule", description="Create or restore an NSG security rule.")
         async def tool_create_nsg_rule(
@@ -1062,20 +1092,23 @@ class ExecutionAgent:
         ) -> str:
             from azure.mgmt.network.aio import NetworkManagementClient  # noqa: PLC0415
             from azure.mgmt.network.models import SecurityRule  # noqa: PLC0415
-            async with DefaultAzureCredential() as cred:
-                async with NetworkManagementClient(cred, self._cfg.azure_subscription_id) as nc:
-                    poller = await nc.security_rules.begin_create_or_update(
-                        resource_group, nsg_name, rule_name,
-                        SecurityRule(
-                            priority=priority, direction=direction, access=access,
-                            protocol=protocol,
-                            source_address_prefix=source_address_prefix,
-                            destination_address_prefix=destination_address_prefix,
-                            destination_port_range=destination_port_range,
-                        ),
-                    )
-                    await poller.result()
-            return json.dumps({"status": "created", "rule": rule_name})
+            try:
+                async with DefaultAzureCredential() as cred:
+                    async with NetworkManagementClient(cred, self._cfg.azure_subscription_id) as nc:
+                        poller = await nc.security_rules.begin_create_or_update(
+                            resource_group, nsg_name, rule_name,
+                            SecurityRule(
+                                priority=priority, direction=direction, access=access,
+                                protocol=protocol,
+                                source_address_prefix=source_address_prefix,
+                                destination_address_prefix=destination_address_prefix,
+                                destination_port_range=destination_port_range,
+                            ),
+                        )
+                        await poller.result()
+                return json.dumps({"status": "created", "rule": rule_name})
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"status": "failed", "rule": rule_name, "error": str(exc)})
 
         @af.tool(name="report_step_result", description="Report the outcome of a rollback step.")
         async def tool_report_step_result(step_index: int, success: bool, message: str) -> str:
