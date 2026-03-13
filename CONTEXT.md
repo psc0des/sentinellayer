@@ -4,15 +4,15 @@
 ## What Is This Project?
 RuriSkry is a production-grade AI Action Governance & Simulation Engine. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
 
-Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 719+ automated tests.
+Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 777+ automated tests.
 
 ## Project Structure
 ```
 src/
 ├── operational_agents/     # Agents that PROPOSE actions (the governed)
-│   ├── monitoring_agent.py # SRE monitoring + anomaly detection
-│   ├── cost_agent.py       # Cost optimization proposals
-│   └── deploy_agent.py     # Infrastructure deployment + config proposals (Phase 8)
+│   ├── monitoring_agent.py # SRE monitoring + anomaly detection (6-step enterprise scan + 5-type alert handling)
+│   ├── cost_agent.py       # Cost optimization proposals (VM waste, unattached disks, orphaned public IPs)
+│   └── deploy_agent.py     # Infrastructure security proposals — 7 domains: NSG, storage, DB/KV, VM posture, activity log, tagging (Phase 8+)
 ├── governance_agents/      # Agents that EVALUATE actions (the governors)
 │   ├── blast_radius_agent.py    # SRI:Infrastructure (0-100) — LLM decision maker (Phase 22)
 │   ├── policy_agent.py          # SRI:Policy (0-100) — LLM decision maker + remediation intent detection (Phase 22)
@@ -27,6 +27,7 @@ src/
 │   │                            #   Routes actions to Tier 1/2/3 before governance agents run
 │   ├── decision_tracker.py      # Audit trail storage (verdicts → Cosmos / JSON)
 │   ├── scan_run_tracker.py      # Scan-run lifecycle store (scan records → Cosmos / JSON)
+│   ├── alert_tracker.py         # Alert investigation store (alerts → Cosmos / JSON)
 │   ├── explanation_engine.py    # DecisionExplainer — factors, counterfactuals, LLM summary
 │   └── interception.py          # ActionInterceptor façade (async)
 ├── mcp_server/
@@ -36,27 +37,33 @@ src/
 │   ├── operational_a2a_clients.py  # Operational agent A2A client wrappers
 │   └── agent_registry.py        # Tracks connected A2A agents with stats
 ├── infrastructure/              # Azure service clients (live + mock fallback)
-│   ├── azure_tools.py           # 5 sync + 5 async (*_async) investigation tools
+│   ├── azure_tools.py           # 5 sync + 7 async (*_async) investigation tools
 │   │                            #   query_resource_graph(_async), query_metrics(_async),
-│   │                            #   get_resource_details(_async), query_activity_log(_async),
-│   │                            #   list_nsg_rules(_async) — used by all ops agents
+│   │                            #   get_resource_details(_async) [injects powerState for VMs via Compute instance view],
+│   │                            #   query_activity_log(_async), list_nsg_rules(_async),
+│   │                            #   get_resource_health_async (Resource Health API — Available/Unavailable/Degraded),
+│   │                            #   list_advisor_recommendations_async (Azure Advisor — Cost/Security/HA/Perf)
+│   │                            #   — all 7 async tools registered in all 3 ops agents
 │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff (Phase 12)
 │   ├── resource_graph.py        # Azure Resource Graph — live: KQL + _azure_enrich_topology()
 │   │                            #   (tags + NSG topology + cost_lookup); mock: seed_resources.json
 │   ├── cost_lookup.py           # Azure Retail Prices REST API — sync + async; _extract_monthly_cost() shared helper
 │   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
-│   ├── openai_client.py         # Azure OpenAI / GPT-4.1 (mock: canned string)
+│   ├── openai_client.py         # Azure OpenAI / gpt-5-mini (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── notifications/               # Outbound alerting
 │   └── teams_notifier.py        # send_teams_notification() — Adaptive Card to Teams webhook
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints — 27 total (Phase 10 agents,
-│                                #   Phase 12 alert-trigger, Phase 13 scan triggers,
+│   └── dashboard_api.py         # FastAPI REST endpoints — 33 total (Phase 10 agents,
+│                                #   Phase 12 alert-trigger + _normalize_azure_alert_payload(),
+│                                #   Phase 13 scan triggers,
 │                                #   Phase 16: SSE stream, cancel, last-run + durable store,
 │                                #   Phase 17: notification-status + test-notification,
 │                                #   Phase 18: evaluation explanation,
-│                                #   Phase 21: execution gateway HITL + agent-fix + terraform stub)
+│                                #   Phase 21: execution gateway HITL + agent-fix + terraform stub,
+│                                #   Alerts: GET /api/alerts*, active-count, stream — verdicts include
+│                                #     execution_id + execution_status so dashboard shows action buttons)
 └── config.py                    # Environment config with SRI thresholds
 ```
 
@@ -217,12 +224,38 @@ STATUS.md for full phase breakdown.
 ## Current Development Phase
 > For detailed progress tracking see **STATUS.md** at the project root.
 
+**Agent Intelligence Overhaul (2026-03-13, COMPLETE)**
+
+All three operational agent system instructions completely rewritten for enterprise-grade coverage:
+
+**MonitoringAgent (`_SCAN_INSTRUCTIONS` — 6-step enterprise scan):**
+- Step 1: Discover VMs, databases, containerApps, storageAccounts, disks, publicIPs via Resource Graph
+- Step 2: Check EVERY VM power state via `get_resource_details` — stopped/deallocated = HIGH urgency `restart_service`. **Critical fix**: no metrics from a VM is confirmation it is DOWN, not confirmation it is clean. The old instructions never checked power state; they only ran `query_metrics`, which returns empty data for deallocated VMs. An empty metric result was silently interpreted as "no problem" — causing `vm-web-01` (deallocated) to be reported as "Clean" when it was actually down.
+- Step 3: Database health — single-region Cosmos DB, no failover, publicNetworkAccess, no backup policy, P99 latency
+- Step 4: Container Apps & App Services — replica count, HTTPS enforcement, Http5xx rate
+- Step 5: Observability gaps — VMs missing Azure Monitor Agent extension, resources missing required tags
+- Step 6: Orphaned resources — unattached disks, unassociated public IPs
+
+**MonitoringAgent (`_ALERT_INSTRUCTIONS` — 5 alert types):**
+Expanded from 2 types (availability + CPU) to 5: A) availability/heartbeat, B) CPU/memory, C) disk/storage, D) database/data service, E) network/connectivity. Each type specifies exact tools to call, evidence to collect, and urgency criteria.
+
+**DeployAgent (`_AGENT_INSTRUCTIONS` — 7 security domains):**
+Expanded from NSG-only to full infrastructure security posture: (1) resource discovery (NSGs, VMs, storage, databases, Key Vaults, public IPs), (2) NSG audit (CRITICAL/HIGH/MEDIUM severity tiers), (3) storage account security (`allowBlobPublicAccess`, HTTP-only, TLS < 1.2, open network ACL), (4) database & Key Vault security (publicNetworkAccess, no private endpoint, SQL open firewall, soft-delete disabled, purge protection), (5) VM security posture (OS disk encryption, password vs SSH keys, public IP with no NSG), (6) recent config changes via activity log audit, (7) zero-tag resource governance.
+
+**CostAgent (`_AGENT_INSTRUCTIONS` — new waste categories):**
+- Deallocated VMs: still paying for disk storage even when stopped — flag for delete/review (MEDIUM)
+- Unattached disks (`diskState = 'Unattached'`): ongoing cost with zero value → `delete_resource` MEDIUM
+- Orphaned public IPs (not attached to any NIC/LB): wasted reservation → `delete_resource` LOW
+- Added Redis, storage accounts to discovery query
+- Urgency scale added (MEDIUM for disks/deallocated VMs, LOW for rightsizing opportunities)
+
 **Bug Fixes + Test Hardening (post-Phase 24, COMPLETE)**
 
 - `src/api/dashboard_api.py`: `_run_agent_scan()` now persists `"status": "error"` (+ `"scan_error"` message) when the agent's LLM call fails or times out. Previously always wrote `"status": "complete"`, making timed-out scans indistinguishable from clean scans.
 - `dashboard/src/pages/Scans.jsx`: Added `AGENT_TYPE_LABELS` map keyed by `scan.agent_type` (`"deploy"/"monitoring"/"cost"`). Label lookup now uses `agent_type` first — fixes `scan_tracker` showing in the Agent column. Added `AlertTriangle` red "Error" badge for `status === "error"` with tooltip showing the error message.
-- `infrastructure/terraform-prod/main.tf`: `azurerm_monitor_action_group` now includes a `dynamic webhook_receiver` block that fires when `var.alert_webhook_url != ""`. This wires Azure Monitor CPU/heartbeat alerts to POST to RuriSkry's `/api/alert-trigger`, completing the automatic alert → governance evaluation pipeline.
-- `infrastructure/terraform-prod/variables.tf`: New `alert_webhook_url` variable (optional, empty default).
+- `infrastructure/terraform-core/main.tf`: `azurerm_monitor_action_group.ruriskry` created as a named resource pointing at `https://<backend-fqdn>/api/alert-trigger`. No variable needed — webhook URL derived from Container App FQDN directly.
+- `infrastructure/terraform-prod/main.tf`: `azurerm_monitor_action_group.prod` (`ag-ruriskry-prod`) has `use_common_alert_schema = false` and a `dynamic webhook_receiver` activated by `var.alert_webhook_url`. Both `alert-vm-dr-01-heartbeat` (scheduled query) and `alert-vm-web-01-cpu-high` (metric) rules reference this action group — setting `alert_webhook_url` in tfvars wires both rules to RuriSkry in one apply.
+- `src/api/dashboard_api.py`: `_normalize_azure_alert_payload()` added — normalises Azure Monitor Common Alert Schema and non-common schema to flat internal format. **Workspace pivot**: Log Alerts V2 always reports the Log Analytics workspace as `alertTargetID` (never the monitored VM) and `configurationItems` is empty when query returns 0 rows. The normalizer detects `operationalinsights/workspaces` in resource_id and regex-extracts the actual VM name from `essentials.description` or `alertRule` name, constructing the correct VM ARM ID. Without this, MonitoringAgent investigated the workspace and found nothing ~50% of the time (LLM non-determinism).
 - `dashboard/tests/regression.spec.js` + `e2e.spec.js`: Fixed 5 brittle test assertions (metrics contract `approval_rate` → `decisions`/`decision_percentages`; verdict badge locator scoped to `tbody`; Agents heading strict-mode `.first()`; table header waits via `locator('table').filter`; deploy scan e2e accepts framework error outcome).
 
 **Phase 24 — Magic UI Visual Redesign + Ops Nerve Center Aesthetic (COMPLETE)**
@@ -246,6 +279,78 @@ Dashboard visual overhaul — production-grade "aerospace ops center" aesthetic 
 - `dashboard/src/components/Sidebar.jsx` — teal `animate-breathe` glow on SL logo; `animate-icon-urgent` amber pulse on Decisions icon when `pendingCount > 0`; amber badge with glow on both Overview and Decisions links; animated left-bar active indicator; pulsing "System online" status.
 - `dashboard/src/App.jsx` — `bg-dots` dot-grid texture on main content area; `--font-ui` / `--bg-base` CSS variables applied to root layout.
 - **Tests: 666 passed (unchanged — frontend-only change, no backend touched)**
+
+**Phase 30 — Rollback for Agent-Applied Fixes (COMPLETE)**
+
+`ExecutionAgent.rollback(action, plan)` inverts an applied fix. Mock path: `_rollback_mock()`
+maps each `ActionType` to its inverse — `RESTART_SERVICE`→`deallocate_vm`,
+`SCALE_UP`/`SCALE_DOWN`→`resize_vm` back to `current_sku`, `MODIFY_NSG`→`create_nsg_rule`
+restored, `DELETE_RESOURCE`→cannot auto-rollback. Live path: `_rollback_with_framework()` LLM
+reads `rollback_hint` from stored plan + current state, calls Azure SDK write tools in reverse.
+`ExecutionGateway.rollback_agent_fix()` validates `status == applied`, calls `agent.rollback()`,
+sets `status → rolled_back`, stores `rollback_log`. `POST /api/execution/{id}/rollback` endpoint.
+`ExecutionRecord` gains `rollback_log: Optional[list]` field; `ExecutionStatus.rolled_back` added.
+Dashboard: amber `↩ Rollback` button appears next to `Applied` badge in both
+`EvaluationDrilldown.jsx` and `Alerts.jsx`. Confirm dialog shows `rollback_hint` from stored plan.
+`rolled_back` status badge (amber) added to both `EXEC_STATUS_CONFIG` maps. `ExecutionLogView`
+accepts `label` prop to show "Rollback Steps" separately from execution log.
+**Tests: 777 passed.**
+
+**Phase 30 post-release fixes (COMPLETE)**
+
+Dashboard and backend refinements shipped after the rollback feature:
+
+- Alert labels: `"Resolved"` display text → `"Investigated"` in both the Alerts tab filter
+  and the Overview AlertsCard. The stored status value in `AlertRecord` remains `"resolved"` for
+  backward compatibility with existing data. `"Resolution Rate"` label → `"Investigation Rate"`.
+- Decisions table: new **Agent** column with colored badge pills (Monitoring=blue, Cost=amber,
+  Deploy=purple). `initialAgent` prop on `DecisionTable` allows pre-selecting the agent filter
+  from the URL (`?agent=<agent_id>`). `key={agentParam}` on the component forces a remount when
+  the agent filter changes via navigation (React Router v6 does not remount on query change).
+- Scans → Decisions navigation: clicking a verdict count in the Scans page now navigates to
+  `/decisions?agent=<agent_id>` so the Decisions table opens pre-filtered to that agent.
+- "SRE" → "Monitoring" rename (frontend only): all `"SRE"` labels in `AgentControls`,
+  `DecisionTable`, `LiveLogPanel`, `AuditLog`, `Overview`, and `Scans` replaced with
+  `"Monitoring"`. Backend agent type value `"monitoring"` was already correct; only display
+  labels changed.
+- Execution gateway dedup `action_id` update: when a resource is re-scanned and an existing
+  `manual_required` record is found for the same `(resource_id, action_type)`, the record's
+  `action_id` is now updated to the latest verdict's `action_id` before returning. Previously
+  the stale `action_id` caused the drilldown to show "No execution record" because the new
+  verdict's `action_id` didn't match any execution record.
+- `terraform-prod` AMA identity fix: both VMs (`vm-dr-01`, `vm-web-01`) given
+  `identity { type = "SystemAssigned" }` blocks + `azurerm_role_assignment` resources for
+  "Monitoring Metrics Publisher" role. Azure Monitor Agent silently drops telemetry without a
+  valid managed identity — this was causing intermittent metric gaps in alert investigations.
+- **Tests: 777 passed.** (1 new test: `TestDedupActionIdUpdate` in `test_execution_gateway.py`)
+
+**Phase 29 — Post-Execution Verification, Admin Panel, Execution Metrics, Alerts Card (COMPLETE)**
+
+`ExecutionAgent.verify()` re-checks resource state after execution using read-only tools
+(`get_resource_details`, `list_nsg_rules`, `query_metrics`) and a `submit_verification_result`
+capture tool. Mock path: `_verify_mock()` returns deterministic per-ActionType messages. Live
+path: `_verify_with_framework()` LLM-driven with fallback to mock. Result stored as
+`ExecutionRecord.verification: {confirmed, message, checked_at}`.
+
+`ExecutionGateway.list_all()` returns all records newest-first. `GET /api/metrics` gains
+`executions` block (total/applied/failed/pr_created/dismissed/pending/agent_fix_rate/success_rate).
+`GET /api/config` returns safe system config. `Admin.jsx` new page — System Configuration card
+(mode/timeout/concurrency/flags/version) + Danger Zone with Reset button (moved from header).
+Settings gear icon + Admin NavLink in Sidebar bottom. `AlertsCard` + `ExecutionMetricsCard`
+components added to Overview between metric cards and SRI trend. `ExecutionLogView` in both
+`EvaluationDrilldown.jsx` and `Alerts.jsx` shows per-step execution log + verification badge.
+**Tests: 763 passed.**
+
+**Phase 28 — LLM-Driven Execution Agent (COMPLETE)**
+
+The execution layer is now fully LLM-driven. `src/core/execution_agent.py` — `ExecutionAgent`
+class with two public methods: `plan(action, verdict_snapshot) -> dict` (LLM reads resource
+state and outputs structured steps) and `execute(plan, action) -> dict` (LLM calls Azure SDK
+write tools step-by-step with fail-stop semantics). Plan output: `{steps, summary,
+estimated_impact, rollback_hint, commands}`. Execute output: `{success, steps_completed,
+summary}`. All 7 `ActionType` values covered in mock mode. The dashboard now shows a rich plan
+view (steps table, impact, rollback hint, expandable CLI equivalent) instead of raw az commands.
+**Tests: 748 passed.**
 
 **Phase 21 — Execution Gateway & Human-in-the-Loop (COMPLETE)**
 
@@ -282,7 +387,10 @@ until human dismisses them ("flag until fixed" governance pattern).
   `get_unresolved_proposals()` deduplicates by (resource_id, action_type), keeping oldest record.
   `execute_agent_fix()` and `create_pr_from_manual()` accept `awaiting_review` and `pr_created`
   in addition to `manual_required` — auto-approving ESCALATED records when user picks an action.
-  `_execute_fix_via_sdk()` uses `azure.mgmt.resource.resources.aio` (not `.aio` directly).
+  `generate_agent_fix_plan()` (async) instantiates `ExecutionAgent` and returns the structured
+  plan. `execute_agent_fix()` reads the stored `execution_plan` from the record and delegates
+  to `ExecutionAgent.execute()`. Hardcoded `_build_az_commands()` and `_execute_fix_via_sdk()`
+  removed in Phase 28.
 - `dashboard_api.py` — `_get_resource_tags()` walks up to parent resource for sub-resource ARM
   IDs (e.g. `.../securityRules/rule-name` → looks up parent NSG tags). Re-flag logic: strips
   duplicate `[Unresolved since ...]` prefix; extracts NSG parent name for `/securityRules/`
@@ -353,7 +461,7 @@ until human dismisses them ("flag until fixed" governance pattern).
 
 - `src/core/explanation_engine.py` (NEW) — `DecisionExplainer.explain(verdict, action)` returns a
   `DecisionExplanation` with ranked `Factor` list, `Counterfactual` scenarios, policy violations,
-  risk highlights, and an LLM-generated summary (GPT-4.1 in live mode; template fallback in mock).
+  risk highlights, and an LLM-generated summary (gpt-5-mini in live mode; template fallback in mock).
   Module-level `_explanation_cache` keyed by `action_id` prevents redundant recomputation.
 - `src/core/models.py` — 3 new Pydantic models: `Factor`, `Counterfactual`, `DecisionExplanation`.
 - `src/api/dashboard_api.py` — 1 new endpoint: `GET /api/evaluations/{id}/explanation` (18 total).
@@ -415,7 +523,7 @@ instead of seed-data proposals; mock RG filter and default metrics fixed.
 **Phase 12 — Intelligent Ops Agents (complete)**
 
 Ops agents now use 5 generic Azure tools (``src/infrastructure/azure_tools.py``) to
-investigate real data before proposing. GPT-4.1 discovers resources, checks actual CPU
+investigate real data before proposing. gpt-5-mini discovers resources, checks actual CPU
 metrics, inspects NSG rules, and reviews activity logs — then calls ``propose_action``
 with evidence-backed reasons. ``POST /api/alert-trigger`` enables Azure Monitor webhook
 integration. Run ``python demo_live.py --resource-group <rg>`` (or without flag to scan
@@ -506,7 +614,7 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
 **Previous: Phase 8 — Microsoft Agent Framework SDK (via Phase 9)**
 
 - All 4 governance agents + all 3 operational agents rebuilt on `agent-framework-core`.
-- Each agent defines its rule-based logic as an `@af.tool`; GPT-4.1 calls the tool and synthesises reasoning.
+- Each agent defines its rule-based logic as an `@af.tool`; gpt-5-mini calls the tool and synthesises reasoning.
 - `deploy_agent.py` added: proposes NSG deny-all rules, lifecycle tag additions, observability resources.
 - `pipeline.py` exposes `scan_operational_agents()` running all 3 operational agents concurrently.
 

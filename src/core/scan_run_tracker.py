@@ -164,6 +164,23 @@ class ScanRunTracker:
     def is_mock(self) -> bool:
         return self._is_mock
 
+    def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return up to *limit* scan-run records, newest-first."""
+        if self._is_mock:
+            records = self._load_local_all()
+            records.sort(key=lambda r: r.get("started_at", ""), reverse=True)
+            return records[:limit]
+
+        query = (
+            f"SELECT TOP {limit} * FROM c ORDER BY c.started_at DESC"
+        )
+        return list(
+            self._container.query_items(
+                query=query,
+                enable_cross_partition_query=True,
+            )
+        )
+
     def _load_local_all(self) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         for path in self._scans_dir.glob("*.json"):

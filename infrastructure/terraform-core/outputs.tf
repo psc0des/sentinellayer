@@ -88,6 +88,11 @@ output "cosmos_container_decisions" {
   value       = azurerm_cosmosdb_sql_container.governance_decisions.name
 }
 
+output "cosmos_container_alerts" {
+  description = "Cosmos DB container for alert investigation records"
+  value       = azurerm_cosmosdb_sql_container.governance_alerts.name
+}
+
 # --- Log Analytics ---
 
 output "log_analytics_workspace_id" {
@@ -170,6 +175,18 @@ output "dashboard_deployment_token" {
   sensitive   = true
 }
 
+# --- Azure Monitor ---
+
+output "alert_action_group_id" {
+  description = "Resource ID of the Azure Monitor Action Group — attach this to alert rules"
+  value       = azurerm_monitor_action_group.ruriskry.id
+}
+
+output "alert_webhook_url" {
+  description = "Webhook URL the Action Group posts to — matches /api/alert-trigger on the backend"
+  value       = "https://${azurerm_container_app.backend.ingress[0].fqdn}/api/alert-trigger"
+}
+
 # --- Helpful summary ---
 
 output "next_steps" {
@@ -188,6 +205,16 @@ output "next_steps" {
     ── If you ran terraform apply manually ────────────────────────
       See infrastructure/terraform-core/deploy.md § Manual Deploy
       for the Docker build/push and dashboard deploy commands.
+
+    ── Wiring alert rules to the Action Group ─────────────────────
+      After apply, attach existing alert rules to the Action Group:
+        az monitor metrics alert update \
+          --name <your-alert-rule> \
+          --resource-group <rg> \
+          --add-action $(terraform output -raw alert_action_group_id)
+
+      Or set the Action Group in the Azure Portal:
+        Monitor → Alerts → Alert rules → Edit rule → Actions tab
 
   EOT
 }

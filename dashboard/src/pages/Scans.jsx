@@ -34,15 +34,23 @@ function scanDuration(started, completed) {
 const AGENT_NAMES  = ['cost-optimization-agent', 'monitoring-agent', 'deploy-agent']
 const AGENT_LABELS = {
   'cost-optimization-agent': 'Cost',
-  'monitoring-agent':        'SRE',
+  'monitoring-agent':        'Monitoring',
   'deploy-agent':            'Deploy',
 }
 // agent_type values returned by the API: "deploy", "monitoring", "cost", "cost-optimization"
 const AGENT_TYPE_LABELS = {
   'deploy':            'Deploy',
-  'monitoring':        'SRE',
+  'monitoring':        'Monitoring',
   'cost':              'Cost',
   'cost-optimization': 'Cost',
+}
+
+// Map scan agent_type → the agent_id value stored in decision records
+const AGENT_TYPE_TO_ID = {
+  'monitoring':        'monitoring-agent',
+  'cost':              'cost-optimization-agent',
+  'cost-optimization': 'cost-optimization-agent',
+  'deploy':            'deploy-agent',
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
@@ -147,7 +155,10 @@ export default function Scans() {
                       <td className="py-3 pr-4 text-right">
                         {verdictCount > 0 ? (
                           <button
-                            onClick={() => navigate('/decisions')}
+                            onClick={() => {
+                              const agentId = AGENT_TYPE_TO_ID[scan.agent_type]
+                              navigate(agentId ? `/decisions?agent=${agentId}` : '/decisions')
+                            }}
                             className="text-xs font-medium text-yellow-400 tabular-nums hover:text-yellow-300 underline decoration-dotted"
                           >
                             {verdictCount} verdict{verdictCount !== 1 ? 's' : ''}
@@ -181,7 +192,10 @@ export default function Scans() {
                       <td className="py-3">
                         {verdictCount > 0 && (
                           <button
-                            onClick={() => navigate('/decisions')}
+                            onClick={() => {
+                              const agentId = AGENT_TYPE_TO_ID[scan.agent_type]
+                              navigate(agentId ? `/decisions?agent=${agentId}` : '/decisions')
+                            }}
                             className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-slate-300"
                           >
                             <ChevronRight className="w-4 h-4" />

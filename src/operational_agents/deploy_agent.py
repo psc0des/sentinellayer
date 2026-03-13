@@ -20,10 +20,12 @@ The agent is environment-agnostic: accepts an optional
 
 Microsoft Agent Framework tools (live mode)
 --------------------------------------------
-- ``query_resource_graph(kusto_query)`` — discover NSGs and VMs
+- ``query_resource_graph(kusto_query)`` — discover NSGs, VMs, storage, databases
 - ``list_nsg_rules(nsg_resource_id)`` — inspect actual security rules
-- ``get_resource_details(resource_id)`` — check tags and configuration
+- ``get_resource_details(resource_id)`` — check tags, configuration, power state
 - ``query_activity_log(resource_group, timespan)`` — review recent changes
+- ``get_resource_health(resource_id)`` — Azure Platform availability signal
+- ``list_advisor_recommendations(scope, category)`` — Azure Advisor Security tips
 - ``propose_action(...)`` — submit a validated ProposedAction
 
 In mock mode (USE_LOCAL_MOCKS=true) the deterministic ``_scan_rules()``
@@ -60,48 +62,96 @@ _CLASSIFICATION_TAGS: frozenset[str] = frozenset({"environment", "criticality"})
 
 # System instructions for the framework agent.
 _AGENT_INSTRUCTIONS = """\
-You are a Senior Platform/Security Engineer conducting an infrastructure
-security and configuration review.
+You are a Senior Platform/Security Engineer conducting an enterprise
+infrastructure security and configuration compliance review.
+Every finding you submit is reviewed by the governance engine before action.
 
-Investigation workflow
-1. Use query_resource_graph to discover NSGs and VMs.
-   NSG query: "Resources | where type == 'microsoft.network/networksecuritygroups' \
-| project id, name, resourceGroup, tags, properties"
-   VM query: "Resources | where type == 'microsoft.compute/virtualmachines' \
-| project id, name, resourceGroup, tags, sku"
-2. For each NSG, call list_nsg_rules to inspect the actual security rules.
-   For each inbound Allow rule, check BOTH the port AND the sourceAddressPrefix
-   (inside the nested "properties" object of each rule).
-   A rule is dangerous when sourceAddressPrefix is "*", "Any", or "Internet"
-   combined with a sensitive port.
-3. Call query_activity_log for the resource group to see recent changes.
-   Look for: failed write operations on NSGs, recent security rule modifications.
-4. Use get_resource_details to check resource tags for lifecycle management
-   indicators. Do NOT check for specific tag key names — tag schemas vary by
-   organisation. Flag resources with NO lifecycle or ownership tags.
-5. For each security gap found, call propose_action.
+━━━ STEP 1: RESOURCE DISCOVERY ━━━
+Use query_resource_graph to discover ALL security-relevant resources:
+  NSGs:          Resources | where type == 'microsoft.network/networksecuritygroups'
+                 | project id, name, resourceGroup, tags, properties
+  VMs:           Resources | where type == 'microsoft.compute/virtualmachines'
+                 | project id, name, resourceGroup, tags, sku, properties
+  Storage:       Resources | where type == 'microsoft.storage/storageaccounts'
+                 | project id, name, resourceGroup, tags, properties
+  Databases:     Resources | where type in ('microsoft.documentdb/databaseaccounts',
+                 'microsoft.sql/servers') | project id, name, resourceGroup, tags, properties
+  Key Vaults:    Resources | where type == 'microsoft.keyvault/vaults'
+                 | project id, name, resourceGroup, tags, properties
+  Public IPs:    Resources | where type == 'microsoft.network/publicipaddresses'
+                 | project id, name, resourceGroup, tags, properties, ipAddress
 
-Security rules to flag (call propose_action for EACH one found)
----------------------------------------------------------------
-CRITICAL — sourceAddressPrefix is "*", "Any", or "Internet" AND port is any of:
-  - 22 (SSH), 3389 (RDP), 5985/5986 (WinRM), 23 (Telnet), 21 (FTP)
-  These allow management access from the entire internet. Propose modify_nsg
-  with urgency=HIGH and include the rule name and source/port in the reason.
+━━━ STEP 2: NETWORK SECURITY GROUP AUDIT ━━━
+For each NSG, call list_nsg_rules to inspect every inbound Allow rule.
+Check both port AND sourceAddressPrefix in each rule's nested properties.
 
-HIGH — sourceAddressPrefix is "*", "Any", or "Internet" AND port is "*" (all ports).
-  This exposes ALL services to the internet. Propose modify_nsg urgency=HIGH.
+CRITICAL (urgency=HIGH) — Internet-exposed management ports:
+  sourceAddressPrefix is "*", "Any", or "Internet" AND port is:
+  22 (SSH), 3389 (RDP), 5985/5986 (WinRM), 23 (Telnet), 21 (FTP), 1433 (SQL)
+  → Propose modify_nsg. Reason: rule name, port, source prefix, risk description.
 
-MEDIUM — NSG has inbound Allow rules but no explicit deny-all (access=Deny,
-  destinationPortRange="*", direction=Inbound) at any priority.
-  Propose modify_nsg urgency=MEDIUM.
+HIGH — Wildcard internet exposure:
+  sourceAddressPrefix is "*"/"Any"/"Internet" AND destinationPortRange is "*"
+  → All ports exposed to internet. Propose modify_nsg urgency=HIGH.
 
-LOW — Production resources with zero lifecycle or ownership tags.
-  Propose update_config urgency=LOW.
+MEDIUM — Missing explicit deny-all:
+  NSG has inbound Allow rules but no deny-all rule
+  (access=Deny, destinationPortRange="*", direction=Inbound).
+  → Propose modify_nsg urgency=MEDIUM. This relies on Azure implicit deny only.
 
-IMPORTANT: If you find an inbound Allow rule with sourceAddressPrefix="*" or
-"Any" and port 22 (SSH) or 3389 (RDP), you MUST call propose_action. This is
-a critical security exposure regardless of any other NSG configuration.
-Do not skip flagging these — they are always security gaps.
+━━━ STEP 3: STORAGE ACCOUNT SECURITY ━━━
+Call get_resource_details on each storage account. Flag:
+  - allowBlobPublicAccess = true → propose update_config (HIGH urgency).
+    Reason: "Public blob access enabled — any blob container can be made public."
+  - supportsHttpsTrafficOnly = false → propose update_config (HIGH urgency).
+    Reason: "HTTP traffic allowed — data transmitted in plaintext."
+  - minimumTlsVersion < TLS1_2 → propose update_config (MEDIUM urgency).
+  - No network ACL / defaultAction = Allow → propose update_config (MEDIUM).
+    Reason: "Storage account accessible from all networks — restrict to known VNets."
+
+━━━ STEP 4: DATABASE & KEY VAULT SECURITY ━━━
+Call get_resource_details on each Cosmos DB account and SQL server. Flag:
+  - publicNetworkAccess = Enabled with no private endpoint → update_config (MEDIUM).
+    Reason: "Database accessible from public internet — use private endpoint."
+  - Cosmos DB with no IP filter and no virtual network rule → update_config (MEDIUM).
+  - SQL server with no firewall rules (allow all) → update_config (HIGH urgency).
+
+Call get_resource_details on each Key Vault. Flag:
+  - enableSoftDelete = false → update_config (HIGH urgency).
+    Reason: "Soft delete disabled — accidental key/secret deletion is unrecoverable."
+  - enablePurgeProtection = false → update_config (MEDIUM urgency).
+  - publicNetworkAccess = Enabled → update_config (MEDIUM urgency).
+
+━━━ STEP 5: VM SECURITY POSTURE ━━━
+Call get_resource_details on each VM. Flag:
+  - OS disk encryption status = unencrypted (no disk encryption set applied)
+    → propose update_config (MEDIUM urgency).
+    Reason: "VM OS disk not encrypted at rest — data exposed if disk is detached."
+  - VM using password authentication instead of SSH keys (Linux VMs)
+    → propose update_config (MEDIUM urgency).
+  - VM accessible via public IP with no NSG attached → update_config (HIGH).
+
+━━━ STEP 6: RECENT CONFIGURATION CHANGES ━━━
+Call query_activity_log for the resource group to identify:
+  - Failed write operations on security resources (NSGs, Key Vaults, firewalls).
+  - Recent security rule modifications in the last 48h.
+  - Any unauthorized or unexpected resource deletions.
+  Flag suspicious changes with update_config (MEDIUM urgency) for human review.
+
+━━━ STEP 7: RESOURCE GOVERNANCE ━━━
+Resources with no lifecycle or ownership tags → propose update_config (LOW).
+Do NOT check for specific tag key names — tag schemas vary by organisation.
+Flag resources with ZERO tags only.
+
+━━━ URGENCY SCALE ━━━
+  HIGH:   Internet-exposed management port, public blob access, HTTP-only storage,
+          SQL firewall open to all, soft delete disabled on Key Vault.
+  MEDIUM: Missing deny-all NSG rule, database on public network, unencrypted disk,
+          storage accessible from all networks, purge protection disabled.
+  LOW:    Missing tags, configuration hygiene gaps.
+
+IMPORTANT: Propose an action for EVERY finding. Do not group multiple findings
+into one proposal — each security gap needs its own governance verdict.
 """
 
 
@@ -205,6 +255,8 @@ class DeployAgent:
             list_nsg_rules_async,
             get_resource_details_async,
             query_activity_log_async,
+            get_resource_health_async,
+            list_advisor_recommendations_async,
         )
 
         credential = DefaultAzureCredential()
@@ -309,7 +361,10 @@ class DeployAgent:
             name="get_resource_details",
             description=(
                 "Get full details for an Azure resource by its ARM resource ID or "
-                "short name. Returns SKU, tags, location, and other properties."
+                "short name. Returns SKU, tags, location, properties (including "
+                "encryption status, authentication config, network access settings, "
+                "publicNetworkAccess, enableSoftDelete, enablePurgeProtection). "
+                "For VMs, also returns powerState. Use this to assess security posture."
             ),
         )
         async def tool_get_resource_details(resource_id: str) -> str:
@@ -333,6 +388,41 @@ class DeployAgent:
             """Review recent changes and look for failed operations."""
             entries = await query_activity_log_async(resource_group, timespan)
             return json.dumps(entries, default=str)
+
+        @af.tool(
+            name="get_resource_health",
+            description=(
+                "Get Azure Resource Health status for a specific resource. "
+                "Returns availabilityState (Available/Unavailable/Degraded/Unknown), "
+                "a human-readable summary, reasonType, and timestamps. "
+                "Use this when you need authoritative platform-level health status "
+                "independent of configuration or metrics."
+            ),
+        )
+        async def tool_get_resource_health(resource_id: str) -> str:
+            """Check Azure Platform health signal for a resource."""
+            health = await get_resource_health_async(resource_id)
+            return json.dumps(health, default=str)
+
+        @af.tool(
+            name="list_advisor_recommendations",
+            description=(
+                "List Azure Advisor recommendations for the subscription or a scoped resource group. "
+                "Returns recommendations with category (Cost/Security/HighAvailability/Performance), "
+                "impact (High/Medium/Low), impactedValue (resource name), shortDescription, "
+                "and remediation guidance. "
+                "scope (optional): filter by resource group name. "
+                "category (optional): filter by one category — e.g. 'Security'."
+            ),
+        )
+        async def tool_list_advisor_recommendations(
+            scope: str = "", category: str = ""
+        ) -> str:
+            """Retrieve pre-computed Microsoft Advisor recommendations."""
+            recs = await list_advisor_recommendations_async(
+                scope=scope or None, category=category or None
+            )
+            return json.dumps(recs, default=str)
 
         @af.tool(
             name="propose_action",
@@ -376,7 +466,7 @@ class DeployAgent:
                 action_type=action_type_enum,
                 target=ActionTarget(
                     resource_id=resource_id,
-                    resource_type=resource_type or _NSG_RESOURCE_TYPE,
+                    resource_type=resource_type or "unknown",
                     resource_group=resource_group or None,
                 ),
                 reason=reason,
@@ -400,6 +490,8 @@ class DeployAgent:
                 tool_list_nsg_rules,
                 tool_get_resource_details,
                 tool_query_activity_log,
+                tool_get_resource_health,
+                tool_list_advisor_recommendations,
                 tool_propose_action,
             ],
         )
@@ -412,9 +504,16 @@ class DeployAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(
             agent.run,
-            f"Conduct a security and configuration review {rg_scope}. "
-            "Discover NSGs and check their security rules, review recent activity "
-            "logs for failed operations, and identify any configuration gaps.",
+            f"Conduct a full 7-domain security and configuration compliance audit {rg_scope}. "
+            "Follow ALL steps in your instructions: "
+            "(1) Discover ALL resource types — NSGs, VMs, storage accounts, databases, Key Vaults, public IPs. "
+            "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
+            "(3) Review storage account security settings (public blob access, HTTPS, TLS, network ACLs). "
+            "(4) Check database and Key Vault configuration (publicNetworkAccess, purge protection, soft delete). "
+            "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
+            "(6) Query activity logs for suspicious or failed changes in the last 48h. "
+            "(7) Flag resources with zero tags. "
+            "Propose an action for EVERY finding you discover.",
         )
 
         # Expose tool-call notes for the dashboard live log.

@@ -142,11 +142,16 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/agents/{agent_name}/last-run` | Most recent completed scan for one agent |
 | GET | `/api/notification-status` | Teams webhook configuration status |
 | POST | `/api/test-notification` | Send a sample DENIED Adaptive Card to the configured Teams webhook |
-| POST | `/api/alert-trigger` | Webhook — trigger monitoring agent from Azure Monitor alert |
+| POST | `/api/alert-trigger` | Webhook — trigger async alert investigation from Azure Monitor |
+| GET | `/api/alerts` | List all alert records newest-first |
+| GET | `/api/alerts/active-count` | Count of currently firing/investigating alerts |
+| GET | `/api/alerts/{alert_id}/status` | Full detail for one alert |
+| GET | `/api/alerts/{alert_id}/stream` | SSE stream of real-time investigation progress |
 | POST | `/api/scan/cost` | Start a background cost agent scan |
 | POST | `/api/scan/monitoring` | Start a background monitoring agent scan |
 | POST | `/api/scan/deploy` | Start a background deploy agent scan |
 | POST | `/api/scan/all` | Start background scans for all three agents |
+| GET | `/api/scan-history` | List all scan runs newest-first — operational audit log (one record per scan execution) |
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
@@ -156,9 +161,11 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
 | POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record |
-| GET | `/api/execution/{execution_id}/agent-fix-preview` | Preview remediation commands (displayed as `az` CLI for readability; execution uses Azure SDK) |
+| GET | `/api/execution/{execution_id}/agent-fix-preview` | Generate LLM-driven execution plan (steps, summary, impact, rollback, backward-compat `commands`) |
 | POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
+| POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back`, stores `rollback_log` |
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
+| GET | `/api/config` | Safe system configuration — mode, timeouts, feature flags (no secrets) |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
 
 ### Query parameters for `GET /api/evaluations`
@@ -194,6 +201,16 @@ All endpoints are `async def` (FastAPI manages the event loop).
     "llm_calls_saved": 8,
     "deterministic_evaluations": 2,
     "full_evaluations": 2
+  },
+  "executions": {
+    "total": 5,
+    "applied": 2,
+    "failed": 0,
+    "pr_created": 1,
+    "dismissed": 1,
+    "pending": 1,
+    "agent_fix_rate": 100.0,
+    "success_rate": 100.0
   }
 }
 ```
@@ -266,21 +283,141 @@ Returns **404** if the agent is not registered.
 
 ---
 
-### `POST /api/alert-trigger` (Phase 12)
+### `POST /api/alert-trigger`
 
-Webhook endpoint for Azure Monitor alert rules. When an Azure Monitor alert fires,
-a Logic App posts the alert payload here; RuriSkry triggers the monitoring agent
-and evaluates any proposed remediation.
+Webhook endpoint for Azure Monitor Action Groups. When an alert fires, Azure POSTs
+the alert payload here. RuriSkry creates an alert record (status `firing`), launches
+the investigation in the background, and returns immediately so the webhook does not
+time out. Duplicate alerts for the same `resource_id + metric` while one is still
+`firing` or `investigating` return the existing `alert_id` with `"duplicate": true`.
 
-**Request body:** Azure Monitor alert schema (passed through as `alert_data`).
+**Request body — three accepted formats:**
+
+1. **Azure Monitor Common/Non-common Alert Schema** (sent by Azure Monitor Action Groups):
+```json
+{
+  "schemaId": "azureMonitorCommonAlertSchema",
+  "data": {
+    "essentials": { "alertRule": "alert-vm-dr-01-heartbeat", "severity": "Sev2",
+                    "firedDateTime": "...", "alertTargetIDs": ["...workspace..."],
+                    "configurationItems": [], "description": "vm-dr-01 heartbeat lost" },
+    "alertContext": { "conditionType": "LogQueryCriteria", "condition": {} }
+  }
+}
+```
+
+2. **Flat format** (direct API calls / testing):
+```json
+{
+  "resource_id": "/subscriptions/.../virtualMachines/vm-web-01",
+  "metric": "Percentage CPU",
+  "value": 95.0,
+  "threshold": 80.0,
+  "severity": "3",
+  "resource_group": "ruriskry-prod-rg"
+}
+```
+
+All fields are optional. The endpoint automatically normalises both formats via `_normalize_azure_alert_payload()`.
+
+> **Log Alerts V2 workspace pivot:** Azure Monitor Log Alerts V2 always reports the Log Analytics *workspace* as `alertTargetID`, not the monitored VM — even when the query monitors a specific VM. The normalizer detects this (resource type `operationalinsights/workspaces`) and regex-extracts the actual affected resource name from `essentials.description` or `alertRule`, then constructs the correct VM ARM ID. This ensures the MonitoringAgent always investigates the right resource deterministically.
+
+**Response:**
+```json
+{ "status": "firing", "alert_id": "a1b2c3d4-..." }
+```
+
+The background investigation runs: `MonitoringAgent.scan(alert_payload)` → governance
+pipeline → `ExecutionGateway.process_verdict()` → verdicts recorded with `execution_id` +
+`execution_status` per finding. Subscribe to `GET /api/alerts/{alert_id}/stream` for
+real-time SSE updates, or poll `GET /api/alerts/{alert_id}/status`.
+
+---
+
+### `GET /api/alerts`
+
+List all alert records newest-first. Powers the Alerts tab on the dashboard.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `limit` | int | 50 | Max records (1–500) |
+
 **Response:**
 ```json
 {
-  "status": "processed",
-  "proposals_evaluated": 1,
-  "verdicts": [{ "decision": "approved", "sri_composite": 14.1 }]
+  "count": 2,
+  "alerts": [
+    {
+      "alert_id": "a1b2c3d4-...",
+      "status": "resolved",
+      "resource_id": "/subscriptions/.../vm-web-01",
+      "resource_name": "vm-web-01",
+      "metric": "Percentage CPU",
+      "value": 95.0,
+      "threshold": 80.0,
+      "severity": "3",
+      "fired_at": "2026-03-11T12:00:00+00:00",
+      "received_at": "2026-03-11T12:00:01+00:00",
+      "investigating_at": "2026-03-11T12:00:01+00:00",
+      "resolved_at": "2026-03-11T12:00:45+00:00",
+      "proposals_count": 1,
+      "totals": { "approved": 1, "escalated": 0, "denied": 0 },
+      "proposals": [...],
+      "verdicts": [
+        {
+          "decision": "approved",
+          "skry_risk_index": { "sri_composite": 8.0, "sri_infrastructure": 5.0, ... },
+          "execution_id": "e5f6g7h8-...",
+          "execution_status": "manual_required"
+        }
+      ],
+      "description": "Detects when vm-dr-01 stops sending heartbeats",
+      "alert_rule_name": "alert-vm-dr-01-heartbeat"
+    }
+  ]
 }
 ```
+
+Each entry in `verdicts[]` includes `execution_id` and `execution_status` from the
+ExecutionGateway — these power the action buttons (📝 Terraform PR, 🤖 Fix by Agent,
+🌐 Azure Portal, ✕ Ignore) shown in the Alerts tab drilldown panel for each finding.
+
+Merges in-memory (active) and durable (historical) records. Cosmos internal fields stripped.
+
+---
+
+### `GET /api/alerts/active-count`
+
+Quick count of non-resolved alerts (status `firing` or `investigating`).
+Used by the sidebar badge to show a live count without fetching all alert data.
+
+**Response:**
+```json
+{ "active_count": 2 }
+```
+
+---
+
+### `GET /api/alerts/{alert_id}/status`
+
+Return the full alert record for one alert. Returns 404 if not found.
+
+**Response:** Same shape as one element of the `alerts` array in `GET /api/alerts`.
+
+---
+
+### `GET /api/alerts/{alert_id}/stream`
+
+SSE stream for real-time investigation progress. Identical pattern to
+`GET /api/scan/{scan_id}/stream` — one JSON event per line, heartbeat every 30s,
+terminates on `alert_resolved` or `alert_error`.
+
+**Events:** `alert_investigating`, `reasoning`, `discovery`, `evaluation`, `verdict`,
+`execution`, `alert_resolved`, `alert_error`.
+
+Returns 404 if no active SSE stream exists for the given alert_id.
 
 ---
 
@@ -396,6 +533,55 @@ Returns **400** if the scan is not currently running.
 ```json
 { "status": "cancellation_requested", "scan_id": "b3e7c1a2-..." }
 ```
+
+---
+
+### `GET /api/scan-history`
+
+Return all scan-run records newest-first. This is the **operational audit log** — one record
+per scan execution (not per governance verdict). Powers the Audit Log tab in the dashboard.
+Use `GET /api/evaluations` for governance-verdict-level data.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `limit` | int | 50 | Max records (1–500) |
+
+**Response:**
+```json
+{
+  "count": 3,
+  "scans": [
+    {
+      "scan_id": "b3e7c1a2-...",
+      "agent_type": "deploy",
+      "status": "complete",
+      "started_at": "2026-03-11T12:00:00+00:00",
+      "completed_at": "2026-03-11T12:00:45+00:00",
+      "proposals_count": 2,
+      "evaluations_count": 2,
+      "scanned_resources_count": 34,
+      "totals": { "approved": 1, "escalated": 0, "denied": 1 },
+      "scanned_resources": [
+        { "id": "/subscriptions/.../resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1", "name": "vm1", "type": "Microsoft.Compute/virtualMachines", "location": "eastus" }
+      ],
+      "proposed_actions": [...],
+      "evaluations": [...],
+      "scan_error": null
+    }
+  ]
+}
+```
+
+Each scan record includes:
+- `scanned_resources[]` — **full list of every Azure resource in scope at scan start time**, snapshotted via `ResourceGraphClient.list_all_async()`. This is what powers the Audit Log drilldown's "X resources examined" view. Each entry has `{id, name, type, location}`.
+- `scanned_resources_count` — precomputed length of `scanned_resources[]` for fast table rendering.
+- `proposed_actions[]` — only resources the agent flagged for governance review (subset of scanned_resources).
+- `evaluations[]` — full governance verdict per proposal.
+
+Cosmos internal fields (`_rid`, `_etag`, etc.) are stripped. Mock mode reads from
+`data/scans/*.json`; live mode queries Cosmos DB with `ORDER BY c.started_at DESC`.
 
 ---
 
@@ -644,7 +830,7 @@ Returns `404` if `execution_id` is unknown, `400` if status is not `manual_requi
 
 ### `GET /api/execution/{execution_id}/agent-fix-preview`
 
-Preview the `az` CLI commands that would fix a `manual_required` issue. Pure read — no side effects.
+Generate the LLM-driven execution plan for a `manual_required` issue. Pure read — no side effects. The plan is stored on `ExecutionRecord.execution_plan` so the execute endpoint can run exactly what was reviewed.
 
 **Response:**
 ```json
@@ -652,8 +838,19 @@ Preview the `az` CLI commands that would fix a `manual_required` issue. Pure rea
   "execution_id": "50823c45-...",
   "action_type": "modify_nsg",
   "resource_id": "/subscriptions/.../nsg-east",
+  "steps": [
+    {
+      "operation": "delete_nsg_rule",
+      "target": "/subscriptions/.../nsg-east",
+      "params": { "resource_group": "rg-prod", "nsg_name": "nsg-east", "rule_name": "AllowAll_Inbound" },
+      "reason": "Rule allows unrestricted inbound traffic"
+    }
+  ],
+  "summary": "Delete insecure NSG rule AllowAll_Inbound from nsg-east",
+  "estimated_impact": "Inbound traffic matching this rule will be blocked",
+  "rollback_hint": "az network nsg rule create ... --name AllowAll_Inbound",
   "commands": ["az network nsg rule delete --resource-group rg-prod --nsg-name nsg-east --name AllowAll_Inbound"],
-  "warning": "These commands will modify your Azure environment. Review carefully before executing."
+  "warning": "These steps will modify your Azure environment. Review carefully before executing."
 }
 ```
 
@@ -697,6 +894,26 @@ Rule name, port, and resource group are parsed automatically from the agent's re
 ```
 
 Returns `404` if `execution_id` is unknown, `400` if no verdict snapshot is stored.
+
+---
+
+### `GET /api/config`
+
+Returns safe system configuration — no secrets exposed.
+
+**Response:**
+```json
+{
+  "mode": "mock",
+  "llm_timeout": 120,
+  "llm_concurrency_limit": 5,
+  "execution_gateway_enabled": true,
+  "use_live_topology": false,
+  "version": "1.0.0"
+}
+```
+
+`mode` is `"live"` when `USE_LOCAL_MOCKS=false` and `AZURE_OPENAI_ENDPOINT` is set; otherwise `"mock"`.
 
 ---
 

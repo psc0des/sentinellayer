@@ -112,7 +112,7 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    MCP-capable agent (Claude Desktop, Copilot, custom agents) can call RuriSkry without
    SDK changes.
 
-4. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses GPT-4.1 as
+4. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses gpt-5-mini as
    an **active decision maker**, not a narrator. The flow: (1) deterministic rules run and produce
    a baseline score; (2) the LLM receives the baseline + full policy definitions + ops agent's
    reasoning; (3) the LLM calls `submit_governance_decision` with an adjusted score and per-adjustment
@@ -163,10 +163,10 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 | Agent | SRI Dimension | Data Source |
 |---|---|---|
-| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` (KQL topology) + GPT-4.1 decision maker · **Mock:** `seed_resources.json` |
-| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies · GPT-4.1 decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports |
-| `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` · GPT-4.1 decision maker |
-| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · GPT-4.1 decision maker · **Mock:** `seed_resources.json` |
+| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` (KQL topology) + gpt-5-mini decision maker · **Mock:** `seed_resources.json` |
+| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies · gpt-5-mini decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports |
+| `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` · gpt-5-mini decision maker |
+| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · gpt-5-mini decision maker · **Mock:** `seed_resources.json` |
 
 All 4 agents follow the same Phase 22 pattern: deterministic baseline → LLM contextual adjustment
 (+/-30 pts guardrail) → adjusted score used in SRI™ composite.
@@ -175,17 +175,13 @@ and `format_adjustment_text()` utilities used by all 4 agents.
 
 ### Operational Agents (the governed — propose actions)
 
-| Agent | What it proposes | Current state |
+| Agent | What it proposes | Scan coverage |
 |---|---|---|
-| `CostOptimizationAgent` | VM downsizing, idle resource deletion | GPT-4.1 — all 5 azure_tools; `scan()` framework-only (returns `[]` when no endpoint); `_scan_rules()` for CI tests |
-| `MonitoringAgent` | SRE anomaly remediation (circular deps, SPOFs, CPU spikes) | GPT-4.1 — all 5 azure_tools; alert-driven + proactive scan modes |
-| `DeployAgent` | NSG deny-all rules, lifecycle tag additions | GPT-4.1 — all 5 azure_tools; generic lifecycle tag logic (no org-specific key names) |
+| `CostOptimizationAgent` | VM downsizing, idle resource deletion, unattached disk deletion, orphaned public IP release | gpt-5-mini — 8 tools (azure_tools). Discovers VMs, AKS, databases, Redis, storage accounts. Flags: deallocated VMs (disk cost with no value, MEDIUM), unattached disks (`diskState=Unattached`, MEDIUM), orphaned public IPs (LOW), over-provisioned SKUs (LOW). Calls `get_resource_health` before proposing deletion — won't delete platform-degraded resources. Calls `list_advisor_recommendations(category=Cost)` for pre-computed Microsoft intelligence. |
+| `MonitoringAgent` | SRE anomaly remediation — VM restarts, scale-ups, AMA extension installs, tag additions | gpt-5-mini — 8 tools (azure_tools). **6-step enterprise proactive scan**: (1) resource discovery via Resource Graph, (2) VM power state check via `get_resource_details` (Compute instance view → `powerState` field) — stopped/deallocated = HIGH `restart_service`, (3) database health, (4) Container Apps & App Services, (5) observability gaps, (6) orphaned resources. Calls `get_resource_health` for platform availability confirmation. Calls `list_advisor_recommendations(category=HighAvailability)`. **Alert-driven mode** handles 5 alert types: A) availability/heartbeat, B) CPU/memory, C) disk/storage, D) database, E) network. |
+| `DeployAgent` | NSG rule hardening, storage security fixes, DB/KV security configs, VM security posture fixes, lifecycle tag additions | gpt-5-mini — 8 tools (azure_tools). **7-domain security audit**: (1) resource discovery, (2) NSG audit, (3) storage security, (4) database & Key Vault, (5) VM security posture, (6) activity log audit, (7) zero-tag governance. Calls `list_advisor_recommendations(category=Security)` for Microsoft Security Center findings. |
 
-**Phase 12 + Phase 15 (complete):** All three agents query real Azure data sources via all
-5 tools in `azure_tools.py` and use GPT-4.1 via `agent-framework-core` to reason about
-context before proposing. `scan()` is framework-only — `_scan_rules()` exists for direct
-test access only.  Environment-agnostic: no hardcoded resource names, tag keys, or
-org-specific assumptions. See the Two-Layer Intelligence Model section below.
+**Phase 12 + Phase 15 + Agent Intelligence Overhaul (2026-03-13, complete):** All three agents query real Azure data sources via 8 tools in `azure_tools.py` and use gpt-5-mini via `agent-framework-core` to reason about context before proposing. Tools include: static config (Resource Graph), runtime metrics (Monitor), VM power state (Compute instance view), network rules (NSG), activity log, Azure Resource Health API, and Azure Advisor API. `scan()` is framework-only — `_scan_rules()` exists for direct test access only. Environment-agnostic: no hardcoded resource names, tag keys, or org-specific assumptions.
 
 ---
 
@@ -197,10 +193,11 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 
 | Service | Used by | Config var | Security posture |
 |---|---|---|---|
-| Azure OpenAI / GPT-4.1 (Foundry) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only; Container App MI has `Cognitive Services OpenAI User` role (`azurerm_role_assignment.foundry_openai_user`) |
+| Azure OpenAI / gpt-5-mini (Foundry) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only; Container App MI has `Cognitive Services OpenAI User` role (`azurerm_role_assignment.foundry_openai_user`) |
 | Azure AI Search | `HistoricalPatternAgent` | `AZURE_SEARCH_ENDPOINT` | — |
 | Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; `network_acl_bypass_for_azure_services=true` |
 | Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` | Managed Identity auth |
+| Azure Cosmos DB — `governance-alerts` | `AlertTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; partition key `/severity` |
 | Azure Cosmos DB — `governance-scan-runs` | `ScanRunTracker` | `COSMOS_CONTAINER_SCAN_RUNS` | Managed Identity auth |
 | Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` | `purge_protection_enabled=false`; `soft_delete_retention_days=7` (set purge protection true in regulated production) |
 | Azure Container Registry | Backend image pull | — | `admin_enabled=false`; User-Assigned MI has `AcrPull` role — no credentials in tfstate. Container App starts with MCR placeholder image; `deploy.sh` swaps to ACR image after role propagates. |
@@ -208,6 +205,7 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 Additional security controls managed by Terraform:
 - **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. The lock `depends_on` all major resources so `terraform destroy` removes it automatically before deleting anything else — no manual step required
 - **Subscription-level Reader** — `azurerm_role_assignment.subscription_reader` grants the Container App's Managed Identity `Reader` at subscription scope for cross-RG Resource Graph scanning
+- **Azure Monitor Action Group** — `azurerm_monitor_action_group.ruriskry` (`terraform-core`) points at `https://<backend-fqdn>/api/alert-trigger`. Attach alert rules to this group (portal or `az monitor metrics alert update --add-action`) so Azure Monitor alerts POST to the backend and trigger automatic governance evaluation
 - **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` with exact origin matching against `DASHBOARD_URL`. The Container App references `azurerm_static_web_app.dashboard.default_host_name` directly in `main.tf` — Terraform creates the SWA first (implicit dependency), reads the URL in-memory, and passes the exact value into `DASHBOARD_URL` in the same apply — no tfvars patching, no re-apply, no stale CORS window, no wildcard patterns needed
 - **Teams webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
 
@@ -225,8 +223,8 @@ agent actions — not the governance system itself.
 
 | Resource | Type | Governance Scenario |
 |---|---|---|
-| `vm-dr-01` | Linux VM (`var.vm_size`, default B2ls_v2) | DENIED — `disaster-recovery=true` policy |
-| `vm-web-01` | Linux VM (`var.vm_size`, default B2ls_v2) | APPROVED — safe CPU-triggered scale-up (cloud-init runs stress-ng cron) |
+| `vm-dr-01` | Linux VM (`var.vm_size`, default B2ls_v2) | DENIED — `disaster-recovery=true` policy. `SystemAssigned` MI + `Monitoring Metrics Publisher` role for AMA telemetry. |
+| `vm-web-01` | Linux VM (`var.vm_size`, default B2ls_v2) | APPROVED — safe CPU-triggered scale-up (cloud-init runs stress-ng cron). `SystemAssigned` MI + `Monitoring Metrics Publisher` role for AMA telemetry. |
 | `payment-api-prod` | App Service F1 (free) | Critical dependency (raises blast radius) |
 | `nsg-east-prod` | Network Security Group | ESCALATED — port 8080 open affects all governed VMs |
 | `ruriskryprod{suffix}` | Storage Account LRS | Shared dependency; deletion = high blast radius |
@@ -266,7 +264,7 @@ Azure Key Vault
 
 | Service | Deployed via | Purpose |
 |---------|-------------|---------|
-| Azure OpenAI / GPT-4.1 (Foundry) | `infrastructure/terraform-core/` | LLM backbone for all 7 agents — project fully Terraform-managed via AzAPI provider |
+| Azure OpenAI / gpt-5-mini (Foundry) | `infrastructure/terraform-core/` | LLM backbone for all 7 agents — project fully Terraform-managed via AzAPI provider |
 | Azure AI Search | `infrastructure/terraform-core/` | Historical incident BM25 search |
 | Azure Cosmos DB | `infrastructure/terraform-core/` | Audit trail + agent registry + scan runs — Managed Identity auth |
 | Azure Key Vault | `infrastructure/terraform-core/` | Runtime secrets — purge protection enabled, 90-day soft-delete |
@@ -288,7 +286,7 @@ Azure Static Web Apps          ← React dashboard (dashboard/)
   ▼
 Azure Container Apps           ← FastAPI + all agents (src/)
   │  HTTPS calls via SDK
-  ├──► Azure OpenAI Foundry    ← GPT-4.1 LLM calls (7 agents)
+  ├──► Azure OpenAI Foundry    ← gpt-5-mini LLM calls (7 agents)
   ├──► Azure AI Search         ← historical incident lookup
   ├──► Azure Cosmos DB         ← audit trail reads/writes
   ├──► Azure Resource Graph    ← live topology queries
@@ -375,21 +373,32 @@ resource before proposing its deletion — and either skip the proposal or expli
 flag the risk in its reason. The exact-match policy is the safety net, not the
 first line of defence. A purely rule-based ops agent is a weak Layer 1.
 
-**Intelligent monitoring-agent — target end-to-end flow:**
+**Intelligent monitoring-agent — actual end-to-end flow (live):**
 ```
-Azure Monitor alert fires (vm-web-01 CPU > 80%)
-    ↓ Logic App webhook
-POST /api/evaluate  (or /api/alert-trigger)
+Azure Monitor alert fires (e.g. vm-dr-01 heartbeat loss, vm-web-01 CPU > 80%)
+    ↓ ag-ruriskry-prod Action Group (terraform-prod, use_common_alert_schema=false)
+POST /api/alert-trigger  ← Azure POSTs Common Alert Schema payload
     ↓
-monitoring-agent queries Azure Monitor for real metric value + duration
+_normalize_azure_alert_payload():
+  • Detects Log Alerts V2: alertTargetID = Log Analytics workspace (not the VM)
+  • Workspace pivot: regex-extracts VM name from essentials.description / alertRule
+  • Constructs correct VM ARM ID → resource_id = /subscriptions/.../vm-dr-01
     ↓
-GPT-4.1 reasons: "CPU 89% sustained 20 min — not a spike.
-                  B4ms covers headroom without over-provisioning."
+MonitoringAgent.scan(alert_payload) — always investigates the right VM
     ↓
-ProposedAction submitted with metric evidence
+gpt-5-mini: "VM deallocated, heartbeat absent. Restart required."
+ProposedAction: restart_service on vm-dr-01
     ↓
-RuriSkry: SRI 11.0 → APPROVED  ✅
+Governance pipeline: SRI 1.5 → APPROVED ✅
+    ↓
+ExecutionGateway.process_verdict() → ExecutionRecord (status=manual_required)
+    ↓ execution_id stored in verdict entry alongside SRI + decision
+Alert record: status=resolved, 1 finding, shown in Alerts tab
+    ↓ AlertPanel drilldown: AlertFindingActions renders action buttons
+📝 Terraform PR  |  🤖 Fix by Agent  |  🌐 Azure Portal  |  ✕ Ignore
 ```
+
+> **Note on Log Alerts V2:** `azurerm_monitor_scheduled_query_rules_alert_v2` always sends the Log Analytics workspace ARM ID as `alertTargetID` (not the monitored VM), and `configurationItems` is always empty when the query returns 0 rows (the "no heartbeat" case). The workspace pivot in `_normalize_azure_alert_payload()` is essential for correct behaviour — without it the agent investigates the workspace and finds nothing actionable ~50% of the time.
 
 ---
 
@@ -490,6 +499,11 @@ ExecutionGateway.route_verdict()
 All `manual_required` and `awaiting_review` records surface a **4-button HITL panel** in
 the dashboard drilldown. The human chooses how to act — nothing executes automatically.
 
+> This same HITL panel applies to **both scan verdicts** (Decisions tab → EvaluationDrilldown)
+> and **alert findings** (Alerts tab → AlertPanel → AlertFindingActions). The `execution_id`
+> is stored in every verdict entry so the dashboard always has a direct link to the
+> ExecutionRecord and can render the correct action buttons.
+
 **Execution model:**
 
 | Verdict | Automatic Step | Dashboard Status | HITL Panel |
@@ -501,7 +515,7 @@ the dashboard drilldown. The human chooses how to act — nothing executes autom
 **4-button HITL panel options** (same panel for both APPROVED and ESCALATED):
 1. **Create Terraform PR** — generates branch + HCL patch + GitHub PR on demand
 2. **Open in Azure Portal** — direct link to the affected resource
-3. **Fix using Agent** — two-step: preview `az`-equivalent commands → user confirms → Azure SDK executes
+3. **Fix using Agent** — LLM-driven two-phase execution: Plan (LLM reads resource state → structured steps table) → human reviews → Execute (LLM calls Azure SDK write tools step-by-step, fail-stop on error)
 4. **Decline / Ignore** — marks record as `dismissed`; stops re-proposing
 
 **IaC tag metadata** is stored on the `ExecutionRecord` at routing time (from `managed_by`,
@@ -524,17 +538,19 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 - **HITL always exists** — every action requires a human choice in the dashboard
 - **ESCALATED auto-approved by action** — choosing any panel button on an `awaiting_review` record transitions it to `manual_required` then executes; no separate approval step
 - **Dedup on route** — `route_verdict()` checks for an existing `manual_required` record for the same `(resource_id, action_type)` before creating a new one; prevents duplicate entries on re-scan
-- **Lifecycle tracking** — `ExecutionRecord` tracks: pending → manual_required / pr_created / awaiting_review → applied / dismissed
+- **Lifecycle tracking** — `ExecutionRecord` tracks: pending → manual_required / pr_created / awaiting_review → applied / dismissed / rolled_back
 - **Durable state** — `ExecutionRecord` persisted as JSON in `data/executions/`; survives restarts
-- **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Decline / Ignore** or the agent stops flagging it. `pr_created`, `awaiting_review`, `blocked`, `dismissed`, and `applied` records are excluded.
+- **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Decline / Ignore** or the agent stops flagging it. `pr_created`, `awaiting_review`, `blocked`, `dismissed`, `applied`, and `rolled_back` records are excluded.
+- **Dedup `action_id` update** — when a resource is re-scanned and an existing `manual_required` record is found for the same `(resource_id, action_type)`, the record's `action_id` is updated to the latest verdict's `action_id` before returning. This ensures the drilldown's `by-action` lookup always resolves to the live execution record.
+- **Rollback** — after a fix is applied (`status=applied`), `ExecutionGateway.rollback_agent_fix()` calls `ExecutionAgent.rollback()`, sets `status → rolled_back`, and stores `rollback_log`. Mock path maps each `ActionType` to its deterministic inverse (RESTART→deallocate, SCALE_UP/DOWN→resize back, NSG→restore rule, DELETE→cannot auto-rollback). Live path is LLM-driven using `rollback_hint` from the stored plan. The dashboard shows an amber ↩ Rollback button next to the Applied badge in both `EvaluationDrilldown` and `Alerts`.
 - **NSG rule auto-dismiss** — when a scan finds resource `nsg-east-prod` clean, the system dismisses all `manual_required` records whose ARM ID contains `/securityRules/` with that NSG as parent. The parent name is extracted from the ARM ID segment before `/securityRules/`.
 - **Deterministic historical boost** — `HistoricalPatternAgent._governance_history_boost()` reads `DecisionTracker.get_recent(50)` and adds +25 per prior ESCALATED / +5 per prior APPROVED for the same `action_type` (cap +60). Ensures consistent ESCALATED routing when Azure AI Search BM25 returns sparse results.
 
-**Files:** `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
+**Files:** `src/core/execution_agent.py` (Phase 28/29/30 — LLM plan + execute + verify + rollback), `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
 **Endpoints:** `GET /api/execution/pending-reviews`, `GET /api/execution/by-action/{action_id}`,
 `POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`,
 `POST /api/execution/{id}/create-pr`, `GET /api/execution/{id}/agent-fix-preview`,
-`POST /api/execution/{id}/agent-fix-execute`
+`POST /api/execution/{id}/agent-fix-execute`, `POST /api/execution/{id}/rollback`, `GET /api/config`
 **Env vars:** `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`
 **Implementation guide:** `Adding-Terraform-Feature.md`
 
@@ -613,7 +629,7 @@ DecisionExplainer.explain(verdict, action)
     ├── _extract_policy_violations() → from agent_results["policy"]
     ├── _build_risk_highlights()   → natural-language risk callouts
     ├── _build_counterfactuals()   → 3 "what would change this?" scenarios per verdict type
-    └── _try_llm_summary()         → GPT-4.1 plain-English summary (template fallback in mock)
+    └── _try_llm_summary()         → gpt-5-mini plain-English summary (template fallback in mock)
     ↓
 DecisionExplanation (cached by action_id)
 ```
@@ -626,7 +642,7 @@ DecisionExplanation (cached by action_id)
 **Frontend — EvaluationDrilldown.jsx (6 sections):**
 1. Verdict header — large badge, SRI composite score, resource/agent/timestamp
 2. SRI™ Dimensional Breakdown — 4 horizontal bars, ⭐ marks the primary factor
-3. Decision Explanation — GPT-4.1 summary, primary factor callout, risk highlights, policy violations
+3. Decision Explanation — gpt-5-mini summary, primary factor callout, risk highlights, policy violations
 4. Counterfactual Analysis — score-transition cards ("X.X → Y.Y → VERDICT pill")
 5. Agent Reasoning — proposing agent's reason + per-governance-agent assessments
 6. Audit Trail — UUID, timestamp, collapsible raw JSON
@@ -648,8 +664,10 @@ src/
 │   ├── governance_engine.py   # SRI composite + verdict logic
 │   ├── decision_tracker.py    # Audit trail → Cosmos DB / JSON (verdicts)
 │   ├── scan_run_tracker.py    # Scan-run lifecycle → Cosmos DB / JSON (scan records)
+│   ├── alert_tracker.py       # Alert investigation lifecycle → Cosmos DB / JSON (alert records)
 │   ├── explanation_engine.py  # DecisionExplainer — factors, counterfactuals, LLM summary
-│   ├── execution_gateway.py   # Verdict→IaC routing; HITL approval; JSON-durable records
+│   ├── execution_agent.py     # LLM-driven execution — plan() + execute() + verify() + rollback() four-phase agent
+│   ├── execution_gateway.py   # Verdict→IaC routing; HITL approval; delegates to ExecutionAgent; list_all()
 │   ├── terraform_pr_generator.py # GitHub PR creation via PyGithub (asyncio.to_thread)
 │   └── interception.py        # ActionInterceptor façade (async)
 ├── governance_agents/         # 4 governors — all async def evaluate()
@@ -661,42 +679,49 @@ src/
 ├── mcp_server/server.py       # FastMCP stdio — skry_evaluate_action (async)
 ├── notifications/             # Outbound alerting (Phase 17)
 │   └── teams_notifier.py      # Adaptive Card → Teams webhook on DENIED/ESCALATED; fire-and-forget
-├── api/dashboard_api.py       # FastAPI REST — 18 async endpoints (evaluations, agents,
-│                              #   scan triggers, SSE stream, cancel, last-run,
-│                              #   notification-status, test-notification, explanation)
+├── api/dashboard_api.py       # FastAPI REST — 33 async endpoints (evaluations, agents,
+│                              #   scan triggers, alerts lifecycle, SSE streams, cancel,
+│                              #   last-run, notification-status, test-notification, explanation, HITL)
 ├── infrastructure/            # Azure clients with mock fallback
-│   ├── azure_tools.py         # 5 sync tools + 5 async variants (*_async): Resource Graph, metrics, NSG, activity log; mock fallbacks
+│   ├── azure_tools.py         # 5 sync + 7 async tools: Resource Graph, metrics, NSG, activity log,
+│   │                          #   get_resource_details (+ VM powerState via Compute instance view),
+│   │                          #   get_resource_health_async (Resource Health API — Available/Unavailable),
+│   │                          #   list_advisor_recommendations_async (Azure Advisor); mock fallbacks
 │   ├── resource_graph.py      # Live: _azure_enrich_topology() — tags + KQL topology + cost_lookup
 │   ├── cost_lookup.py         # Azure Retail Prices API — SKU→monthly cost; no auth; module-level cache
 │   ├── llm_throttle.py        # asyncio.Semaphore + exponential backoff for Azure OpenAI rate limits
 │   ├── cosmos_client.py       # Cosmos DB decisions client (live: CosmosClient; mock: JSON files)
 │   ├── search_client.py       # Azure AI Search client (live: BM25 full-text; mock: keyword matching)
-│   ├── openai_client.py       # Azure OpenAI / GPT-4.1 client (live: Responses API; mock: canned string)
+│   ├── openai_client.py       # Azure OpenAI / gpt-5-mini client (live: Responses API; mock: canned string)
 │   └── secrets.py             # Key Vault secret resolver (env → KV → empty string)
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
 dashboard/
 └── src/
     ├── pages/
-    │   ├── Overview.jsx          # Landing: NumberTicker metrics, gradient SRI AreaChart, pending reviews, scan history
+    │   ├── Overview.jsx          # Landing: NumberTicker metrics, gradient SRI AreaChart, AlertsCard (rose glow if firing), ExecutionMetricsCard, pending reviews, scan history
     │   ├── Scans.jsx             # Scan trigger panel + scan history table
     │   ├── Agents.jsx            # ConnectedAgents wrapper page
     │   ├── Decisions.jsx         # DecisionTable + EvaluationDrilldown (breadcrumb nav)
-    │   └── AuditLog.jsx          # Chronological audit log with filters + CSV/JSON export
+    │   ├── Alerts.jsx             # Azure Monitor alert investigations — table + severity/status filters + drilldown panel;
+    │   │                          #   AlertFindingActions: per-finding action buttons (📝 Terraform PR, 🤖 Fix by Agent,
+    │   │                          #   🌐 Azure Portal, ✕ Ignore) — same HITL flow as scan verdicts, driven by execution_id
+    │   ├── AuditLog.jsx          # Scan-level operational audit log with filters + CSV/JSON export
+    │   └── Admin.jsx             # Admin panel — System Configuration card (mode/timeout/concurrency/flags) + Danger Zone (Reset)
     ├── components/
     │   ├── magicui/
     │   │   ├── NumberTicker.jsx  # Count-up animation (RAF + easeOutQuart); used on metric cards
     │   │   ├── GlowCard.jsx      # Card wrapper: color-coded glow + backdrop-blur glass + border beam + urgent pulse
     │   │   ├── VerdictBadge.jsx  # Dot + pill verdict labels (emerald/amber/rose) with glow; used sitewide
     │   │   └── TableSkeleton.jsx # Shimmer placeholder rows for tables while data loads
-    │   ├── Sidebar.jsx           # Left nav: teal breathe logo, animated active indicator, amber urgency pulse on Decisions
+    │   ├── Sidebar.jsx           # Left nav: teal breathe logo, animated active indicator, amber urgency pulse on Decisions, red alert count badge, Settings gear + Admin link at bottom
     │   ├── DecisionTable.jsx     # Sortable/filterable/paginated verdict table + CSV/JSON export
     │   ├── ConnectedAgents.jsx   # Agent card grid (GlowCard): ⋮ menu, scan/log/results/history/details panels
-    │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel
+    │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge)
     │   ├── AgentControls.jsx     # Scan trigger panel: per-agent buttons, RG filter, 2 s polling
     │   ├── LiveLogPanel.jsx      # SSE slide-out log: 9 event type styles, auto-scroll
     │   └── LiveActivityFeed.jsx  # Real-time verdict feed; rows open EvaluationDrilldown
     ├── index.css                 # Design token system (CSS :root vars) + all keyframes (breathe/urgentPulse/scanBeam/fadeInUp) + utility classes (.animate-breathe, .animate-urgent-pulse, .bg-dots, .metric-value, .shimmer)
-    └── App.jsx                   # Router shell: bg-dots dot-grid on content area, --font-ui/--bg-base tokens applied
+    └── App.jsx                   # Router shell: bg-dots dot-grid on content area, --font-ui/--bg-base tokens applied; routes include /admin
 data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── decisions/                 # Governance verdict audit trail (mock mode)

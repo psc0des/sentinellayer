@@ -57,14 +57,14 @@ function scanDuration(started, completed) {
 const AGENT_NAMES = ['cost-optimization-agent', 'monitoring-agent', 'deploy-agent']
 const AGENT_LABELS = {
   'cost-optimization-agent': 'Cost',
-  'monitoring-agent':        'SRE',
+  'monitoring-agent':        'Monitoring',
   'deploy-agent':            'Deploy',
 }
 const AGENT_TYPE_LABELS = {
   cost:       'Cost',
-  monitoring: 'SRE',
+  monitoring: 'Monitoring',
   deploy:     'Deploy',
-  sre:        'SRE',
+  sre:        'Monitoring',
 }
 
 // ── Custom tooltip for SRI chart ───────────────────────────────────────────

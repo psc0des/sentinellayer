@@ -9,12 +9,16 @@ GET  /api/resources/{id}/risk      Risk profile for one resource.
 GET  /api/agents                   List all connected A2A agents with stats.
 GET  /api/agents/{name}/history    Recent action history for one A2A agent.
 GET  /api/agents/{name}/last-run   Most recent scan results for one agent.
-POST /api/alert-trigger            Receive Azure Monitor alert → trigger MonitoringAgent
-                                   → evaluate proposals → return verdicts.
+POST /api/alert-trigger            Receive Azure Monitor alert → async investigation + SSE.
+GET  /api/alerts                   List all alert records newest-first.
+GET  /api/alerts/active-count      Count of currently firing/investigating alerts.
+GET  /api/alerts/{alert_id}/status Full detail for one alert.
+GET  /api/alerts/{alert_id}/stream SSE stream of real-time investigation progress.
 POST /api/scan/cost                Trigger cost optimisation agent scan.
 POST /api/scan/monitoring          Trigger SRE monitoring agent scan.
 POST /api/scan/deploy              Trigger infrastructure deploy agent scan.
 POST /api/scan/all                 Trigger all 3 agents simultaneously.
+GET  /api/scan-history              List all scan runs newest-first — operational audit log.
 GET  /api/scan/{scan_id}/status    Check if a scan is complete + retrieve results.
 GET  /api/scan/{scan_id}/stream    SSE stream of real-time scan progress events.
 PATCH /api/scan/{scan_id}/cancel   Request cancellation of a running scan.
@@ -25,6 +29,8 @@ POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
 POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual_required record.
 GET  /api/execution/{execution_id}/agent-fix-preview  Preview az CLI fix commands.
 POST /api/execution/{execution_id}/agent-fix-execute  Execute az CLI fix commands.
+POST /api/execution/{execution_id}/rollback           Reverse a previously applied agent fix.
+GET  /api/config                                  Safe system configuration — mode, timeouts, feature flags.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
 
 Run
@@ -53,6 +59,7 @@ from src.core.execution_gateway import ExecutionGateway
 from src.core.models import (
     ActionTarget,
     ActionType,
+    ExecutionStatus,
     GovernanceVerdict,
     ProposedAction,
     SRIBreakdown,
@@ -179,6 +186,7 @@ _tracker: DecisionTracker | None = None
 _registry: AgentRegistry | None = None
 _scan_tracker: ScanRunTracker | None = None
 _execution_gateway: ExecutionGateway | None = None
+_alert_tracker = None  # AlertTracker | None — lazy import to avoid circular deps
 
 # ---------------------------------------------------------------------------
 # Scan request model + in-memory scan store
@@ -208,6 +216,13 @@ _scan_events: dict[str, asyncio.Queue] = {}
 
 # Scan IDs whose background tasks should stop at the next checkpoint.
 _scan_cancelled: set[str] = set()
+
+# ---------------------------------------------------------------------------
+# Alert in-memory state (mirrors _scans pattern)
+# ---------------------------------------------------------------------------
+
+_alerts: dict[str, dict] = {}
+_alert_events: dict[str, asyncio.Queue] = {}
 
 # Map from A2A agent name → scan agent_type.
 _AGENT_TYPE_MAP: dict[str, str] = {
@@ -255,6 +270,42 @@ async def _emit_event(scan_id: str, event_type: str, **kwargs: Any) -> None:
         _get_scan_tracker().record_event(scan_id, timestamp)
 
 
+async def _snapshot_scanned_resources(resource_group: str | None) -> list[dict]:
+    """Return a compact list of all Azure resources currently in scope.
+
+    Called once per scan before the agent runs.  In live mode this queries
+    Azure Resource Graph; in mock mode it reads seed_resources.json.
+
+    Only minimal fields are kept (id, name, type, location) so the scan record
+    stays compact.  Errors are swallowed — a Resource Graph failure must never
+    abort a scan.
+    """
+    try:
+        from src.infrastructure.resource_graph import ResourceGraphClient  # noqa: PLC0415
+        client = ResourceGraphClient()
+        all_resources = await client.list_all_async()
+        snapshot = []
+        for r in all_resources:
+            if not r.get("id") and not r.get("name"):
+                continue
+            entry: dict = {
+                "id":       r.get("id", ""),
+                "name":     r.get("name", ""),
+                "type":     r.get("type", ""),
+                "location": r.get("location", ""),
+            }
+            if resource_group:
+                # Filter to the scoped RG when one was specified
+                rg_in_id = (f"/resourceGroups/{resource_group}/").lower()
+                if rg_in_id not in entry["id"].lower():
+                    continue
+            snapshot.append(entry)
+        return snapshot
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_snapshot_scanned_resources: failed — %s", exc)
+        return []
+
+
 async def _run_agent_scan(
     scan_id: str,
     agent_type: str,
@@ -285,6 +336,17 @@ async def _run_agent_scan(
         agent=agent_type,
         resource_group=rg_label,
         message=f"Starting {agent_type} scan for resource_group={rg_label}",
+    )
+
+    # Snapshot all resources in scope now, before the agent runs.
+    # This gives the Audit Log a complete picture of what was examined —
+    # not just the resources that were flagged.
+    scanned_resources = await _snapshot_scanned_resources(resource_group)
+    _scans[scan_id]["scanned_resources"] = scanned_resources
+    _persist_scan_record(scan_id)
+    logger.info(
+        "scan %s (%s): resource snapshot — %d resources in scope",
+        scan_id[:8], agent_type, len(scanned_resources),
     )
 
     try:
@@ -698,6 +760,46 @@ def _get_execution_gateway() -> ExecutionGateway:
     return _execution_gateway
 
 
+def _get_alert_tracker():
+    """Return the durable alert tracker singleton."""
+    global _alert_tracker  # noqa: PLW0603
+    if _alert_tracker is None:
+        from src.core.alert_tracker import AlertTracker
+        _alert_tracker = AlertTracker()
+    return _alert_tracker
+
+
+def _persist_alert_record(alert_id: str) -> None:
+    """Persist the current in-memory alert record."""
+    record = _alerts.get(alert_id)
+    if record is None:
+        return
+    payload = {"id": alert_id, "alert_id": alert_id, **record}
+    _get_alert_tracker().upsert(payload)
+
+
+def _get_alert_record(alert_id: str) -> dict | None:
+    """Read alert record from memory first, then durable store."""
+    record = _alerts.get(alert_id)
+    if record is not None:
+        return record
+    return _get_alert_tracker().get(alert_id)
+
+
+async def _emit_alert_event(alert_id: str, event_type: str, **kwargs: Any) -> None:
+    """Push one event onto the per-alert SSE queue."""
+    timestamp = datetime.now(timezone.utc).isoformat()
+    event = {
+        "event": event_type,
+        "timestamp": timestamp,
+        "alert_id": alert_id,
+        **kwargs,
+    }
+    queue = _alert_events.get(alert_id)
+    if queue is not None:
+        await queue.put(event)
+
+
 def _persist_scan_record(scan_id: str) -> None:
     """Persist the current in-memory record for one scan_id."""
     record = _scans.get(scan_id)
@@ -815,6 +917,11 @@ async def get_metrics() -> dict:
                 "deterministic_evaluations": 0,
                 "full_evaluations": 0,
             },
+            "executions": {
+                "total": 0, "applied": 0, "failed": 0, "pr_created": 0,
+                "dismissed": 0, "pending": 0,
+                "agent_fix_rate": 0.0, "success_rate": 0.0,
+            },
         }
 
     total = len(records)
@@ -892,6 +999,26 @@ async def get_metrics() -> dict:
     llm_calls_saved = tier_counts["tier_1"] * 4
     deterministic_count = sum(1 for r in records if r.get("triage_mode") == "deterministic")
 
+    # --- Execution gateway stats ---
+    gateway = _get_execution_gateway()
+    all_exec = gateway.list_all()
+    exec_applied   = sum(1 for r in all_exec if r.status == ExecutionStatus.applied)
+    exec_failed    = sum(1 for r in all_exec if r.status == ExecutionStatus.failed)
+    exec_pr        = sum(1 for r in all_exec if r.status in (ExecutionStatus.pr_created, ExecutionStatus.pr_merged))
+    exec_dismissed = sum(1 for r in all_exec if r.status == ExecutionStatus.dismissed)
+    exec_pending   = sum(1 for r in all_exec if r.status in (ExecutionStatus.manual_required, ExecutionStatus.awaiting_review))
+    agent_tried    = exec_applied + exec_failed
+    executions_block = {
+        "total":         len(all_exec),
+        "applied":       exec_applied,
+        "failed":        exec_failed,
+        "pr_created":    exec_pr,
+        "dismissed":     exec_dismissed,
+        "pending":       exec_pending,
+        "agent_fix_rate": round(exec_applied / agent_tried * 100, 1) if agent_tried else 0.0,
+        "success_rate":   round(exec_applied / agent_tried * 100, 1) if agent_tried else 0.0,
+    }
+
     return {
         "total_evaluations": total,
         "decisions": counts,
@@ -907,6 +1034,7 @@ async def get_metrics() -> dict:
             "deterministic_evaluations": deterministic_count,
             "full_evaluations": total - deterministic_count,
         },
+        "executions": executions_block,
     }
 
 
@@ -1050,24 +1178,275 @@ async def get_agent_last_run(agent_name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 8 — alert webhook trigger
+# Endpoint 8 — alert webhook trigger (async with SSE + dashboard visibility)
 # ---------------------------------------------------------------------------
 
 
+async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
+    """Background coroutine: investigate one Azure Monitor alert.
+
+    Mirrors ``_run_agent_scan()`` pattern — creates SSE events, persists
+    state transitions, and writes governance verdicts to the audit trail.
+    """
+    from src.operational_agents.monitoring_agent import MonitoringAgent
+    from src.core.pipeline import RuriSkryPipeline
+
+    resource_id = alert_payload.get("resource_id", "unknown")
+    metric = alert_payload.get("metric", "unknown")
+    logger.info("alert %s: investigating — resource=%s metric=%s", alert_id[:8], resource_id, metric)
+
+    # Transition: firing → investigating
+    _alerts[alert_id]["status"] = "investigating"
+    _alerts[alert_id]["investigating_at"] = datetime.now(timezone.utc).isoformat()
+    _persist_alert_record(alert_id)
+    await _emit_alert_event(alert_id, "alert_investigating", message=f"Agent investigating {resource_id}")
+
+    try:
+        agent = MonitoringAgent()
+        proposals = await agent.scan(alert_payload=alert_payload)
+
+        # Emit scan notes for SSE visibility
+        for note in getattr(agent, "scan_notes", []):
+            await _emit_alert_event(alert_id, "reasoning", message=note)
+
+        logger.info("alert %s: %d proposal(s) from agent", alert_id[:8], len(proposals))
+        await _emit_alert_event(
+            alert_id, "discovery",
+            count=len(proposals),
+            message=f"Agent found {len(proposals)} actionable finding(s).",
+        )
+
+        # Evaluate each proposal through the governance pipeline
+        pipeline = RuriSkryPipeline()
+        tracker = _get_tracker()
+        verdicts: list[dict] = []
+        approved = escalated = denied = 0
+
+        for i, action in enumerate(proposals, start=1):
+            resource_name = action.target.resource_id.split("/")[-1]
+            await _emit_alert_event(
+                alert_id, "evaluation",
+                index=i, total=len(proposals),
+                resource_id=resource_name,
+                message=f"[{i}/{len(proposals)}] Evaluating {resource_name}…",
+            )
+
+            verdict = await pipeline.evaluate(action)
+            decision = verdict.decision.value
+            sri = verdict.skry_risk_index.sri_composite
+
+            await _emit_alert_event(
+                alert_id, "verdict",
+                resource_id=resource_name,
+                decision=decision,
+                sri_composite=sri,
+                message=f"Verdict: {decision.upper()} (SRI {sri:.1f}) — {resource_name}",
+            )
+
+            tracker.record(verdict)
+
+            # Route through execution gateway
+            exec_id: str | None = None
+            exec_status_val: str | None = None
+            try:
+                resource_tags = await _get_resource_tags(action.target.resource_id)
+                exec_record = await _get_execution_gateway().process_verdict(verdict, resource_tags)
+                exec_id = exec_record.execution_id
+                exec_status_val = exec_record.status.value
+                await _emit_alert_event(
+                    alert_id, "execution",
+                    resource_id=resource_name,
+                    execution_status=exec_status_val,
+                    message=f"Execution: {exec_status_val}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("alert %s: execution gateway failed — %s", alert_id[:8], exc)
+
+            # Store verdict + execution linkage so the dashboard can show action buttons
+            verdicts.append({
+                **verdict.model_dump(mode="json"),
+                "execution_id": exec_id,
+                "execution_status": exec_status_val,
+            })
+            if decision == "approved":
+                approved += 1
+            elif decision == "escalated":
+                escalated += 1
+            else:
+                denied += 1
+
+            # Update agent registry stats
+            registry_name = _AGENT_REGISTRY_NAMES.get("monitoring")
+            if registry_name:
+                _get_registry().update_agent_stats(registry_name, decision)
+
+        # Transition: investigating → resolved
+        _alerts[alert_id].update({
+            "status": "resolved",
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "proposals_count": len(proposals),
+            "proposals": [p.model_dump(mode="json") for p in proposals],
+            "verdicts": verdicts,
+            "totals": {"approved": approved, "escalated": escalated, "denied": denied},
+        })
+        _persist_alert_record(alert_id)
+
+        summary = f"{approved} approved, {escalated} escalated, {denied} denied"
+        logger.info("alert %s: resolved — %d verdicts (%s)", alert_id[:8], len(verdicts), summary)
+        await _emit_alert_event(
+            alert_id, "alert_resolved",
+            total_verdicts=len(verdicts),
+            summary=summary,
+            message=f"Alert resolved — {len(verdicts)} verdict(s): {summary}",
+        )
+
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("alert %s: investigation failed — %s", alert_id[:8], exc)
+        _alerts[alert_id].update({
+            "status": "error",
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "error": str(exc),
+        })
+        _persist_alert_record(alert_id)
+        await _emit_alert_event(alert_id, "alert_error", message=f"Investigation failed: {exc}")
+
+
+def _normalize_azure_alert_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise an Azure Monitor webhook payload to our flat internal format.
+
+    Handles three shapes:
+    1. Already-flat format  (resource_id / metric keys at top level) — pass-through.
+    2. Common Alert Schema  (data.essentials + data.alertContext)
+       — used by scheduled-query (Log Alert) rules when use_common_alert_schema=true.
+    3. Non-common Log Alert schema  (schemaId = Microsoft.Insights/scheduledQueryRules)
+       — used when use_common_alert_schema=false (our default).
+
+    Returns a dict with keys:  resource_id, metric, value, threshold, severity,
+                                resource_group, fired_at, alert_rule_name.
+    All keys default to "" / None when not present in the source.
+    """
+    # Already flat — no Azure Monitor envelope
+    if "resource_id" in raw or "metric" in raw:
+        return raw
+
+    essentials = raw.get("data", {}).get("essentials", {})
+    ctx = raw.get("data", {}).get("alertContext", {})
+
+    # ── resolve resource identifier ──────────────────────────────────────────
+    # Scheduled-query rules report AffectedConfigurationItems (VM names) and
+    # alertTargetIDs (workspace ARM IDs) — prefer the config item (the actual VM).
+    config_items: list = ctx.get("AffectedConfigurationItems") or essentials.get("configurationItems") or []
+    target_ids: list = essentials.get("alertTargetIDs") or []
+    if config_items:
+        resource_id = config_items[0]
+    elif target_ids:
+        resource_id = target_ids[0]
+    else:
+        resource_id = essentials.get("targetResourceName", "")
+
+    # ── Log Analytics workspace pivot ────────────────────────────────────────
+    # For Log Alerts V2 (azurerm_monitor_scheduled_query_rules_alert_v2), Azure
+    # always reports the *workspace* as alertTargetID, not the monitored VM.
+    # When the query fires because count = 0 (e.g. no heartbeat), there are no
+    # result rows, so configurationItems is also empty.
+    # Workaround: when resource_id is a Log Analytics workspace, try to extract
+    # the actual affected resource name from the alert description or rule name
+    # using a regex for common Azure resource naming patterns (vm-*, web-*, etc).
+    # If found and we have the subscription + resource group, construct a full
+    # VM ARM ID so the MonitoringAgent investigates the right resource.
+    if "operationalinsights/workspaces" in resource_id.lower():
+        import re as _re
+        description = essentials.get("description", "")
+        rule_name   = essentials.get("alertRule", "")
+        # Match typical Azure resource name patterns: vm-dr-01, web-server-01, etc.
+        _hint = (_re.search(r'\b([a-z][a-z0-9]+-[a-z0-9][-a-z0-9]*)\b', description, _re.I)
+                 or _re.search(r'\b([a-z][a-z0-9]+-[a-z0-9][-a-z0-9]*)\b', rule_name, _re.I))
+        if _hint:
+            _name = _hint.group(1)
+            # Extract subscription ID and resource group directly from workspace ARM ID:
+            # /subscriptions/{sub}/resourceGroups/{rg}/providers/...
+            _parts = resource_id.split("/")
+            _sub = _parts[2] if len(_parts) > 2 else ""
+            _rg  = _parts[4] if len(_parts) > 4 else essentials.get("targetResourceGroup", "")
+            if _sub and _rg:
+                resource_id = (
+                    f"/subscriptions/{_sub}/resourceGroups/{_rg}"
+                    f"/providers/Microsoft.Compute/virtualMachines/{_name}"
+                )
+                logger.info(
+                    "alert-normalizer: workspace pivot → extracted resource '%s' from description/rule",
+                    _name,
+                )
+
+    # ── resource group ────────────────────────────────────────────────────────
+    # Try to extract from ARM ID; fall back to essentials field.
+    resource_group = ""
+    arm_candidate = target_ids[0] if target_ids else resource_id
+    parts = arm_candidate.lower().split("/")
+    if "resourcegroups" in parts:
+        idx = parts.index("resourcegroups")
+        if idx + 1 < len(parts):
+            resource_group = arm_candidate.split("/")[idx + 1]
+    if not resource_group:
+        resource_group = essentials.get("targetResourceGroup", "")
+
+    # ── metric / signal details ───────────────────────────────────────────────
+    # Metric alerts:  ctx.Condition.{metricName, metricValue, threshold}
+    # Log alerts:     ctx.{SearchQuery, Threshold, Operator, ResultCount}
+    condition = ctx.get("condition") or ctx.get("Condition") or {}
+    metric = (
+        condition.get("metricName")
+        or (condition.get("allOf") or [{}])[0].get("metricName", "")
+        if condition
+        else (
+            # Log alerts: prefer the human-readable rule name over the raw KQL query
+            essentials.get("alertRule", "")
+            or ctx.get("SearchQuery", essentials.get("monitoringService", ""))
+        )
+    )
+    value = condition.get("metricValue") if condition else ctx.get("ResultCount")
+    threshold = (
+        condition.get("threshold")
+        or (condition.get("allOf", [{}])[0].get("threshold") if condition else None)
+        or ctx.get("Threshold")
+    )
+
+    # ── severity ─────────────────────────────────────────────────────────────
+    # essentials.severity format: "Sev0" – "Sev4"  →  strip "Sev" prefix
+    sev_raw = essentials.get("severity", "3")
+    severity = sev_raw.replace("Sev", "").replace("sev", "") if isinstance(sev_raw, str) else str(sev_raw)
+
+    return {
+        "resource_id": resource_id,
+        "resource_name": resource_id.split("/")[-1] if "/" in resource_id else resource_id,
+        "metric": metric or essentials.get("alertRule", ""),
+        "value": value,
+        "threshold": threshold,
+        "severity": severity,
+        "resource_group": resource_group,
+        "fired_at": essentials.get("firedDateTime", ""),
+        "alert_rule_name": essentials.get("alertRule", ""),
+        "description": essentials.get("description", ""),
+        # Keep raw payload so the agent gets full context
+        "_raw_azure_payload": raw,
+    }
+
+
 @app.post("/api/alert-trigger")
-async def trigger_alert(alert: dict[str, Any]) -> dict:
-    """Receive an Azure Monitor alert and trigger the monitoring agent.
+async def trigger_alert(
+    alert: dict[str, Any],
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Receive an Azure Monitor alert and trigger async investigation.
 
     This endpoint acts as an Azure Monitor Action Group webhook target.
     When a metric alert fires (e.g. CPU > 80 % on vm-web-01), Azure POSTs
-    the alert details here.  RuriSkry then:
+    the alert details here.  RuriSkry creates an alert record (status
+    ``firing``), launches the investigation in the background, and returns
+    immediately so the webhook does not time out.
 
-    1. Passes the alert to the ``MonitoringAgent`` for investigation.
-    2. The agent queries real metrics, confirms the alert, and produces
-       evidence-backed ``ProposedAction`` objects.
-    3. Each proposal is evaluated by the full RuriSkry governance
-       pipeline (SRI scoring → APPROVED / ESCALATED / DENIED).
-    4. All verdicts are returned and written to the audit trail.
+    The dashboard ``Alerts`` tab polls ``GET /api/alerts`` or subscribes to
+    ``GET /api/alerts/{alert_id}/stream`` for real-time SSE updates.
 
     Request body (JSON)::
 
@@ -1083,38 +1462,156 @@ async def trigger_alert(alert: dict[str, Any]) -> dict:
     All fields are optional — the agent can work with minimal context.
 
     Returns:
-        Dict containing the original alert, list of proposals, and list of
-        governance verdicts (each with decision, SRI composite, and reason).
+        ``{"status": "firing", "alert_id": "<uuid>"}`` — immediately.
     """
-    from src.operational_agents.monitoring_agent import MonitoringAgent
-    from src.core.pipeline import RuriSkryPipeline
+    alert = _normalize_azure_alert_payload(alert)
+    now = datetime.now(timezone.utc).isoformat()
+    alert_id = str(uuid.uuid4())
+    resource_id = alert.get("resource_id", "")
+    resource_name = alert.get("resource_name") or (resource_id.split("/")[-1] if "/" in resource_id else resource_id)
 
-    logger.info("alert-trigger: received alert — %s", alert)
+    # Check for duplicate: same resource + metric already firing/investigating
+    for existing in _alerts.values():
+        if (
+            existing.get("status") in ("firing", "investigating")
+            and existing.get("resource_id") == resource_id
+            and existing.get("metric") == alert.get("metric")
+        ):
+            logger.info(
+                "alert-trigger: duplicate for %s/%s — returning existing %s",
+                resource_id, alert.get("metric"), existing.get("alert_id"),
+            )
+            return {
+                "status": existing["status"],
+                "alert_id": existing["alert_id"],
+                "duplicate": True,
+            }
 
-    agent = MonitoringAgent()
-    proposals = await agent.scan(alert_payload=alert)
-
-    pipeline = RuriSkryPipeline()
-    tracker = _get_tracker()
-    verdicts: list[dict] = []
-
-    for action in proposals:
-        verdict = await pipeline.evaluate(action)
-        tracker.record(verdict)
-        verdicts.append(verdict.model_dump(mode="json"))
-
-    logger.info(
-        "alert-trigger: %d proposals evaluated — %s",
-        len(proposals),
-        [v.get("decision") for v in verdicts],
-    )
-
-    return {
-        "alert": alert,
-        "proposals_count": len(proposals),
-        "proposals": [p.model_dump(mode="json") for p in proposals],
-        "verdicts": verdicts,
+    # Create alert record
+    record: dict[str, Any] = {
+        "alert_id": alert_id,
+        "status": "firing",
+        "resource_id": resource_id,
+        "resource_name": resource_name,
+        "metric": alert.get("metric", ""),
+        "value": alert.get("value"),
+        "threshold": alert.get("threshold"),
+        "severity": str(alert.get("severity", "3")),
+        "resource_group": alert.get("resource_group", ""),
+        "fired_at": alert.get("fired_at", now),
+        "received_at": now,
+        "investigating_at": None,
+        "resolved_at": None,
+        "proposals_count": 0,
+        "proposals": [],
+        "verdicts": [],
+        "totals": {"approved": 0, "escalated": 0, "denied": 0},
+        "error": None,
+        "alert_payload": alert,
     }
+    _alerts[alert_id] = record
+    _alert_events[alert_id] = asyncio.Queue()
+    _persist_alert_record(alert_id)
+
+    logger.info("alert-trigger: created %s (resource=%s, metric=%s)", alert_id[:8], resource_name, alert.get("metric"))
+
+    background_tasks.add_task(_run_alert_investigation, alert_id, alert)
+
+    return {"status": "firing", "alert_id": alert_id}
+
+
+# ---------------------------------------------------------------------------
+# Alert API endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/alerts/active-count")
+async def alert_active_count() -> dict:
+    """Return count of currently firing or investigating alerts."""
+    # Check in-memory first (most responsive), fall back to tracker
+    count = sum(
+        1 for a in _alerts.values()
+        if a.get("status") in ("firing", "investigating")
+    )
+    if count == 0:
+        count = _get_alert_tracker().count_active()
+    return {"active_count": count}
+
+
+@app.get("/api/alerts")
+async def list_alerts(limit: int = Query(default=50, ge=1, le=500)) -> dict:
+    """List all alert records newest-first.
+
+    Returns both in-memory (recent) and durable (historical) alerts,
+    merged and deduplicated by alert_id.
+    """
+    # Merge in-memory + durable records
+    seen: set[str] = set()
+    merged: list[dict] = []
+
+    # In-memory first (most up-to-date state)
+    for aid, record in _alerts.items():
+        entry = {"id": aid, "alert_id": aid, **record}
+        merged.append(entry)
+        seen.add(aid)
+
+    # Durable records not yet in memory
+    for record in _get_alert_tracker().get_recent(limit):
+        aid = record.get("alert_id") or record.get("id")
+        if aid and aid not in seen:
+            merged.append(record)
+            seen.add(aid)
+
+    # Sort newest-first and limit
+    merged.sort(key=lambda r: r.get("received_at", ""), reverse=True)
+    result = merged[:limit]
+
+    # Strip Cosmos internal fields
+    cleaned = []
+    for r in result:
+        entry = {k: v for k, v in r.items() if k not in ("_rid", "_self", "_etag", "_attachments", "_ts")}
+        cleaned.append(entry)
+
+    return {"count": len(cleaned), "alerts": cleaned}
+
+
+@app.get("/api/alerts/{alert_id}/status")
+async def alert_status(alert_id: str) -> dict:
+    """Return the full alert record for one alert."""
+    record = _get_alert_record(alert_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+    return {"alert_id": alert_id, **record}
+
+
+@app.get("/api/alerts/{alert_id}/stream")
+async def stream_alert_events(alert_id: str):
+    """SSE stream for real-time alert investigation progress.
+
+    Identical pattern to ``stream_scan_events()`` — one event per line,
+    terminates on ``alert_resolved`` or ``alert_error``.
+    """
+    queue = _alert_events.get(alert_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail=f"No active SSE stream for alert {alert_id}")
+
+    async def event_generator():
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
+                continue
+
+            yield f"data: {json.dumps(event, default=str)}\n\n"
+            if event.get("event") in ("alert_resolved", "alert_error"):
+                break
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1243,6 +1740,41 @@ async def trigger_all_scans(
         logger.info("scan %s (%s) started via /scan/all rg=%s", scan_id[:8], agent_type, rg)
 
     return {"status": "started", "scan_ids": scan_ids}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 12b — scan history (operational audit log)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/scan-history")
+async def list_scan_history(
+    limit: int = Query(default=50, ge=1, le=500, description="Max records to return"),
+) -> dict:
+    """Return recent scan runs newest-first — one record per scan execution.
+
+    Each record contains:
+    - ``scan_id``, ``agent_type``, ``status``, ``started_at``, ``completed_at``
+    - ``proposals_count`` — number of resources the agent flagged
+    - ``evaluations_count`` — number of governance verdicts produced
+    - ``totals`` — ``{approved, escalated, denied}`` breakdown
+    - ``proposed_actions`` — list of every resource examined
+    - ``evaluations`` — full governance verdict per proposal
+    - ``scan_error`` — error message if ``status == "error"``
+
+    This powers the Audit Log tab (scan-level operational view).
+    The ``/api/evaluations`` endpoint covers governance-verdict-level detail.
+    """
+    records = _get_scan_tracker().get_recent(limit=limit)
+    # Strip internal Cosmos/_id fields and add computed counts
+    cleaned: list[dict] = []
+    for r in records:
+        entry = {k: v for k, v in r.items() if k not in ("_rid", "_self", "_etag", "_attachments", "_ts")}
+        entry.setdefault("proposals_count", len(r.get("proposed_actions", [])))
+        entry.setdefault("evaluations_count", len(r.get("evaluations", [])))
+        entry.setdefault("scanned_resources_count", len(r.get("scanned_resources", [])))
+        cleaned.append(entry)
+    return {"count": len(cleaned), "scans": cleaned}
 
 
 # ---------------------------------------------------------------------------
@@ -1688,17 +2220,17 @@ async def create_pr_from_manual(
 
 @app.get("/api/execution/{execution_id}/agent-fix-preview")
 async def agent_fix_preview(execution_id: str) -> dict:
-    """Preview the ``az`` CLI commands that would fix this issue.
+    """Generate the LLM-driven execution plan for this issue.
 
-    Pure read — no side effects.  Returns the list of shell commands and
-    a warning message for the user to review before confirming.
+    Pure read — no side effects.  Returns a structured plan with steps,
+    summary, estimated impact, rollback hint, and backward-compat commands list.
 
     Returns 404 if execution_id is unknown.
     Returns 400 if the verdict snapshot is missing.
     """
     gateway = _get_execution_gateway()
     try:
-        return gateway.generate_agent_fix_commands(execution_id)
+        return await gateway.generate_agent_fix_plan(execution_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1725,6 +2257,33 @@ async def agent_fix_execute(
     reviewed_by = body.get("reviewed_by", "dashboard-user")
     try:
         record = await gateway.execute_agent_fix(execution_id, reviewed_by)
+        return record.model_dump(mode="json")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/execution/{execution_id}/rollback")
+async def rollback_agent_fix(
+    execution_id: str, body: dict = Body(default={})
+) -> dict:
+    """Reverse a previously applied agent fix.
+
+    Only valid when the record status is ``applied``.
+    Uses the ``rollback_hint`` stored in the execution plan.
+
+    Request body (optional)::
+
+        {"reviewed_by": "alice@example.com"}
+
+    Returns 404 if execution_id is unknown.
+    Returns 400 if the record is not in ``applied`` state or has no stored plan.
+    """
+    gateway = _get_execution_gateway()
+    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    try:
+        record = await gateway.rollback_agent_fix(execution_id, reviewed_by)
         return record.model_dump(mode="json")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1769,6 +2328,28 @@ async def get_terraform_stub(execution_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Endpoint — system configuration (safe — no secrets)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/config")
+async def get_config() -> dict:
+    """Return safe system configuration — no secrets.
+
+    Returns mode, timeout, concurrency, and feature flags.
+    """
+    mode = "live" if (not settings.use_local_mocks and settings.azure_openai_endpoint) else "mock"
+    return {
+        "mode": mode,
+        "llm_timeout": settings.llm_timeout,
+        "llm_concurrency_limit": settings.llm_concurrency_limit,
+        "execution_gateway_enabled": settings.execution_gateway_enabled,
+        "use_live_topology": settings.use_live_topology,
+        "version": "1.0.0",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Endpoint — dev/test reset (local JSON mode only)
 # ---------------------------------------------------------------------------
 
@@ -1781,8 +2362,9 @@ async def admin_reset() -> dict:
     - ``data/decisions/``  (governance verdicts / audit trail)
     - ``data/executions/`` (execution gateway records)
     - ``data/scans/``      (scan run history)
+    - ``data/alerts/``     (alert investigation records)
 
-    Also resets the in-memory scan store (``_scans``) so the dashboard
+    Also resets the in-memory scan + alert stores so the dashboard
     shows a clean slate immediately without restarting the server.
 
     Only operates on local JSON files — Cosmos DB data is never touched.
@@ -1794,6 +2376,7 @@ async def admin_reset() -> dict:
     from src.infrastructure.cosmos_client import _DEFAULT_DECISIONS_DIR
     from src.core.execution_gateway import _DEFAULT_EXECUTIONS_DIR
     from src.core.scan_run_tracker import _DEFAULT_SCANS_DIR
+    from src.core.alert_tracker import _DEFAULT_ALERTS_DIR
 
     deleted: dict[str, int] = {}
 
@@ -1801,6 +2384,7 @@ async def admin_reset() -> dict:
         ("decisions", _DEFAULT_DECISIONS_DIR),
         ("executions", _DEFAULT_EXECUTIONS_DIR),
         ("scans", _DEFAULT_SCANS_DIR),
+        ("alerts", _DEFAULT_ALERTS_DIR),
     ]:
         count = 0
         if directory.exists():
@@ -1813,15 +2397,17 @@ async def admin_reset() -> dict:
         deleted[label] = count
         logger.info("admin_reset: deleted %d %s records", count, label)
 
-    # Reset in-memory scan store so the dashboard reflects the clean state
-    # without needing a server restart.
+    # Reset in-memory scan + alert stores so the dashboard reflects the
+    # clean state without needing a server restart.
     _scans.clear()
     _scan_cancelled.clear()
+    _alerts.clear()
 
     # Reset the in-memory execution gateway so it doesn't serve stale records
     # from before the wipe.
-    global _execution_gateway  # noqa: PLW0603
+    global _execution_gateway, _alert_tracker  # noqa: PLW0603
     _execution_gateway = None
+    _alert_tracker = None
 
     total = sum(deleted.values())
     logger.info("admin_reset: complete — %d total records deleted", total)

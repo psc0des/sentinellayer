@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub } from '../api'
+import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub, rollbackAgentFix } from '../api'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -55,6 +55,118 @@ function formatTime(iso) {
     }
 }
 
+// ── AgentFixPlanView ────────────────────────────────────────────────────────
+// Renders the structured execution plan returned by the LLM-driven agent.
+// Falls back to raw commands if plan has no steps (backward compat).
+
+function AgentFixPlanView({ plan }) {
+    if (!plan) return null
+
+    const hasSteps = Array.isArray(plan.steps) && plan.steps.length > 0
+
+    return (
+        <div className="space-y-3">
+            {/* Summary */}
+            {plan.summary && (
+                <p className="text-xs text-slate-300 font-medium">{plan.summary}</p>
+            )}
+
+            {/* Steps table */}
+            {hasSteps ? (
+                <div className="overflow-x-auto rounded-lg border border-slate-700">
+                    <table className="w-full text-xs text-slate-300">
+                        <thead>
+                            <tr className="bg-slate-800/80 text-slate-400 uppercase text-[10px] tracking-wider">
+                                <th className="px-3 py-2 text-left w-6">#</th>
+                                <th className="px-3 py-2 text-left">Operation</th>
+                                <th className="px-3 py-2 text-left">Target</th>
+                                <th className="px-3 py-2 text-left">Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {plan.steps.map((step, i) => (
+                                <tr key={i} className="border-t border-slate-700/60 hover:bg-slate-800/30">
+                                    <td className="px-3 py-2 text-slate-500">{i + 1}</td>
+                                    <td className="px-3 py-2 font-mono text-purple-300">{step.operation}</td>
+                                    <td className="px-3 py-2 text-slate-400 max-w-[180px] truncate" title={step.target}>{step.target}</td>
+                                    <td className="px-3 py-2 text-slate-400">{step.reason}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <p className="text-xs text-slate-500 italic">No steps — resource may already be in the desired state.</p>
+            )}
+
+            {/* Impact + rollback */}
+            {plan.estimated_impact && (
+                <p className="text-xs text-amber-400/80">⚡ Impact: {plan.estimated_impact}</p>
+            )}
+            {plan.rollback_hint && (
+                <p className="text-xs text-slate-500">↩ Rollback: <code className="text-slate-400">{plan.rollback_hint}</code></p>
+            )}
+
+            {/* Equivalent CLI (backward compat) */}
+            {Array.isArray(plan.commands) && plan.commands.length > 0 && (
+                <details className="group">
+                    <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-slate-400 select-none">Equivalent CLI commands</summary>
+                    <pre className="mt-1 text-xs text-slate-400 bg-slate-900 rounded-lg p-3 overflow-x-auto border border-slate-700/50 whitespace-pre-wrap">
+                        {plan.commands.map(cmd => `$ ${cmd}`).join('\n')}
+                    </pre>
+                </details>
+            )}
+        </div>
+    )
+}
+
+// ── ExecutionLogView ────────────────────────────────────────────────────────
+// Renders the step-by-step execution log + verification badge.
+
+function ExecutionLogView({ steps, verification, label = 'Execution Log' }) {
+    if (!steps?.length && !verification) return null
+    return (
+        <div className="space-y-2 mt-2">
+            {steps?.length > 0 && (
+                <details open>
+                    <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-slate-400 select-none uppercase tracking-wide font-semibold">
+                        {label} ({steps.length} step{steps.length !== 1 ? 's' : ''})
+                    </summary>
+                    <div className="mt-1.5 rounded-lg border border-slate-700/60 overflow-hidden">
+                        {steps.map((step, i) => (
+                            <div
+                                key={i}
+                                className={`flex items-start gap-2 px-3 py-2 text-xs border-b border-slate-800/60 last:border-0 ${
+                                    step.success ? 'text-slate-300' : 'text-rose-300 bg-rose-500/5'
+                                }`}
+                            >
+                                <span className={`shrink-0 mt-0.5 ${step.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {step.success ? '✓' : '✗'}
+                                </span>
+                                <span className="font-mono text-violet-300 shrink-0">{step.operation ?? `step ${i + 1}`}</span>
+                                <span className="text-slate-400 min-w-0">{step.message}</span>
+                            </div>
+                        ))}
+                    </div>
+                </details>
+            )}
+            {verification && (
+                <div className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 border ${
+                    verification.confirmed
+                        ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+                        : 'bg-amber-500/10 border-amber-500/25 text-amber-300'
+                }`}>
+                    <span className="shrink-0">{verification.confirmed ? '✓' : '⚠'}</span>
+                    <div>
+                        <span className="font-semibold mr-1">{verification.confirmed ? 'Verified:' : 'Unconfirmed:'}</span>
+                        {verification.message}
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function EvaluationDrilldown({ evaluation, onBack }) {
@@ -73,6 +185,8 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
     const [agentFixExecuting, setAgentFixExecuting] = useState(false)
     const [agentFixResult, setAgentFixResult] = useState(null)
     const [createPrLoading, setCreatePrLoading] = useState(false)
+    const [rollbackExecuting, setRollbackExecuting] = useState(false)
+    const [rollbackResult, setRollbackResult] = useState(null)
 
     const ev = evaluation
     const decision = (ev.decision ?? 'approved').toLowerCase()
@@ -180,11 +294,30 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
         try {
             const updated = await executeAgentFix(executionId)
             setExecutionStatus(updated)
-            setAgentFixResult({ success: updated.status === 'applied', notes: updated.notes })
+            setAgentFixResult(updated)
         } catch (err) {
-            setAgentFixResult({ success: false, notes: err.message })
+            setAgentFixResult({ status: 'failed', notes: err.message })
         } finally {
             setAgentFixExecuting(false)
+        }
+    }
+
+    async function handleRollback(executionId) {
+        const hint = executionStatus?.execution_plan?.rollback_hint
+        const msg = hint
+            ? `Roll back this fix?\n\nRollback operation:\n${hint}`
+            : 'Roll back this fix? This will attempt to reverse the applied change.'
+        if (!window.confirm(msg)) return
+        setRollbackExecuting(true)
+        setRollbackResult(null)
+        try {
+            const updated = await rollbackAgentFix(executionId)
+            setExecutionStatus(updated)
+            setRollbackResult(updated)
+        } catch (err) {
+            setRollbackResult({ status: 'failed', notes: err.message, rollback_log: [] })
+        } finally {
+            setRollbackExecuting(false)
         }
     }
 
@@ -510,6 +643,20 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                     by {executionStatus.reviewed_by}
                                 </span>
                             )}
+                            {/* Rollback button — only for agent-applied fixes */}
+                            {executionStatus.status === 'applied' && (
+                                <button
+                                    onClick={() => handleRollback(executionStatus.execution_id)}
+                                    disabled={rollbackExecuting}
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-600/10 hover:bg-amber-600/20 border border-amber-500/30 text-amber-400 hover:text-amber-300 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                                >
+                                    {rollbackExecuting ? (
+                                        <><span className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" /> Rolling back…</>
+                                    ) : (
+                                        <>↩ Rollback</>
+                                    )}
+                                </button>
+                            )}
                         </div>
 
                         {/* PR link */}
@@ -560,12 +707,10 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                             ⚠ This will fix Azure directly. Close or ignore the open PR afterwards to avoid drift.
                                         </p>
                                         {agentFixLoading ? (
-                                            <p className="text-xs text-slate-500 animate-pulse">Loading commands…</p>
+                                            <p className="text-xs text-slate-500 animate-pulse">Generating execution plan…</p>
                                         ) : (
                                             <>
-                                                <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-3 overflow-x-auto border border-slate-700 whitespace-pre-wrap">
-                                                    {agentFixPreview?.commands?.map((cmd) => `$ ${cmd}`).join('\n')}
-                                                </pre>
+                                                <AgentFixPlanView plan={agentFixPreview} />
                                                 <div className="flex gap-2">
                                                     <button
                                                         onClick={() => handleAgentFixExecute(executionStatus.execution_id)}
@@ -586,9 +731,12 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                                     </button>
                                                 </div>
                                                 {agentFixResult && (
-                                                    <div className={`text-xs rounded-lg px-3 py-2 border ${agentFixResult.success ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
-                                                        {agentFixResult.success ? 'Fix applied successfully.' : 'Fix failed.'} {agentFixResult.notes}
-                                                    </div>
+                                                    <>
+                                                        <div className={`text-xs rounded-lg px-3 py-2 border ${agentFixResult.status === 'applied' ? 'bg-green-500/10 border-green-500/30 text-green-300' : 'bg-red-500/10 border-red-500/30 text-red-300'}`}>
+                                                            {agentFixResult.status === 'applied' ? 'Fix applied successfully.' : 'Fix failed.'} {agentFixResult.notes}
+                                                        </div>
+                                                        <ExecutionLogView steps={agentFixResult.execution_log} verification={agentFixResult.verification} />
+                                                    </>
                                                 )}
                                             </>
                                         )}
@@ -600,6 +748,28 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                         {/* Notes / error message */}
                         {executionStatus.notes && (
                             <p className="text-xs text-slate-400 italic">{executionStatus.notes}</p>
+                        )}
+
+                        {/* Execution log + verification for applied/failed records */}
+                        {(executionStatus.status === 'applied' || executionStatus.status === 'failed') && (
+                            <ExecutionLogView
+                                steps={executionStatus.execution_log}
+                                verification={executionStatus.verification}
+                            />
+                        )}
+
+                        {/* Rollback result log */}
+                        {executionStatus.status === 'rolled_back' && (
+                            <div className="space-y-2">
+                                <div className="text-xs rounded-lg px-3 py-2 border bg-amber-500/10 border-amber-500/30 text-amber-300">
+                                    ↩ Fix rolled back successfully. Resource returned to pre-fix state.
+                                </div>
+                                <ExecutionLogView
+                                    steps={executionStatus.rollback_log}
+                                    verification={null}
+                                    label="Rollback Steps"
+                                />
+                            </div>
                         )}
 
                         {/* Action panel — manual_required (APPROVED) + awaiting_review (ESCALATED) */}
@@ -659,12 +829,10 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                         </p>
 
                                         {agentFixLoading ? (
-                                            <p className="text-xs text-slate-500 animate-pulse">Loading commands…</p>
+                                            <p className="text-xs text-slate-500 animate-pulse">Generating execution plan…</p>
                                         ) : (
                                             <>
-                                                <pre className="text-xs text-slate-300 bg-slate-900 rounded-lg p-3 overflow-x-auto border border-slate-700 whitespace-pre-wrap">
-                                                    {agentFixPreview?.commands?.map((cmd, i) => `$ ${cmd}`).join('\n')}
-                                                </pre>
+                                                <AgentFixPlanView plan={agentFixPreview} />
 
                                                 <div className="flex gap-2">
                                                     <button
@@ -687,13 +855,16 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                                 </div>
 
                                                 {agentFixResult && (
-                                                    <div className={`text-xs rounded-lg px-3 py-2 border ${
-                                                        agentFixResult.success
-                                                            ? 'bg-green-500/10 border-green-500/30 text-green-300'
-                                                            : 'bg-red-500/10 border-red-500/30 text-red-300'
-                                                    }`}>
-                                                        {agentFixResult.success ? 'Fix applied successfully.' : 'Fix failed.'} {agentFixResult.notes}
-                                                    </div>
+                                                    <>
+                                                        <div className={`text-xs rounded-lg px-3 py-2 border ${
+                                                            agentFixResult.status === 'applied'
+                                                                ? 'bg-green-500/10 border-green-500/30 text-green-300'
+                                                                : 'bg-red-500/10 border-red-500/30 text-red-300'
+                                                        }`}>
+                                                            {agentFixResult.status === 'applied' ? 'Fix applied successfully.' : 'Fix failed.'} {agentFixResult.notes}
+                                                        </div>
+                                                        <ExecutionLogView steps={agentFixResult.execution_log} verification={agentFixResult.verification} />
+                                                    </>
                                                 )}
                                             </>
                                         )}
@@ -737,6 +908,7 @@ const EXEC_STATUS_CONFIG = {
     manual_required: { label: 'Manual Required',   color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/30' },
     dismissed:       { label: 'Dismissed',         color: 'text-slate-400',  bg: 'bg-slate-500/10',  border: 'border-slate-500/30' },
     failed:          { label: 'Failed',            color: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/30' },
+    rolled_back:     { label: 'Rolled Back',       color: 'text-amber-400',  bg: 'bg-amber-500/10',  border: 'border-amber-500/30' },
 }
 
 function ExecutionStatusBadge({ status }) {

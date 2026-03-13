@@ -19,7 +19,6 @@ import pytest
 
 from src.core.execution_gateway import (
     ExecutionGateway,
-    _build_az_commands,
     _parse_arm_id,
 )
 from src.core.models import (
@@ -615,6 +614,36 @@ class TestUnresolvedProposals:
         assert gateway.get_unresolved_proposals() == []
 
     @pytest.mark.asyncio
+    async def test_dedup_updates_action_id(self, gateway):
+        """Dedup: second verdict for same resource+action updates action_id on existing record."""
+        import uuid as _uuid
+
+        def _make_with_id(action_id: str, resource_id: str) -> GovernanceVerdict:
+            v = _make_verdict(SRIVerdict.APPROVED, resource_id)
+            return v.model_copy(update={"action_id": action_id})
+
+        aid1 = str(_uuid.uuid4())
+        aid2 = str(_uuid.uuid4())
+        assert aid1 != aid2
+
+        verdict1 = _make_with_id(aid1, "vm-dedup-test")
+        verdict2 = _make_with_id(aid2, "vm-dedup-test")
+
+        record1 = await gateway.process_verdict(verdict1, resource_tags={})
+        assert record1.status == ExecutionStatus.manual_required
+        assert record1.action_id == aid1
+
+        record2 = await gateway.process_verdict(verdict2, resource_tags={})
+        # Same execution record returned
+        assert record2.execution_id == record1.execution_id
+        # action_id updated to newest verdict so drilldown lookup works
+        assert record2.action_id == aid2
+        # Lookup by new action_id finds the record
+        found = gateway.get_records_for_verdict(aid2)
+        assert len(found) == 1
+        assert found[0].execution_id == record1.execution_id
+
+    @pytest.mark.asyncio
     async def test_deduplication_in_new_proposals(self, gateway):
         """Resource already in agent proposals → unresolved record skipped (no duplicate)."""
         verdict = _make_verdict(SRIVerdict.APPROVED, "vm-web-01")
@@ -670,108 +699,42 @@ class TestArmIdParsing:
 
 
 # ---------------------------------------------------------------------------
-# 10. Agent Fix — Command Generation
+# 10. Agent Fix — Plan Generation and Execution (Phase 28)
 # ---------------------------------------------------------------------------
 
 
 class TestAgentFixFlow:
-    def test_modify_nsg_command(self):
-        action = ProposedAction(
-            agent_id="deploy-agent",
-            action_type=ActionType.MODIFY_NSG,
-            target=ActionTarget(
-                resource_id="/subscriptions/sub/resourceGroups/rg-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-east",
-                resource_type="Microsoft.Network/networkSecurityGroups",
-            ),
-            reason="Dangerous rule 'AllowAll_Inbound' — opens all ports",
-        )
-        cmds = _build_az_commands(action)
-        assert len(cmds) == 1
-        assert "nsg rule delete" in cmds[0]
-        assert "--nsg-name nsg-east" in cmds[0]
-        assert "--name AllowAll_Inbound" in cmds[0]
-        assert "--resource-group rg-prod" in cmds[0]
-
-    def test_scale_down_command(self):
-        action = ProposedAction(
-            agent_id="cost-agent",
-            action_type=ActionType.SCALE_DOWN,
-            target=ActionTarget(
-                resource_id="/subscriptions/sub/resourceGroups/rg-prod/providers/Microsoft.Compute/virtualMachines/vm-dr-01",
-                resource_type="Microsoft.Compute/virtualMachines",
-                current_sku="Standard_D4as_v4",
-                proposed_sku="Standard_B2ls_v2",
-            ),
-            reason="CPU avg 3.2% — right-size candidate",
-        )
-        cmds = _build_az_commands(action)
-        assert len(cmds) == 1
-        assert "vm resize" in cmds[0]
-        assert "--size Standard_B2ls_v2" in cmds[0]
-        assert "--name vm-dr-01" in cmds[0]
-
-    def test_delete_resource_full_arm_id(self):
-        arm_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-old"
-        action = ProposedAction(
-            agent_id="cost-agent",
-            action_type=ActionType.DELETE_RESOURCE,
-            target=ActionTarget(resource_id=arm_id, resource_type="Microsoft.Compute/virtualMachines"),
-            reason="Unused resource",
-        )
-        cmds = _build_az_commands(action)
-        assert "--ids" in cmds[0]
-        assert arm_id in cmds[0]
-
-    def test_restart_service_command(self):
-        action = ProposedAction(
-            agent_id="monitoring-agent",
-            action_type=ActionType.RESTART_SERVICE,
-            target=ActionTarget(
-                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-web-01",
-                resource_type="Microsoft.Compute/virtualMachines",
-            ),
-            reason="High memory pressure",
-        )
-        cmds = _build_az_commands(action)
-        assert "vm restart" in cmds[0]
-        assert "--name vm-web-01" in cmds[0]
-
-    def test_unknown_action_type_fallback(self):
-        action = ProposedAction(
-            agent_id="test",
-            action_type=ActionType.UPDATE_CONFIG,
-            target=ActionTarget(resource_id="some-resource", resource_type="SomeType"),
-            reason="Test",
-        )
-        cmds = _build_az_commands(action)
-        assert cmds[0].startswith("#")
-
-    def test_nsg_no_rule_name_uses_placeholder(self):
-        action = ProposedAction(
-            agent_id="deploy-agent",
-            action_type=ActionType.MODIFY_NSG,
-            target=ActionTarget(resource_id="nsg-test", resource_type="Microsoft.Network/networkSecurityGroups"),
-            reason="Bad rule detected",
-        )
-        cmds = _build_az_commands(action)
-        assert "<RULE_NAME>" in cmds[0]
+    """Phase 28: generate_agent_fix_plan() and execute_agent_fix() via ExecutionAgent."""
 
     @pytest.mark.asyncio
-    async def test_generate_agent_fix_commands(self, gateway):
-        """generate_agent_fix_commands() returns preview dict."""
+    async def test_generate_agent_fix_plan_returns_plan_dict(self, gateway):
+        """generate_agent_fix_plan() returns a structured plan dict."""
         verdict = _make_verdict(SRIVerdict.APPROVED)
         record = await gateway.process_verdict(verdict, {})
         assert record.status == ExecutionStatus.manual_required
 
-        preview = gateway.generate_agent_fix_commands(record.execution_id)
-        assert "commands" in preview
-        assert "warning" in preview
-        assert preview["execution_id"] == record.execution_id
+        plan = await gateway.generate_agent_fix_plan(record.execution_id)
+        assert "steps" in plan
+        assert "commands" in plan       # backward compat
+        assert "summary" in plan
+        assert "warning" in plan
+        assert plan["execution_id"] == record.execution_id
 
     @pytest.mark.asyncio
-    async def test_generate_commands_unknown_id_raises(self, gateway):
+    async def test_generate_plan_stores_on_record(self, gateway):
+        """Plan is persisted to the ExecutionRecord after generation."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+
+        await gateway.generate_agent_fix_plan(record.execution_id)
+        updated = gateway.get_record(record.execution_id)
+        assert updated.execution_plan is not None
+        assert "steps" in updated.execution_plan
+
+    @pytest.mark.asyncio
+    async def test_generate_plan_unknown_id_raises(self, gateway):
         with pytest.raises(KeyError):
-            gateway.generate_agent_fix_commands("nonexistent")
+            await gateway.generate_agent_fix_plan("nonexistent")
 
     @pytest.mark.asyncio
     async def test_mock_mode_execution_sets_applied(self, gateway):
@@ -780,8 +743,12 @@ class TestAgentFixFlow:
         record = await gateway.process_verdict(verdict, {})
         assert record.status == ExecutionStatus.manual_required
 
+        # Generate plan first so execute_agent_fix has something to work with
+        await gateway.generate_agent_fix_plan(record.execution_id)
+
         with patch("src.core.execution_gateway.settings") as mock_settings:
             mock_settings.use_local_mocks = True
+            mock_settings.azure_openai_endpoint = ""
             result = await gateway.execute_agent_fix(record.execution_id, "alice")
 
         assert result.status == ExecutionStatus.applied
@@ -789,70 +756,29 @@ class TestAgentFixFlow:
         assert result.reviewed_by == "alice"
 
     @pytest.mark.asyncio
+    async def test_mock_mode_execution_stores_log(self, gateway):
+        """execute_agent_fix stores execution_log on the record."""
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        record = await gateway.process_verdict(verdict, {})
+        await gateway.generate_agent_fix_plan(record.execution_id)
+
+        with patch("src.core.execution_gateway.settings") as mock_settings:
+            mock_settings.use_local_mocks = True
+            mock_settings.azure_openai_endpoint = ""
+            result = await gateway.execute_agent_fix(record.execution_id, "alice")
+
+        assert result.execution_log is not None
+        assert isinstance(result.execution_log, list)
+
+    @pytest.mark.asyncio
     async def test_execute_wrong_status_raises(self, gateway):
-        """Cannot execute agent fix on a non-manual_required record."""
+        """Cannot execute agent fix on a non-executable record."""
         verdict = _make_verdict(SRIVerdict.DENIED)
         record = await gateway.process_verdict(verdict, {})
         assert record.status == ExecutionStatus.blocked
 
         with pytest.raises(ValueError, match="manual_required"):
             await gateway.execute_agent_fix(record.execution_id, "alice")
-
-    @pytest.mark.asyncio
-    async def test_sdk_missing_arm_id_raises_valueerror(self, gateway):
-        """Short resource name (no ARM ID) raises ValueError — record stays intact."""
-        # _make_verdict uses "vm-web-01" (short name, no resource group)
-        verdict = _make_verdict(SRIVerdict.APPROVED)
-        # Override action to RESTART_SERVICE (supported type) but with short name
-        verdict.proposed_action.action_type = ActionType.RESTART_SERVICE
-        record = await gateway.process_verdict(verdict, {})
-        assert record.status == ExecutionStatus.manual_required
-
-        with patch("src.core.execution_gateway.settings") as mock_settings:
-            mock_settings.use_local_mocks = False
-            with pytest.raises(ValueError, match="full ARM ID"):
-                await gateway.execute_agent_fix(record.execution_id, "alice")
-
-        still = gateway.get_record(record.execution_id)
-        assert still.status == ExecutionStatus.manual_required
-
-    @pytest.mark.asyncio
-    async def test_sdk_unsupported_action_raises_valueerror(self, gateway):
-        """Unsupported action type raises ValueError — record stays intact."""
-        # Use a full ARM ID so we pass the ARM check, but UPDATE_CONFIG type
-        action = ProposedAction(
-            agent_id="test-agent",
-            action_type=ActionType.UPDATE_CONFIG,
-            target=ActionTarget(
-                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/sites/app-01",
-                resource_type="Microsoft.Web/sites",
-            ),
-            reason="Test unsupported action",
-        )
-        verdict = GovernanceVerdict(
-            action_id="test-unsupported-001",
-            timestamp=datetime.now(timezone.utc),
-            proposed_action=action,
-            skry_risk_index=SRIBreakdown(
-                sri_infrastructure=5.0, sri_policy=0.0,
-                sri_historical=0.0, sri_cost=0.0, sri_composite=1.5,
-            ),
-            decision=SRIVerdict.APPROVED,
-            reason="APPROVED",
-        )
-
-        with patch("src.core.execution_gateway.settings") as mock_settings:
-            mock_settings.execution_gateway_enabled = True
-            record = await gateway.process_verdict(verdict, {})
-        assert record.status == ExecutionStatus.manual_required
-
-        with patch("src.core.execution_gateway.settings") as mock_settings:
-            mock_settings.use_local_mocks = False
-            with pytest.raises(ValueError, match="not supported"):
-                await gateway.execute_agent_fix(record.execution_id, "alice")
-
-        still = gateway.get_record(record.execution_id)
-        assert still.status == ExecutionStatus.manual_required
 
 
 # ---------------------------------------------------------------------------
@@ -1161,3 +1087,97 @@ class TestDedupManualRequired:
         matching = [rec for _, rec in pairs if "nsg-dup-test" in rec.verdict_snapshot.get("proposed_action", {}).get("target", {}).get("resource_id", "")]
         assert len(matching) == 1
         assert matching[0].execution_id == r_older.execution_id  # oldest wins
+
+
+# ---------------------------------------------------------------------------
+# Phase 29 — TestVerificationFlow (3 tests)
+# ---------------------------------------------------------------------------
+
+
+class TestVerificationFlow:
+    """list_all() and post-execute verification integration tests."""
+
+    @pytest.fixture
+    def gateway(self, tmp_path):
+        return ExecutionGateway(executions_dir=tmp_path / "executions")
+
+    @pytest.mark.asyncio
+    async def test_list_all_returns_empty_on_fresh_gateway(self, gateway):
+        assert gateway.list_all() == []
+
+    @pytest.mark.asyncio
+    async def test_list_all_returns_records_newest_first(self, gateway):
+        from datetime import timedelta
+        v1 = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-list-a")
+        v2 = _make_verdict(SRIVerdict.DENIED, resource_id="vm-list-b")
+        r1 = await gateway.process_verdict(v1, {})
+        r2 = await gateway.process_verdict(v2, {})
+        # Make r1 older
+        r1.created_at = r1.created_at - timedelta(hours=1)
+        records = gateway.list_all()
+        assert len(records) == 2
+        # newest first — r2 should come before r1
+        ids = [r.execution_id for r in records]
+        assert ids.index(r2.execution_id) < ids.index(r1.execution_id)
+
+    @pytest.mark.asyncio
+    async def test_execute_agent_fix_stores_verification(self, gateway, tmp_path):
+        """After execute_agent_fix, record.verification should be set."""
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-verify-01")
+        record = await gateway.process_verdict(verdict, {})
+        # Manually move to manual_required so execute_agent_fix accepts it
+        record.status = ExecutionStatus.manual_required
+        gateway._save(record)
+
+        updated = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
+        assert updated.verification is not None
+        assert "confirmed" in updated.verification
+        assert updated.verification["confirmed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 30 — TestRollbackFlow (4 tests)
+# ---------------------------------------------------------------------------
+
+
+class TestRollbackFlow:
+    """rollback_agent_fix() method on ExecutionGateway."""
+
+    @pytest.fixture
+    def gateway(self, tmp_path):
+        return ExecutionGateway(executions_dir=tmp_path / "executions")
+
+    @pytest.mark.asyncio
+    async def test_rollback_sets_status_rolled_back(self, gateway):
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-rollback-01")
+        record = await gateway.process_verdict(verdict, {})
+        record.status = ExecutionStatus.manual_required
+        gateway._save(record)
+        applied = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
+        assert applied.status == ExecutionStatus.applied
+        rolled = await gateway.rollback_agent_fix(applied.execution_id, reviewed_by="test-user")
+        assert rolled.status == ExecutionStatus.rolled_back
+
+    @pytest.mark.asyncio
+    async def test_rollback_stores_rollback_log(self, gateway):
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-rollback-02")
+        record = await gateway.process_verdict(verdict, {})
+        record.status = ExecutionStatus.manual_required
+        gateway._save(record)
+        applied = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
+        rolled = await gateway.rollback_agent_fix(applied.execution_id, reviewed_by="test-user")
+        assert rolled.rollback_log is not None
+        assert isinstance(rolled.rollback_log, list)
+
+    @pytest.mark.asyncio
+    async def test_rollback_only_valid_when_applied(self, gateway):
+        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-rollback-03")
+        record = await gateway.process_verdict(verdict, {})
+        # Record is manual_required — not applied yet
+        with pytest.raises(ValueError, match="must be 'applied'"):
+            await gateway.rollback_agent_fix(record.execution_id, reviewed_by="test-user")
+
+    @pytest.mark.asyncio
+    async def test_rollback_raises_for_unknown_id(self, gateway):
+        with pytest.raises((KeyError, ValueError)):
+            await gateway.rollback_agent_fix("nonexistent-id", reviewed_by="test-user")

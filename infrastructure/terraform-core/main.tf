@@ -357,6 +357,24 @@ resource "azurerm_cosmosdb_sql_container" "governance_agents" {
   }
 }
 
+resource "azurerm_cosmosdb_sql_container" "governance_alerts" {
+  name                = "governance-alerts"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
+
+  partition_key_paths   = ["/severity"]
+  partition_key_version = 2
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+  }
+}
+
 # =============================================================================
 # 7. Key Vault secrets (service credentials)
 # =============================================================================
@@ -762,6 +780,26 @@ resource "azurerm_role_assignment" "network_contributor" {
 }
 
 # =============================================================================
+# 10e. Virtual Machine Contributor — start / restart VM remediation via SDK
+# =============================================================================
+# When a governance verdict proposes restart_service on a VM (e.g. heartbeat
+# alert for vm-dr-01), the Execution Gateway calls
+# ComputeManagementClient.virtual_machines.begin_start / begin_restart.
+# The MI needs Virtual Machine Contributor so it can:
+#   Microsoft.Compute/virtualMachines/start/action
+#   Microsoft.Compute/virtualMachines/restart/action
+#   Microsoft.Compute/virtualMachines/instanceView/read  ← needed to detect deallocated state
+#
+# Scope: subscription-level so it covers prod VMs in any resource group.
+resource "azurerm_role_assignment" "vm_contributor" {
+  scope                = "/subscriptions/${var.subscription_id}"
+  role_definition_name = "Virtual Machine Contributor"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+
+  depends_on = [azurerm_container_app.backend]
+}
+
+# =============================================================================
 # 11. Static Web App — React Dashboard
 # =============================================================================
 # Hosts the compiled React dashboard (dashboard/dist/).
@@ -784,7 +822,32 @@ resource "azurerm_static_web_app" "dashboard" {
 }
 
 # =============================================================================
-# 12. Security hardening — tfstate storage lock (SEC-08)
+# 12. Azure Monitor Action Group — alert webhook receiver
+# =============================================================================
+# When Azure Monitor fires an alert rule, it POSTs the alert payload to the
+# backend /api/alert-trigger endpoint. The Action Group is attached to alert
+# rules either in this config (see azurerm_monitor_metric_alert) or manually
+# in the Azure portal.
+#
+# use_common_alert_schema = false: preserves the original alert payload format
+# so MonitoringAgent can read legacy fields (alertContext, data.essentials).
+# If you standardise on the Common Alert Schema, set this to true and update
+# the alert_payload parsing in monitoring_agent.py accordingly.
+resource "azurerm_monitor_action_group" "ruriskry" {
+  name                = "${local.name_prefix}-alert-handler-${local.name_suffix}"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  short_name          = "ruriskry"
+  tags                = local.common_tags
+
+  webhook_receiver {
+    name                    = "ruriskry-webhook"
+    service_uri             = "https://${azurerm_container_app.backend.ingress[0].fqdn}/api/alert-trigger"
+    use_common_alert_schema = false
+  }
+}
+
+# =============================================================================
+# 13. Security hardening — tfstate storage lock (SEC-08)
 # =============================================================================
 # The tfstate storage account holds Terraform state which contains sensitive
 # values (Foundry keys, Cosmos keys). A CanNotDelete lock prevents accidental
@@ -828,6 +891,7 @@ resource "azurerm_management_lock" "ruriskry_rg" {
     azurerm_cosmosdb_sql_database.ruriskry,
     azurerm_cosmosdb_sql_container.governance_decisions,
     azurerm_cosmosdb_sql_container.governance_agents,
+    azurerm_cosmosdb_sql_container.governance_alerts,
     azurerm_ai_services.foundry,
     azurerm_search_service.ruriskry,
     azurerm_key_vault.ruriskry,
@@ -835,5 +899,6 @@ resource "azurerm_management_lock" "ruriskry_rg" {
     azurerm_user_assigned_identity.acr_pull,
     azurerm_role_assignment.acr_pull,
     azurerm_role_assignment.subscription_reader,
+    azurerm_monitor_action_group.ruriskry,
   ]
 }

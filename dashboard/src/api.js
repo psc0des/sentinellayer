@@ -233,9 +233,12 @@ export async function createPRFromManual(executionId, reviewedBy = 'dashboard-us
 }
 
 /**
- * Preview the az CLI commands that would fix a manual_required issue.
+ * Generate the LLM-driven execution plan for a manual_required issue.
  * @param {string} executionId - UUID of the ExecutionRecord
- * @returns {{ execution_id: string, action_type: string, resource_id: string, commands: string[], warning: string }}
+ * @returns {{ execution_id: string, action_type: string, resource_id: string,
+ *             steps: Array<{operation: string, target: string, params: object, reason: string}>,
+ *             summary: string, estimated_impact: string, rollback_hint: string,
+ *             commands: string[], warning: string }}
  */
 export async function fetchAgentFixPreview(executionId) {
   const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/agent-fix-preview`)
@@ -285,6 +288,49 @@ export async function fetchPendingReviews() {
 }
 
 /**
+ * Fetch all scan run records (newest-first) — operational audit log.
+ * Each record contains scan_id, agent_type, status, started_at, completed_at,
+ * proposals_count, evaluations_count, totals, proposed_actions, evaluations.
+ * @param {number} limit - max records to return (1–500)
+ */
+export async function fetchScanHistory(limit = 100) {
+  const res = await fetch(`${BASE}/scan-history?limit=${limit}`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch scan history`)
+  return res.json()
+}
+
+/**
+ * Fetch all alert records newest-first.
+ * @param {number} limit - max records to return (1–500)
+ * @returns {{ count: number, alerts: object[] }}
+ */
+export async function fetchAlerts(limit = 100) {
+  const res = await fetch(`${BASE}/alerts?limit=${limit}`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch alerts`)
+  return res.json()
+}
+
+/**
+ * Fetch count of currently firing/investigating alerts.
+ * @returns {{ active_count: number }}
+ */
+export async function fetchActiveAlertCount() {
+  const res = await fetch(`${BASE}/alerts/active-count`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch active alert count`)
+  return res.json()
+}
+
+/**
+ * Open an SSE stream for real-time alert investigation progress.
+ * Returns an EventSource — caller must attach onmessage and call .close() when done.
+ * @param {string} alertId - UUID returned by trigger_alert
+ * @returns {EventSource}
+ */
+export function streamAlertEvents(alertId) {
+  return new EventSource(`${BASE}/alerts/${alertId}/stream`)
+}
+
+/**
  * ⚠ Dev/test only — wipe all local JSON data and reset in-memory state.
  * Deletes data/decisions/, data/executions/, data/scans/ JSON files.
  * Cosmos DB data is never touched.
@@ -293,5 +339,28 @@ export async function fetchPendingReviews() {
 export async function adminReset() {
   const res = await fetch(`${BASE}/admin/reset`, { method: 'POST' })
   if (!res.ok) throw new Error(`API error ${res.status}: reset failed`)
+  return res.json()
+}
+
+/**
+ * Fetch safe system configuration — mode, timeouts, feature flags.
+ * @returns {{ mode: string, llm_timeout: number, llm_concurrency_limit: number,
+ *             execution_gateway_enabled: boolean, use_live_topology: boolean, version: string }}
+ */
+export async function fetchConfig() {
+  const res = await fetch(`${BASE}/config`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch config`)
+  return res.json()
+}
+
+/**
+ * Roll back a previously applied agent fix.
+ * Only valid when status === 'applied'.
+ * @param {string} executionId
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function rollbackAgentFix(executionId) {
+  const res = await fetch(`${BASE}/execution/${executionId}/rollback`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error ${res.status}: rollback failed`)
   return res.json()
 }

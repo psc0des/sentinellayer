@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     cosmos_database: str = "ruriskry"
     cosmos_container_decisions: str = "governance-decisions"
     cosmos_container_scan_runs: str = "governance-scan-runs"
+    cosmos_container_alerts: str = "governance-alerts"
 
     # --- Azure Cosmos DB (Gremlin — Dependency Graph) ---
     cosmos_gremlin_endpoint: str = ""
@@ -107,8 +108,8 @@ class Settings(BaseSettings):
     #      (which may make many tool-call round-trips).
     # If the call exceeds this limit it is cancelled and scan_error is set so the
     # dashboard shows a red "Error" badge instead of a frozen scan.
-    # Env var: LLM_TIMEOUT=120
-    llm_timeout: int = 120
+    # Env var: LLM_TIMEOUT=600 (must be >300s for multi-step agent loops)
+    llm_timeout: int = 600
 
     # When true, pipeline.py runs governance agents sequentially (one at a time) instead
     # of asyncio.gather(). Use this when the Azure OpenAI quota is so tight that the

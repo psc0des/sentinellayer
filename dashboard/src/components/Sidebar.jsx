@@ -11,17 +11,18 @@
 
 import React from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ScanLine, Bot, ShieldCheck, FileText, Activity } from 'lucide-react'
+import { LayoutDashboard, ScanLine, Bot, ShieldCheck, FileText, Activity, Zap, Settings } from 'lucide-react'
 
 const NAV = [
   { to: '/overview',  icon: LayoutDashboard, label: 'Overview' },
   { to: '/scans',     icon: ScanLine,        label: 'Scans' },
+  { to: '/alerts',    icon: Zap,             label: 'Alerts' },
   { to: '/agents',    icon: Bot,             label: 'Agents' },
   { to: '/decisions', icon: ShieldCheck,     label: 'Decisions' },
   { to: '/audit',     icon: FileText,        label: 'Audit Log' },
 ]
 
-export default function Sidebar({ pendingCount = 0 }) {
+export default function Sidebar({ pendingCount = 0, alertCount = 0 }) {
   return (
     <aside
       className="w-56 shrink-0 flex flex-col"
@@ -114,6 +115,20 @@ export default function Sidebar({ pendingCount = 0 }) {
                     <span>{label}</span>
                   </div>
 
+                  {/* Active alerts badge */}
+                  {to === '/alerts' && alertCount > 0 && (
+                    <span
+                      className="text-[10px] font-bold text-white rounded-full px-1.5 min-w-[18px] text-center leading-[18px] font-mono"
+                      style={{
+                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        boxShadow: '0 0 10px rgba(239,68,68,0.6)',
+                        fontFamily: 'var(--font-data)',
+                      }}
+                    >
+                      {alertCount}
+                    </span>
+                  )}
+
                   {/* Pending badge on Decisions */}
                   {to === '/decisions' && pendingCount > 0 && (
                     <span
@@ -148,6 +163,34 @@ export default function Sidebar({ pendingCount = 0 }) {
           )
         })}
       </nav>
+
+      {/* ── Admin link ── */}
+      <div className="px-2 pb-2">
+        <NavLink
+          to="/admin"
+          className={({ isActive }) =>
+            `relative group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              isActive ? 'text-slate-300 bg-slate-800/50' : 'text-slate-600 hover:text-slate-400'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              {isActive && (
+                <span
+                  className="nav-active-indicator absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full"
+                  style={{
+                    background: 'linear-gradient(180deg, #94a3b8, #64748b)',
+                    boxShadow: '0 0 6px rgba(100,116,139,0.5)',
+                  }}
+                />
+              )}
+              <Settings className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-slate-400' : 'text-slate-700 group-hover:text-slate-500'}`} />
+              <span>Admin</span>
+            </>
+          )}
+        </NavLink>
+      </div>
 
       {/* ── System status indicator ── */}
       <div

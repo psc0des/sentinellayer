@@ -28,7 +28,7 @@ LLM / Search / Cosmos / Key Vault  →  provisioned by Terraform
 | Resource Group | `ruriskry-core-engine-rg` | Container for all resources |
 | Log Analytics | `ruriskry-core-log-<suffix>` | Container + infra logs |
 | Key Vault | `ruriskry-core-kv-<suffix>` | Runtime secrets (API keys) |
-| Azure AI Foundry | `ruriskry-core-foundry-<suffix>` | GPT-4.1 LLM |
+| Azure AI Foundry | `ruriskry-core-foundry-<suffix>` | gpt-5-mini LLM (version 2025-08-07, GlobalStandard, 200K TPM) |
 | Azure AI Search | `ruriskry-core-search-<suffix>` | Historical incident BM25 |
 | Cosmos DB | `ruriskry-core-cosmos-<suffix>` | Audit trail + agent registry |
 | Container Registry | `ruriskrycore<suffix>` | Docker image store (alphanumeric only) |
@@ -36,6 +36,7 @@ LLM / Search / Cosmos / Key Vault  →  provisioned by Terraform
 | Container Apps Env | `ruriskry-core-env-<suffix>` | Managed runtime environment |
 | Container App | `ruriskry-core-backend-<suffix>` | FastAPI + all agents |
 | Static Web App | `ruriskry-core-dashboard-<suffix>` | React dashboard (global CDN) |
+| Monitor Action Group | `ruriskry-core-alert-handler-<suffix>` | Webhook receiver for Azure Monitor alerts → `/api/alert-trigger` |
 
 ---
 
@@ -187,6 +188,42 @@ bash scripts/setup_env.sh
 ```
 
 Writes endpoints and Key Vault secret names to `.env` from Terraform outputs.
+
+### Wire alert rules to the RuriSkry backend
+
+**If you use `infrastructure/terraform-prod`** (the recommended path):
+
+1. Get the backend URL from `terraform-core`:
+   ```bash
+   cd infrastructure/terraform-core
+   terraform output -raw backend_url
+   ```
+
+2. Set it in `infrastructure/terraform-prod/terraform.tfvars`:
+   ```hcl
+   alert_webhook_url = "https://<backend-url>/api/alert-trigger"
+   ```
+
+3. Apply — this adds the webhook receiver to `ag-ruriskry-prod` alongside the existing email receiver. All alert rules already wired to `ag-ruriskry-prod` pick it up automatically:
+   ```bash
+   cd infrastructure/terraform-prod
+   terraform apply -target=azurerm_monitor_action_group.prod
+   ```
+
+> This is the correct approach. Every alert rule in `terraform-prod` references `azurerm_monitor_action_group.prod`, so setting `alert_webhook_url` once wires all of them — no per-rule steps.
+
+**If you have alert rules outside `terraform-prod`** (manually created rules or rules in other RGs):
+
+Attach them to `ag-ruriskry-prod` — Action Groups are subscription-scoped, so they work cross-RG:
+
+```bash
+# Portal: Monitor → Alerts → Alert rules → Edit rule → Actions tab → Add action group → ag-ruriskry-prod
+```
+
+The `alert_webhook_url` output from `terraform-core` shows the exact URL being used:
+```bash
+cd infrastructure/terraform-core && terraform output alert_webhook_url
+```
 
 ### (Optional) Seed demo incidents
 
@@ -398,6 +435,7 @@ npx @azure/static-web-apps-cli deploy ./dist \
 | `terraform destroy` fails with `ScopeLocked` | Only occurs if `enable_rg_lock = true` and lock removal fails. Default is `false` so this should not occur. | Remove manually: `az lock delete --name ruriskry-core-engine-rg-lock --resource-group ruriskry-core-engine-rg`, then retry |
 | `409 Conflict: ResourceGroupBeingDeleted` on fresh deploy | Key Vault soft-delete recovery put the new RG into a deprovisioning state | Purge the soft-deleted KV first: `az keyvault purge --name ruriskry-core-kv-<suffix> --location eastus2`, wait, then re-run |
 | Container App `unable to pull image using Managed identity` | Azure IAM role propagation race condition | Fixed by placeholder image pattern — should not occur with `deploy.sh` |
+| Azure Monitor Agent silently drops VM telemetry (no metrics appear for `vm-dr-01` or `vm-web-01`) | VMs missing `SystemAssigned` managed identity and/or `Monitoring Metrics Publisher` role — AMA requires a valid MI to authenticate metric ingestion | Fixed in `infrastructure/terraform-prod/main.tf`: `identity { type = "SystemAssigned" }` block + `azurerm_role_assignment` (`Monitoring Metrics Publisher`) added to both VMs. Run `terraform apply` in `terraform-prod` to apply. |
 | All agent scans return `401 PermissionDenied ... lacks Microsoft.CognitiveServices/accounts/OpenAI/responses/write` | `local_authentication_enabled = false` on Foundry disables API key auth; the Container App MI is missing the `Cognitive Services OpenAI User` role | Handled automatically by `azurerm_role_assignment.foundry_openai_user` in Terraform. If you're hitting this on an existing deploy that pre-dates the fix, run `terraform apply` to add the role assignment. |
 | State lock stuck after network drop | Connection reset before Terraform could release the blob lease | Break the lease: `az storage blob lease break --account-name ruriskrytfstate<suffix> --container-name tfstate --blob-name terraform-core.tfstate` |
 
@@ -435,7 +473,7 @@ terraform destroy
 | Resource | Approximate cost |
 |----------|--------------------|
 | Container App (1 replica, 1 vCPU / 2 GiB) | ~$35/month |
-| Azure AI Foundry (GPT-4.1 GlobalStandard) | Pay-per-token |
+| Azure AI Foundry (gpt-5-mini GlobalStandard, 200K TPM) | Pay-per-token |
 | Azure AI Search (free tier) | $0 |
 | Cosmos DB (free tier) | $0 |
 | Static Web App (free tier) | $0 |

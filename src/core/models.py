@@ -286,6 +286,7 @@ class ExecutionStatus(str, Enum):
     manual_required = "manual_required"  # APPROVED but not IaC-managed
     dismissed = "dismissed"              # Human chose to skip
     failed = "failed"                    # PR creation or apply failed
+    rolled_back = "rolled_back"          # Agent fix was applied then reversed
 
 
 class ExecutionRecord(BaseModel):
@@ -306,6 +307,10 @@ class ExecutionRecord(BaseModel):
     notes: str = ""                  # Human-added context
     verdict_snapshot: dict = {}      # GovernanceVerdict.model_dump() — used to reconstruct
                                      # the verdict when approving ESCALATED records for PR creation
+    execution_plan: Optional[dict] = None   # Stored after plan phase — read by execute phase
+    execution_log: Optional[list] = None    # Stored after execute phase — step-by-step audit
+    verification: Optional[dict] = None    # Set after execute — {confirmed, message, checked_at}
+    rollback_log: Optional[list] = None    # Stored after rollback — step-by-step audit
 
 
 # ============================================

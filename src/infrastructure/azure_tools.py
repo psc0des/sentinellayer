@@ -691,27 +691,63 @@ async def query_metrics_async(
 async def get_resource_details_async(resource_id: str) -> dict:
     """Async variant of :func:`get_resource_details` — non-blocking Azure calls.
 
+    For VMs, also fetches the instance view to include ``powerState`` in the
+    result.  Azure Resource Graph only stores provisioning state, not runtime
+    power state — a deallocated VM shows ``provisioningState=Succeeded`` in
+    Resource Graph but ``powerState=VM deallocated`` in the instance view.
+
     Args:
         resource_id: Full Azure ARM resource ID or short name.
 
     Returns:
-        Resource detail dict. Empty dict if not found.
+        Resource detail dict with ``powerState`` injected for VMs.
+        Empty dict if not found.
 
     Raises:
         RuntimeError: In live mode when the underlying Resource Graph call fails.
     """
     safe_id = resource_id.replace("'", "''")
     results = await query_resource_graph_async(f"Resources | where id =~ '{safe_id}'")
-    if results:
-        return results[0]
+    result = results[0] if results else None
 
-    if _use_mocks():
+    if result is None and _use_mocks():
         name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
         for r in _seed().get("resources", []):
             if r.get("name", "").lower() == name.lower():
                 return r
 
-    return {}
+    if result is None:
+        return {}
+
+    # Enrich VMs with live power state — Resource Graph only has provisioning
+    # state; the runtime power state requires the Compute instance view API.
+    resource_type = (result.get("type") or "").lower()
+    if not _use_mocks() and resource_type == "microsoft.compute/virtualmachines":
+        try:
+            from azure.identity.aio import DefaultAzureCredential
+            from azure.mgmt.compute.aio import ComputeManagementClient
+            from src.config import settings
+
+            parts = resource_id.split("/")
+            # ARM ID: /subscriptions/<sub>/resourceGroups/<rg>/providers/.../virtualMachines/<name>
+            sub_id  = parts[2]  if len(parts) > 2  else settings.azure_subscription_id
+            rg_name = parts[4]  if len(parts) > 4  else None
+            vm_name = parts[-1]
+
+            async with DefaultAzureCredential() as cred:
+                async with ComputeManagementClient(cred, sub_id) as compute:
+                    iv = await compute.virtual_machines.instance_view(rg_name, vm_name)
+                    for status in (iv.statuses or []):
+                        if (status.code or "").startswith("PowerState/"):
+                            result["powerState"] = status.display_status
+                            break
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "get_resource_details_async: could not fetch VM instance view "
+                "for '%s' — powerState unavailable (%s)", resource_id, exc
+            )
+
+    return result
 
 
 async def query_activity_log_async(
@@ -814,3 +850,154 @@ async def list_nsg_rules_async(nsg_resource_id: str) -> list[dict]:
                 return r.get("rules", [])
 
     return []
+
+
+# ---------------------------------------------------------------------------
+# 6. get_resource_health_async
+# ---------------------------------------------------------------------------
+
+
+async def get_resource_health_async(resource_id: str) -> dict:
+    """Return Azure Resource Health availability status for a resource.
+
+    This calls the Azure Resource Health API — NOT Resource Graph.
+    Resource Health reports what Azure itself observes about the resource's
+    availability: Available, Unavailable, Degraded, or Unknown.
+
+    This is the authoritative runtime health signal. Use it alongside
+    get_resource_details (which returns configuration) and query_metrics
+    (which returns time-series data) for a complete picture.
+
+    Args:
+        resource_id: Full Azure ARM resource ID.
+
+    Returns:
+        Dict with keys:
+          - availabilityState: "Available" | "Unavailable" | "Degraded" | "Unknown"
+          - summary: human-readable description of the health state
+          - reasonType: why the resource is unavailable (if applicable)
+          - occuredTime: when the current health state was first observed
+          - reportedTime: when Azure last updated the health report
+    """
+    if _use_mocks():
+        name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+        return {
+            "availabilityState": "Available",
+            "summary": f"Mock: {name} is available.",
+            "reasonType": None,
+            "occuredTime": None,
+            "reportedTime": None,
+        }
+
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.mgmt.resourcehealth.aio import ResourceHealthMgmtClient
+        from src.config import settings
+
+        parts = resource_id.strip("/").split("/")
+        sub_id = parts[1] if len(parts) > 1 else settings.azure_subscription_id
+
+        async with DefaultAzureCredential() as cred:
+            async with ResourceHealthMgmtClient(cred, sub_id) as client:
+                result = await client.availability_statuses.get_by_resource(
+                    resource_uri=resource_id,
+                    filter="recommendedactions",
+                )
+                props = result.properties
+                return {
+                    "availabilityState": props.availability_state.value if props.availability_state else "Unknown",
+                    "summary": props.summary or "",
+                    "reasonType": props.reason_type or None,
+                    "occuredTime": props.occured_time.isoformat() if props.occured_time else None,
+                    "reportedTime": props.reported_time.isoformat() if props.reported_time else None,
+                }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "get_resource_health_async: Resource Health API call failed for '%s': %s",
+            resource_id, exc,
+        )
+        return {
+            "availabilityState": "Unknown",
+            "summary": f"Resource Health API unavailable: {exc}",
+            "reasonType": None,
+            "occuredTime": None,
+            "reportedTime": None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# 7. list_advisor_recommendations_async
+# ---------------------------------------------------------------------------
+
+
+async def list_advisor_recommendations_async(
+    scope: str | None = None,
+    category: str | None = None,
+) -> list[dict]:
+    """Return Azure Advisor recommendations for the subscription or a resource group.
+
+    Azure Advisor continuously analyses your resources and produces pre-computed
+    recommendations across four pillars: Cost, Security, Reliability, Performance.
+    This is free intelligence from Microsoft — use it to supplement agent findings.
+
+    Args:
+        scope: Optional resource group name to filter to. If None, returns all
+               recommendations across the subscription.
+        category: Optional filter — "Cost", "Security", "HighAvailability",
+                  "Performance", or "OperationalExcellence". None = all.
+
+    Returns:
+        List of recommendation dicts, each with:
+          - category: pillar (Cost / Security / HighAvailability / Performance)
+          - impact: "High" | "Medium" | "Low"
+          - impactedField: resource type affected
+          - impactedValue: resource name affected
+          - shortDescription: brief summary of the recommendation
+          - remediation: suggested fix text
+          - resourceId: ARM ID of the affected resource
+    """
+    if _use_mocks():
+        return [
+            {
+                "category": "HighAvailability",
+                "impact": "Medium",
+                "impactedField": "microsoft.compute/virtualmachines",
+                "impactedValue": "vm-web-demo-01",
+                "shortDescription": "Mock: Enable VM availability sets or zones.",
+                "remediation": "Deploy VM in an Availability Zone for redundancy.",
+                "resourceId": "/subscriptions/mock/resourceGroups/mock-rg/providers/Microsoft.Compute/virtualMachines/vm-web-demo-01",
+            }
+        ]
+
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.mgmt.advisor.aio import AdvisorManagementClient
+        from src.config import settings
+
+        async with DefaultAzureCredential() as cred:
+            async with AdvisorManagementClient(cred, settings.azure_subscription_id) as client:
+                recs = []
+                async for rec in client.recommendations.list():
+                    props = rec.properties
+                    if not props:
+                        continue
+                    if category and (props.category or "").lower() != category.lower():
+                        continue
+                    impacted = props.impacted_value or ""
+                    if scope and scope.lower() not in (rec.id or "").lower():
+                        continue
+                    recs.append({
+                        "category": props.category or "",
+                        "impact": props.impact or "",
+                        "impactedField": props.impacted_field or "",
+                        "impactedValue": impacted,
+                        "shortDescription": (props.short_description.problem if props.short_description else ""),
+                        "remediation": (props.short_description.solution if props.short_description else ""),
+                        "resourceId": rec.id or "",
+                    })
+                return recs
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "list_advisor_recommendations_async: Advisor API call failed: %s", exc
+        )
+        return []

@@ -527,7 +527,11 @@ class TestScanAPIEndpoints:
     # ------------------------------------------------------------------
 
     def test_alert_trigger_accepts_webhook(self, api_client):
-        """POST /api/alert-trigger with a sample Azure Monitor payload returns 200."""
+        """POST /api/alert-trigger returns immediately with firing status.
+
+        The endpoint is now async — it creates an alert record and launches
+        the investigation in the background.  Returns alert_id + status.
+        """
         alert_payload = {
             "resource_id": (
                 "/subscriptions/demo/resourceGroups/test-rg"
@@ -539,12 +543,49 @@ class TestScanAPIEndpoints:
             "severity": "3",
             "resource_group": "test-rg",
         }
-        # Alert trigger runs synchronously (not background) so it uses mock mode
-        # (USE_LOCAL_MOCKS=True default → _scan_rules() path → seed data proposals)
         response = api_client.post("/api/alert-trigger", json=alert_payload)
 
         assert response.status_code == 200
         data = response.json()
-        assert "alert" in data, "Response must echo the alert"
-        assert "proposals_count" in data, "Response must include proposals_count"
-        assert "verdicts" in data, "Response must include verdicts list"
+        assert data["status"] == "firing", "Alert should start in firing status"
+        assert "alert_id" in data, "Response must include alert_id"
+
+    def test_alerts_list_endpoint(self, api_client):
+        """GET /api/alerts returns a list of alert records."""
+        # Create one alert first
+        api_client.post("/api/alert-trigger", json={
+            "resource_id": "test-vm", "metric": "CPU", "severity": "3",
+        })
+        response = api_client.get("/api/alerts")
+        assert response.status_code == 200
+        data = response.json()
+        assert "count" in data
+        assert "alerts" in data
+        assert data["count"] >= 1
+
+    def test_alerts_active_count_endpoint(self, api_client):
+        """GET /api/alerts/active-count returns active alert count."""
+        response = api_client.get("/api/alerts/active-count")
+        assert response.status_code == 200
+        data = response.json()
+        assert "active_count" in data
+        assert isinstance(data["active_count"], int)
+
+    def test_alert_status_endpoint(self, api_client):
+        """GET /api/alerts/{alert_id}/status returns full alert record."""
+        # Create an alert
+        r = api_client.post("/api/alert-trigger", json={
+            "resource_id": "status-test-vm", "metric": "Memory", "severity": "1",
+        })
+        alert_id = r.json()["alert_id"]
+
+        response = api_client.get(f"/api/alerts/{alert_id}/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["alert_id"] == alert_id
+        assert data["resource_name"] == "status-test-vm"
+
+    def test_alert_status_404_for_unknown(self, api_client):
+        """GET /api/alerts/{unknown}/status returns 404."""
+        response = api_client.get("/api/alerts/nonexistent-id/status")
+        assert response.status_code == 404

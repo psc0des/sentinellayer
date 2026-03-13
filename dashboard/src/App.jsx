@@ -23,8 +23,9 @@ import {
   fetchAgents,
   fetchPendingReviews,
   fetchNotificationStatus,
+  fetchScanHistory,
+  fetchAlerts,
   testTeamsNotification,
-  adminReset,
 } from './api'
 import Sidebar from './components/Sidebar'
 import Overview  from './pages/Overview'
@@ -32,7 +33,9 @@ import Scans     from './pages/Scans'
 import Agents    from './pages/Agents'
 import Decisions from './pages/Decisions'
 import AuditLog  from './pages/AuditLog'
-import { RefreshCw, Bell, Trash2 } from 'lucide-react'
+import Alerts    from './pages/Alerts'
+import Admin     from './pages/Admin'
+import { RefreshCw, Bell } from 'lucide-react'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -75,6 +78,8 @@ function ErrorScreen({ message, onRetry }) {
 
 function AppShell() {
   const [evaluations,    setEvaluations]    = useState([])
+  const [scans,          setScans]          = useState([])
+  const [alerts,         setAlerts]         = useState([])
   const [metrics,        setMetrics]        = useState(null)
   const [agents,         setAgents]         = useState([])
   const [pendingReviews, setPendingReviews] = useState([])
@@ -89,16 +94,20 @@ function AppShell() {
    * pendingReviews silently falls back to [] if the gateway is disabled.
    */
   const fetchAll = useCallback(async () => {
-    const [evalsData, metricsData, agentsData, reviewsData] = await Promise.all([
+    const [evalsData, metricsData, agentsData, reviewsData, scansData, alertsData] = await Promise.all([
       fetchEvaluations(200),
       fetchMetrics(),
       fetchAgents(),
       fetchPendingReviews().catch(() => ({ pending_reviews: [] })),
+      fetchScanHistory(200).catch(() => ({ scans: [] })),
+      fetchAlerts(200).catch(() => ({ alerts: [] })),
     ])
     setEvaluations(evalsData.evaluations ?? [])
     setMetrics(metricsData)
     setAgents(agentsData.agents ?? [])
     setPendingReviews(reviewsData.pending_reviews ?? [])
+    setScans(scansData.scans ?? [])
+    setAlerts(alertsData.alerts ?? [])
   }, [])
 
   const load = useCallback(async () => {
@@ -132,11 +141,12 @@ function AppShell() {
   if (loading) return <LoadingScreen />
   if (error)   return <ErrorScreen message={error} onRetry={load} />
 
-  const context = { evaluations, metrics, agents, pendingReviews, fetchAll }
+  const alertCount = alerts.filter(a => a.status === 'firing' || a.status === 'investigating').length
+  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, fetchAll }
 
   return (
     <div className="min-h-screen text-slate-100 flex font-sans" style={{ background: 'var(--bg-base)', fontFamily: 'var(--font-ui)' }}>
-      <Sidebar pendingCount={pendingReviews.length} />
+      <Sidebar pendingCount={pendingReviews.length} alertCount={alertCount} />
 
       <div className="flex-1 flex flex-col min-w-0 bg-dots">
 
@@ -191,23 +201,6 @@ function AppShell() {
             <RefreshCw className="w-4 h-4" />
           </button>
 
-          {/* Dev reset */}
-          <button
-            onClick={async () => {
-              if (!window.confirm('Delete ALL local evaluation data and start fresh?')) return
-              try {
-                const result = await adminReset()
-                await load()
-                alert(`Reset complete — deleted ${result.total} records.`)
-              } catch (e) {
-                alert(`Reset failed: ${e.message}`)
-              }
-            }}
-            className="text-red-500/50 hover:text-red-400 transition-colors p-1 rounded"
-            title="Dev/test only — wipe all local data"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
         </header>
 
         {/* ── Page content ── */}
@@ -232,7 +225,9 @@ export default function App() {
           <Route path="agents"      element={<Agents />} />
           <Route path="decisions"   element={<Decisions />} />
           <Route path="decisions/:id" element={<Decisions />} />
+          <Route path="alerts"      element={<Alerts />} />
           <Route path="audit"       element={<AuditLog />} />
+          <Route path="admin"       element={<Admin />} />
           <Route path="*"           element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>

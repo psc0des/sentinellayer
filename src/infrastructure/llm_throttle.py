@@ -98,7 +98,11 @@ async def run_with_throttle(coro_fn, *args, **kwargs):
     """
     sem = _get_semaphore()
     max_retries = 3
-    base_delay = 2.0  # seconds — doubles each retry: 2 s, 4 s, 8 s
+    base_delay = 10.0  # seconds — doubles each retry: 10 s, 20 s, 40 s
+    # Azure OpenAI rate-limit windows are 60 seconds.  The original 2 s base
+    # (2/4/8 s = 14 s total) was too short — all retries fired inside the same
+    # window.  10 s base gives 70 s total wait, just past the 60 s reset point.
+    # 15 s (105 s total) works but is overly conservative when quota is healthy.
 
     for attempt in range(max_retries + 1):
         # ------------------------------------------------------------------

@@ -23,7 +23,7 @@ import { BASE } from '../api'
 
 const AGENT_LABELS = {
   cost:       'Cost Agent',
-  monitoring: 'SRE Agent',
+  monitoring: 'Monitoring Agent',
   deploy:     'Deploy Agent',
   all:        'All Agents',
 }

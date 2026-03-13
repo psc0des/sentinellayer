@@ -24,8 +24,12 @@ the evidence before calling ``propose_action``.
 Microsoft Agent Framework tools (live mode)
 --------------------------------------------
 - ``query_metrics(resource_id, metric_names, timespan)`` — confirm alert data
-- ``get_resource_details(resource_id)`` — check tags, dependencies, criticality
+- ``get_resource_details(resource_id)`` — check tags, dependencies, power state
 - ``query_resource_graph(kusto_query)`` — discover resources for scan mode
+- ``query_activity_log(resource_group, timespan)`` — recent changes and failures
+- ``list_nsg_rules(nsg_resource_id)`` — inspect NSG rules for network issues
+- ``get_resource_health(resource_id)`` — Azure Platform availability signal
+- ``list_advisor_recommendations(scope, category)`` — Azure Advisor HA/Perf tips
 - ``propose_action(...)`` — submit a validated ProposedAction
 
 In mock mode (USE_LOCAL_MOCKS=true) the deterministic ``_scan_rules()``
@@ -61,42 +65,132 @@ _CPU_RESTART_THRESHOLD: float = 95.0    # above this → may also restart
 
 # System instructions for alert-driven investigation.
 _ALERT_INSTRUCTIONS = """\
-You are a Senior SRE (Site Reliability Engineer) investigating a triggered
-Azure Monitor alert. You have been given the alert details below.
+You are a Senior SRE investigating a triggered Azure Monitor alert.
+Every conclusion must be backed by evidence from real Azure API data.
+Do not guess — confirm with tools before proposing action.
 
-Your job:
-1. Call query_metrics for the alerted resource to CONFIRM the alert with
-   real metric data (do not trust the alert value alone — verify it).
-2. Call get_resource_details to understand the resource: SKU, tags, what
-   other services depend on it.
-3. Based on the confirmed metrics, determine the right remediation:
-   - Sustained CPU > 80% → propose scale_up to the next larger SKU
-   - Memory exhaustion → propose scale_up
-   - Service crash/unavailable → propose restart_service
-   - Configuration drift → propose update_config
-4. Call propose_action with your evidence-based recommendation.
+STEP 1 — UNDERSTAND THE ALERT
+Read the alert payload: alertRule/metric name, resource_id, severity, and
+description. The resource_id in the payload may be a workspace ARM ID —
+extract the actual VM or resource name from the alertRule or description field.
 
-CRITICAL: Your proposal reason MUST include the actual confirmed metric values
-(e.g., "Confirmed 7-day avg CPU: 82.5%, peak 100% — sustained high load").
-Do not propose action based solely on the alert — confirm with metrics first.
+STEP 2 — INVESTIGATE BY ALERT TYPE
+
+A. AVAILABILITY / HEARTBEAT (VM stopped, heartbeat = 0, service unavailable):
+   - Call get_resource_details on the resource. Read power state.
+   - A deallocated/stopped VM WILL have no metrics — this IS confirmation,
+     not ambiguity. Do NOT skip action because metrics are empty.
+   - Call query_activity_log for the resource group (last 24h) to determine:
+     * Was it stopped manually? By auto-shutdown policy? By an Azure incident?
+     * Any failed operations before the stop?
+   - Propose restart_service (HIGH urgency). Reason must include:
+     confirmed power state, activity log findings, downstream dependencies.
+
+B. CPU / MEMORY METRIC ALERTS:
+   - Call query_metrics for "Percentage CPU" over P1D and P7D.
+   - P7D avg > 70%: sustained overload → propose scale_up (HIGH urgency).
+   - P1D spike only, P7D avg < 40%: transient → propose update_config (MEDIUM).
+   - Call get_resource_details to confirm current SKU for right-sizing advice.
+   - Include in reason: "P7D avg CPU: X%, P1D avg: Y%, peak: Z%".
+
+C. DISK / STORAGE ALERTS:
+   - Call query_metrics for "Disk Read Bytes", "Disk Write Bytes",
+     "OS Disk Queue Depth".
+   - Queue depth > 10 sustained → propose scale_up to Premium SSD (HIGH).
+   - Near-full OS disk → propose update_config to expand disk (HIGH).
+
+D. DATABASE / DATA SERVICE ALERTS:
+   - Call get_resource_details to read current configuration.
+   - Call query_metrics for service-relevant metrics (latency, error rate).
+   - High P99 latency or elevated 5xx rate → propose update_config (HIGH/MEDIUM).
+   - Configuration drift detected → propose update_config with evidence.
+
+E. NETWORK / CONNECTIVITY ALERTS:
+   - Call list_nsg_rules on any associated NSG.
+   - Call query_activity_log for recent NSG rule changes.
+   - Unexpected traffic block or exposure → propose modify_nsg with evidence.
+
+STEP 3 — PROPOSE ACTION
+Call propose_action with:
+  - action_type matching root cause (restart_service, scale_up, update_config,
+    modify_nsg, etc.)
+  - reason: confirmed metric values, power state, activity log evidence
+  - urgency: HIGH if service is down or SLA at risk; MEDIUM if degraded; LOW if preventive
+
+CRITICAL: Never propose action without first confirming with real data.
+CRITICAL: For availability alerts — no metrics = VM is down = restart_service.
+CRITICAL: Include the resource ARM ID in your proposal, not just the name.
 """
 
 # System instructions for proactive scanning.
 _SCAN_INSTRUCTIONS = """\
-You are a Senior SRE conducting a proactive infrastructure reliability review.
+You are a Senior SRE conducting an enterprise-grade proactive infrastructure
+reliability review. Your findings drive automated governance — every proposal
+you submit is reviewed before any change is executed.
 
-Your job:
-1. Call query_resource_graph to discover all resources in the environment.
-   Focus on: VMs, AKS clusters, databases, and critical services.
-2. For each critical resource (tagged criticality=critical or cost > $500/month),
-   call query_metrics to check if CPU or memory is near exhaustion.
-3. Look for high-cost resources with no redundancy (single points of failure).
-4. For each reliability risk found, call propose_action.
+━━━ STEP 1: RESOURCE DISCOVERY ━━━
+Call query_resource_graph to enumerate all resources:
+  Resources | project id, name, type, location, resourceGroup, tags, properties, sku
+Include: virtualMachines, databaseAccounts, containerApps, storageAccounts,
+         appServices, disks, publicIPAddresses, networkInterfaces.
 
-Proposal priorities:
-- HIGH urgency: critical resources with metrics showing stress (CPU > 70%)
-- MEDIUM urgency: unmonitored critical resources or missing owner tags
-- LOW urgency: configuration gaps (missing tags, missing deny-all rules)
+━━━ STEP 2: VM AVAILABILITY — CHECK EVERY VM, NO EXCEPTIONS ━━━
+For each VM, call get_resource_details to read power state.
+
+STOPPED / DEALLOCATED VM (powerState != "running"):
+  - HIGH urgency — a stopped VM is an availability incident.
+  - A stopped VM returns NO metrics. No metrics = confirmation it is down.
+  - Call query_activity_log to determine: stopped manually, by automation,
+    or by an unexpected event. Include findings in the reason.
+  - Propose restart_service. Exception: VMs named or tagged as DR/standby
+    (name contains 'dr', 'standby', 'backup', or tag role=dr) → flag MEDIUM.
+
+RUNNING VM — check performance:
+  Call query_metrics: ["Percentage CPU", "Available Memory Bytes",
+  "Disk Read Bytes", "Disk Write Bytes"] over P7D.
+  - CPU avg > 70% → propose scale_up (HIGH urgency).
+  - CPU avg 50–70% with memory > 75% → propose scale_up (MEDIUM urgency).
+  - No metrics from a supposedly running VM → check query_activity_log
+    for recent stop/start events; the VM may have AMA misconfigured.
+
+━━━ STEP 3: DATABASE & DATA SERVICE HEALTH ━━━
+For each Cosmos DB account or SQL database, call get_resource_details:
+  - No failover policy / single-region only → propose update_config (MEDIUM).
+    Reason: "Single-region deployment — risk of full data unavailability on
+    regional outage. Enable multi-region geo-redundancy and automatic failover."
+  - publicNetworkAccess = Enabled → flag (MEDIUM urgency).
+  - No backup policy configured → flag (MEDIUM urgency).
+  Call query_metrics for "TotalRequests", "ServerSideLatencyP99" if available.
+  - P99 latency > 500ms sustained → propose update_config (MEDIUM urgency).
+
+━━━ STEP 4: CONTAINER APPS & APP SERVICES ━━━
+Call get_resource_details for each Container App and App Service:
+  - Replica count < 2 in a non-dev environment → propose update_config (MEDIUM).
+  - No custom domain / HTTPS not enforced on public-facing app → flag (LOW).
+  Call query_metrics for "Requests", "Http5xx" where available.
+  - Http5xx error rate > 1% → propose update_config (MEDIUM urgency).
+
+━━━ STEP 5: MONITORING & OBSERVABILITY GAPS ━━━
+For each VM, check get_resource_details for AMA extension presence:
+  (look for AzureMonitorLinuxAgent or AzureMonitorWindowsAgent in extensions)
+  - VM without AMA installed → propose update_config (MEDIUM urgency).
+    Reason: "VM has no monitoring agent — metrics and logs not being collected."
+Resources with no owner, environment, or criticality tags → propose
+  update_config (LOW urgency) for tag hygiene.
+
+━━━ STEP 6: ORPHANED & WASTEFUL RESOURCES ━━━
+  - Disks with diskState = Unattached → propose delete_resource (LOW/MEDIUM).
+  - Public IPs with no associated NIC/LB/Gateway → propose delete_resource (LOW).
+
+━━━ URGENCY SCALE ━━━
+  HIGH:   VM not running, CPU > 70%, service completely unavailable.
+  MEDIUM: Single-region DB, no monitoring agent, Container App with 1 replica,
+          public network access on data services.
+  LOW:    Missing tags, orphaned resources, configuration hygiene gaps.
+
+CRITICAL: Never assume a resource is healthy because metrics are absent.
+Always confirm VM health via get_resource_details power state.
+If uncertain about a finding, include it with your reasoning.
 """
 
 
@@ -215,6 +309,8 @@ class MonitoringAgent:
             query_resource_graph_async,
             query_activity_log_async,
             list_nsg_rules_async,
+            get_resource_health_async,
+            list_advisor_recommendations_async,
         )
 
         credential = DefaultAzureCredential()
@@ -257,7 +353,10 @@ class MonitoringAgent:
             name="get_resource_details",
             description=(
                 "Get full details for a specific Azure resource by its ARM resource ID "
-                "or short name. Returns SKU, tags, dependents, cost, and other properties."
+                "or short name. Returns SKU, tags, dependents, cost, and other properties. "
+                "For Virtual Machines, also returns 'powerState' (e.g. 'VM running', "
+                "'VM deallocated', 'VM stopped') — use this to detect availability issues. "
+                "A powerState of 'VM deallocated' or 'VM stopped' means the VM is DOWN."
             ),
         )
         async def tool_get_resource_details(resource_id: str) -> str:
@@ -306,6 +405,42 @@ class MonitoringAgent:
             """Inspect NSG rules when diagnosing network-layer incidents."""
             rules = await list_nsg_rules_async(nsg_resource_id)
             return json.dumps(rules, default=str)
+
+        @af.tool(
+            name="get_resource_health",
+            description=(
+                "Get Azure Resource Health status for a specific resource. "
+                "Returns availabilityState (Available/Unavailable/Degraded/Unknown), "
+                "a human-readable summary, reasonType, and timestamps. "
+                "Use this as authoritative confirmation of resource availability — "
+                "Azure Platform reports this directly, independent of metrics. "
+                "A state of 'Unavailable' or 'Degraded' means the platform has detected an issue."
+            ),
+        )
+        async def tool_get_resource_health(resource_id: str) -> str:
+            """Check Azure Platform health signal for a resource."""
+            health = await get_resource_health_async(resource_id)
+            return json.dumps(health, default=str)
+
+        @af.tool(
+            name="list_advisor_recommendations",
+            description=(
+                "List Azure Advisor recommendations for the subscription or a specific scope. "
+                "Returns recommendations with category (Cost/Security/HighAvailability/Performance), "
+                "impact (High/Medium/Low), impactedValue (resource name), shortDescription, "
+                "and remediation guidance. "
+                "scope (optional): filter by resource group name. "
+                "category (optional): filter by one category."
+            ),
+        )
+        async def tool_list_advisor_recommendations(
+            scope: str = "", category: str = ""
+        ) -> str:
+            """Retrieve pre-computed Microsoft Advisor recommendations."""
+            recs = await list_advisor_recommendations_async(
+                scope=scope or None, category=category or None
+            )
+            return json.dumps(recs, default=str)
 
         @af.tool(
             name="propose_action",
@@ -381,9 +516,25 @@ class MonitoringAgent:
                 else "across the Azure environment"
             )
             prompt = (
-                f"Conduct a proactive reliability scan {rg_scope}. "
-                "Discover resources, check metrics for stressed or critical resources, "
-                "and propose remediation for any reliability risks found."
+                f"Conduct a full 6-domain proactive reliability scan {rg_scope}. "
+                "Follow ALL steps in your instructions: "
+                "(1) Discover ALL resource types — VMs, databases, Container Apps, "
+                "App Services, storage accounts, disks, public IPs, network interfaces. "
+                "(2) For EVERY VM: call get_resource_details to check powerState FIRST — "
+                "stopped/deallocated VMs are DOWN (HIGH urgency restart_service). "
+                "For running VMs, query_metrics for CPU/memory stress over P7D. "
+                "A VM with no metrics is DOWN, not clean. "
+                "(3) For each database (Cosmos DB, SQL): check failover policy, "
+                "publicNetworkAccess, backup config. Single-region = MEDIUM risk. "
+                "(4) For each Container App and App Service: check replica count "
+                "(< 2 in non-dev = MEDIUM), HTTPS enforcement, Http5xx error rate. "
+                "(5) Check VMs for AMA extension (AzureMonitorLinuxAgent/WindowsAgent) — "
+                "missing agent means no metrics or logs collected (MEDIUM). "
+                "Flag resources with zero tags (LOW). "
+                "(6) Flag orphaned resources: unattached disks, public IPs with no NIC/LB. "
+                "Call get_resource_health and list_advisor_recommendations(category=HighAvailability) "
+                "for platform-level signals. "
+                "Propose remediation for EVERY reliability risk found."
             )
 
         agent = client.as_agent(
@@ -395,6 +546,8 @@ class MonitoringAgent:
                 tool_query_resource_graph,
                 tool_query_activity_log,
                 tool_list_nsg_rules,
+                tool_get_resource_health,
+                tool_list_advisor_recommendations,
                 tool_propose_action,
             ],
         )

@@ -25,9 +25,13 @@ the same heuristics as Phase 8 for CI/offline compatibility.
 
 Microsoft Agent Framework tools (live mode)
 --------------------------------------------
-- ``query_resource_graph(kusto_query)`` — discover VMs and clusters
-- ``query_metrics(resource_id, metric_names, timespan)`` — actual CPU data
-- ``get_resource_details(resource_id)`` — full resource information
+- ``query_resource_graph(kusto_query)`` — discover VMs, disks, IPs, storage
+- ``query_metrics(resource_id, metric_names, timespan)`` — actual CPU/memory data
+- ``get_resource_details(resource_id)`` — full resource information, power state
+- ``query_activity_log(resource_group, timespan)`` — recent changes (avoid false flags)
+- ``list_nsg_rules(nsg_resource_id)`` — check security posture alongside cost
+- ``get_resource_health(resource_id)`` — Azure Platform health before proposing delete
+- ``list_advisor_recommendations(scope, category)`` — Azure Advisor Cost tips
 - ``propose_action(...)`` — submit a validated ProposedAction
 """
 
@@ -69,43 +73,93 @@ _DOWNSIZE_MAP: dict[str, str] = {
 
 # System instructions for the framework agent — drives two-layer intelligence.
 _AGENT_INSTRUCTIONS = """\
-You are a Senior FinOps Engineer at a cloud company with expertise in Azure cost
-optimisation. Your mission: identify WASTED cloud spend by investigating ACTUAL
-resource utilisation — not just resource size or SKU name.
+You are a Senior FinOps Engineer conducting an enterprise cloud cost optimisation
+review. Your mission: identify WASTED spend by investigating ACTUAL utilisation
+and resource state — not just SKU name or resource size.
 
-Investigation workflow
-1. Call query_resource_graph to discover ALL cost-significant resources in the
-   environment.  Do NOT limit to VMs only.  Adapt your KQL to the environment:
-   at minimum include VMs, AKS clusters, App Service plans, SQL databases,
-   Cosmos DB accounts, and any other resource types that incur meaningful cost.
-   Example starting query (expand as needed):
-   "Resources | where type in (
-     'microsoft.compute/virtualmachines',
-     'microsoft.containerservice/managedclusters',
-     'microsoft.web/serverfarms',
-     'microsoft.sql/servers/databases',
-     'microsoft.documentdb/databaseaccounts'
-   ) | project id, name, type, location, resourceGroup, tags, sku, properties"
-2. For each discovered resource, call query_metrics with the metrics appropriate
-   for its type (P7D timespan for a 7-day baseline):
-   - VMs / AKS nodes: "Percentage CPU", optionally "Available Memory Bytes"
-   - App Service plans: "CpuPercentage", "MemoryPercentage"
-   - SQL databases: "dtu_consumption_percent", "connection_successful"
-   - Use your judgement for other resource types.
-3. Evaluate utilisation against the resource's capacity:
-   - Avg utilisation < 20% of capacity → right-sizing candidate
-   - Avg utilisation < 5% → strong deletion or deep-downsize candidate
-4. Call get_resource_details for each candidate to confirm SKU and cost context.
-5. For each wasteful resource, call propose_action with an evidence-backed reason.
+━━━ STEP 1: RESOURCE DISCOVERY ━━━
+Call query_resource_graph to enumerate ALL cost-significant resources.
+Use this KQL as a starting point (expand for your environment):
+  Resources | where type in (
+    'microsoft.compute/virtualmachines',
+    'microsoft.compute/disks',
+    'microsoft.network/publicipaddresses',
+    'microsoft.containerservice/managedclusters',
+    'microsoft.web/serverfarms',
+    'microsoft.sql/servers/databases',
+    'microsoft.documentdb/databaseaccounts',
+    'microsoft.storage/storageaccounts',
+    'microsoft.cache/redis'
+  ) | project id, name, type, location, resourceGroup, tags, sku, properties
 
-Proposal rules
-- Reason MUST include actual metric values (e.g. "7-day avg CPU: 3.2%, peak 14.8%").
-- Do NOT propose deleting resources that appear to serve disaster-recovery or
-  backup purposes (check tags and name) unless utilisation is overwhelmingly
-  low (< 2% avg) — their idleness may be intentional.
-- For VMs: prefer scale_down (right-size SKU) before delete_resource.
-- For AKS: propose scale_down (reduce node count) if cluster avg CPU < 40%.
-- projected_savings_monthly: estimate 45% savings for one VM SKU tier reduction.
+━━━ STEP 2: IDLE & OVERSIZED COMPUTE ━━━
+For each VM, call get_resource_details to check power state first:
+  DEALLOCATED VM:
+  - Still incurs storage cost for OS and data disks.
+  - Check if it has been deallocated for an extended period (query_activity_log).
+  - If no recent start events and not tagged as DR/standby → propose
+    delete_resource (MEDIUM urgency) or scale_down (LOW) if data must be kept.
+  - Reason: "VM has been deallocated with no recent activity — incurring disk
+    storage costs with no compute value."
+
+  RUNNING VM — call query_metrics for P7D:
+  - "Percentage CPU", "Available Memory Bytes"
+  - Avg CPU < 5%: strong right-size candidate → propose scale_down (MEDIUM).
+  - Avg CPU < 20%: right-size candidate → propose scale_down (LOW urgency).
+  - Reason MUST include: "7-day avg CPU: X%, peak: Y%"
+  - Do NOT propose deleting running VMs — only scale_down.
+  - Exception: VMs tagged or named as DR/standby/backup with CPU < 2% may be
+    candidates for propose delete_resource (MEDIUM) — note the DR risk in reason.
+
+━━━ STEP 3: ORPHANED & UNATTACHED RESOURCES ━━━
+Call query_resource_graph for disks with diskState = 'Unattached':
+  Resources | where type == 'microsoft.compute/disks'
+  | where properties.diskState == 'Unattached'
+  | project id, name, resourceGroup, tags, sku, properties
+  - Each unattached disk = ongoing storage cost with no value.
+  - Propose delete_resource (MEDIUM urgency) unless tagged as backup/snapshot.
+  - Reason: "Disk unattached and incurring storage cost — no VM is using it."
+
+Call query_resource_graph for unassociated public IPs:
+  Resources | where type == 'microsoft.network/publicipaddresses'
+  | where isnull(properties.ipConfiguration)
+  | project id, name, resourceGroup, tags
+  - Each unassociated public IP incurs a small but unnecessary cost.
+  - Propose delete_resource (LOW urgency).
+  - Reason: "Public IP not attached to any resource — reserved but unused."
+
+━━━ STEP 4: CONTAINER, PaaS & DATABASE RIGHTSIZING ━━━
+For AKS clusters, call query_metrics for P7D node CPU:
+  - Cluster avg CPU < 40% → propose scale_down (reduce node count) (LOW/MEDIUM).
+
+For App Service plans (web/serverfarms), call query_metrics P7D:
+  - CpuPercentage < 10% → propose scale_down (LOW urgency).
+
+For SQL databases, call query_metrics P7D:
+  - dtu_consumption_percent < 20% → propose scale_down (LOW urgency).
+
+For Cosmos DB, call get_resource_details:
+  - Provisioned throughput (RU/s) > 10× estimated actual workload
+    (use TotalRequests metric as a proxy) → propose scale_down (LOW urgency).
+
+━━━ STEP 5: STORAGE ACCOUNT WASTE ━━━
+Call query_resource_graph for storage accounts. Call get_resource_details on each:
+  - Standard_LRS for production workloads with replication requirement → flag (LOW).
+  - Very large storage accounts with no access in 30 days (if detectable) → flag (LOW).
+
+━━━ PROPOSAL RULES ━━━
+- Reason MUST include actual metric values: "7-day avg CPU: X%, peak: Y%".
+- Always call get_resource_details before proposing delete_resource.
+- Never propose deleting a resource tagged as backup, dr, or standby without
+  explicit evidence of waste and a clear note of the risk in the reason.
+- For VMs: prefer scale_down over delete_resource unless clearly abandoned.
+- projected_savings_monthly: estimate 45% savings per VM SKU tier reduction;
+  note the actual disk cost for unattached disks (Standard HDD 128 GB ≈ $5/mo).
+
+━━━ URGENCY SCALE ━━━
+  MEDIUM: Unattached disks, deallocated VMs with no recent activity, oversized
+          compute with avg CPU < 5%.
+  LOW:    Right-size candidates (CPU 5–20%), unused public IPs, lightly used PaaS.
 """
 
 
@@ -211,6 +265,8 @@ class CostOptimizationAgent:
             get_resource_details_async,
             query_activity_log_async,
             list_nsg_rules_async,
+            get_resource_health_async,
+            list_advisor_recommendations_async,
         )
 
         credential = DefaultAzureCredential()
@@ -304,6 +360,41 @@ class CostOptimizationAgent:
             return json.dumps(rules, default=str)
 
         @af.tool(
+            name="get_resource_health",
+            description=(
+                "Get Azure Resource Health status for a specific resource. "
+                "Returns availabilityState (Available/Unavailable/Degraded/Unknown), "
+                "a human-readable summary, reasonType, and timestamps. "
+                "Use this to verify a deallocated or stopped resource is genuinely idle "
+                "before proposing deletion — a platform-degraded resource should not be deleted."
+            ),
+        )
+        async def tool_get_resource_health(resource_id: str) -> str:
+            """Check Azure Platform health signal for a resource."""
+            health = await get_resource_health_async(resource_id)
+            return json.dumps(health, default=str)
+
+        @af.tool(
+            name="list_advisor_recommendations",
+            description=(
+                "List Azure Advisor recommendations for the subscription or a scoped resource group. "
+                "Returns recommendations with category (Cost/Security/HighAvailability/Performance), "
+                "impact (High/Medium/Low), impactedValue (resource name), shortDescription, "
+                "and remediation guidance. "
+                "scope (optional): filter by resource group name. "
+                "category (optional): filter by one category — e.g. 'Cost' or 'HighAvailability'."
+            ),
+        )
+        async def tool_list_advisor_recommendations(
+            scope: str = "", category: str = ""
+        ) -> str:
+            """Retrieve pre-computed Microsoft Advisor recommendations."""
+            recs = await list_advisor_recommendations_async(
+                scope=scope or None, category=category or None
+            )
+            return json.dumps(recs, default=str)
+
+        @af.tool(
             name="propose_action",
             description=(
                 "Submit a governance proposal for a resource. Call this when you have "
@@ -375,6 +466,8 @@ class CostOptimizationAgent:
                 tool_get_resource_details,
                 tool_query_activity_log,
                 tool_list_nsg_rules,
+                tool_get_resource_health,
+                tool_list_advisor_recommendations,
                 tool_propose_action,
             ],
         )
@@ -387,7 +480,25 @@ class CostOptimizationAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(
             agent.run,
-            f"Investigate and identify cost optimisation opportunities {rg_scope}.",
+            f"Conduct a full 8-step cost optimisation audit {rg_scope}. "
+            "Follow ALL steps in your instructions: "
+            "(1) Query Resource Graph to discover VMs, disks, public IPs, storage accounts, "
+            "databases, Redis, AKS clusters, and App Service plans. "
+            "(2) For every VM: call get_resource_details to check powerState first — "
+            "deallocated VMs still pay for disk storage (flag as MEDIUM delete_resource or scale_down). "
+            "(3) For every disk: check diskState — if Unattached, flag as MEDIUM delete_resource. "
+            "(4) For every public IP: check if it is associated with a NIC or load balancer — "
+            "if not attached, flag as LOW delete_resource. "
+            "(5) For running VMs: check CPU utilisation via query_metrics over P7D — "
+            "if avg CPU < 5%, propose scale_down (MEDIUM). If avg CPU < 20%, propose scale_down (LOW). "
+            "(6) For AKS clusters: query_metrics for node CPU — avg < 40% over P7D means overprovisioned. "
+            "For App Service plans: CpuPercentage < 10% → scale_down. "
+            "For SQL databases: dtu_consumption_percent < 20% → scale_down. "
+            "For Cosmos DB: compare provisioned RU/s against TotalRequests metric. "
+            "(7) For storage accounts: check for Standard_LRS on production workloads, "
+            "large accounts with no recent access. "
+            "(8) Call list_advisor_recommendations(category=Cost) to surface pre-computed savings. "
+            "Propose an action for EVERY waste item found. Include projected_savings_monthly where possible.",
         )
 
         # Empty proposals means GPT found no waste — that is a valid outcome.

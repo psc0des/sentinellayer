@@ -22,7 +22,7 @@ import { DollarSign, Activity, Shield, Zap, ClipboardList } from 'lucide-react'
 
 const AGENT_LABELS = {
   cost:       'Cost Scan',
-  monitoring: 'SRE Scan',
+  monitoring: 'Monitoring Scan',
   deploy:     'Deploy Scan',
 }
 
@@ -106,7 +106,15 @@ function AgentButton({ type, scanning, lastStatus, onTrigger, onViewResults }) {
         ) : (
           <p className={`text-xs font-mono mt-0.5 ${statusColour(lastStatus[type].status)}`}>
             {lastStatus[type].status === 'running' && 'Scanning…'}
-            {lastStatus[type].status === 'error' && `Error: ${lastStatus[type].error}`}
+            {lastStatus[type].status === 'error' && (
+              lastStatus[type].scan_error?.includes('429') || lastStatus[type].scan_error?.includes('Too Many')
+                ? 'Rate limited — wait 60s and retry'
+                : lastStatus[type].scan_error
+                  ? `Error: ${lastStatus[type].scan_error.slice(0, 80)}…`
+                  : lastStatus[type].error
+                    ? `Error: ${lastStatus[type].error}`
+                    : 'Agent framework error'
+            )}
           </p>
         )
       )}

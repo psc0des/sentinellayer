@@ -18,11 +18,15 @@ export default function Decisions() {
   const navigate  = useNavigate()
   const location  = useLocation()
 
+  // Read ?agent= and ?exec= from URL
+  const params       = new URLSearchParams(location.search)
+  const agentParam   = params.get('agent') ?? 'all'
+
   // If the URL contains ?exec=..., pre-open the relevant drilldown via the
   // execution_id stored in pendingReviews (which have verdict_snapshot)
   useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    const execId = params.get('exec')
+    const p = new URLSearchParams(location.search)
+    const execId = p.get('exec')
     if (!execId || !pendingReviews.length) return
 
     const review = pendingReviews.find(r => r.execution_id === execId)
@@ -33,7 +37,7 @@ export default function Decisions() {
 
   function handleBack() {
     setDrilldownEval(null)
-    // Remove the ?exec= query param when going back
+    // Remove query params when going back
     if (location.search) navigate('/decisions', { replace: true })
   }
 
@@ -76,9 +80,11 @@ export default function Decisions() {
           </div>
 
           <DecisionTable
+            key={agentParam}
             evaluations={evaluations}
             onSelect={setDrilldownEval}
             onRefresh={fetchAll}
+            initialAgent={agentParam}
           />
         </>
       )}

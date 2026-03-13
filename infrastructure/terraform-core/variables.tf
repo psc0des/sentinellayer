@@ -107,9 +107,9 @@ variable "create_foundry_deployment" {
 }
 
 variable "foundry_model" {
-  description = "Foundry model name (example: gpt-4.1)."
+  description = "Foundry model name (example: gpt-5-mini)."
   type        = string
-  default     = "gpt-4.1"
+  default     = "gpt-5-mini"
 }
 
 variable "foundry_model_version" {
@@ -119,9 +119,9 @@ variable "foundry_model_version" {
 }
 
 variable "foundry_deployment_name" {
-  description = "Foundry deployment name used by application runtime."
+  description = "Foundry deployment name used by application runtime (passed as AZURE_OPENAI_DEPLOYMENT env var)."
   type        = string
-  default     = "gpt-41"
+  default     = "gpt-5-mini"
 }
 
 variable "foundry_capacity" {
@@ -236,9 +236,9 @@ variable "execution_gateway_enabled" {
 }
 
 variable "llm_timeout" {
-  description = "Hard timeout in seconds for each LLM call (asyncio.wait_for + HTTP client timeout)."
+  description = "Hard timeout in seconds for each LLM call (asyncio.wait_for + HTTP client timeout). Must be >300s for multi-step agent loops with gpt-5-mini."
   type        = number
-  default     = 120
+  default     = 600
 }
 
 variable "llm_concurrency_limit" {

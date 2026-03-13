@@ -63,13 +63,31 @@ function SortIcon({ field, sortField, sortDir }) {
     : <ArrowDown className="w-3 h-3 text-blue-400" />
 }
 
+// ── Agent display helpers ──────────────────────────────────────────────────
+
+const AGENT_DISPLAY = {
+  'monitoring-agent':        { label: 'Monitoring',    color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/25' },
+  'cost-optimization-agent': { label: 'Cost',   color: 'text-amber-400',  bg: 'bg-amber-500/10',  border: 'border-amber-500/25' },
+  'deploy-agent':            { label: 'Deploy', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/25' },
+}
+
+function AgentBadge({ agentId }) {
+  const cfg = AGENT_DISPLAY[agentId]
+  if (!cfg) return <span className="text-xs text-slate-500">{agentId?.replace(/-agent$/, '') ?? '—'}</span>
+  return (
+    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cfg.color} ${cfg.bg} ${cfg.border}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
-export default function DecisionTable({ evaluations, onSelect, onRefresh }) {
+export default function DecisionTable({ evaluations, onSelect, onRefresh, initialAgent = 'all' }) {
   const [sortField,   setSortField]   = useState('timestamp')
   const [sortDir,     setSortDir]     = useState('desc')
   const [filterVerdict, setFilter]    = useState('all')
-  const [filterAgent, setFilterAgent] = useState('all')
+  const [filterAgent, setFilterAgent] = useState(initialAgent)
   const [searchText,  setSearch]      = useState('')
   const [pageSize,    setPageSize]    = useState(25)
   const [page,        setPage]        = useState(1)
@@ -184,7 +202,7 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh }) {
         >
           {agentOptions.map(a => (
             <option key={a} value={a}>
-              {a === 'all' ? 'All agents' : a.replace(/-agent$/, '')}
+              {a === 'all' ? 'All agents' : (AGENT_DISPLAY[a]?.label ?? a.replace(/-agent$/, ''))}
             </option>
           ))}
         </select>
@@ -239,6 +257,7 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh }) {
               <tr className="border-b border-slate-800">
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Resource</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 hidden sm:table-cell">Action</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 hidden md:table-cell">Agent</th>
                 <ThCol field="sri"     className="text-right">SRI</ThCol>
                 <ThCol field="verdict" className="text-center">Verdict</ThCol>
                 <ThCol field="timestamp" className="text-right hidden md:table-cell">Time</ThCol>
@@ -255,14 +274,12 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh }) {
                     <span className="font-mono text-xs text-slate-200 group-hover:text-white transition-colors">
                       {shortResource(ev.resource_id)}
                     </span>
-                    {ev.agent_id && (
-                      <p className="text-xs text-slate-600 mt-0.5">
-                        via {ev.agent_id.replace(/-agent$/, '')}
-                      </p>
-                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs hidden sm:table-cell">
                     {ev.action_type?.replace(/_/g, ' ')}
+                  </td>
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    <AgentBadge agentId={ev.agent_id} />
                   </td>
                   <td className={`px-4 py-3 text-right font-bold tabular-nums text-xs ${sriColor(ev.sri_composite ?? 0)}`}>
                     {(ev.sri_composite ?? 0).toFixed(1)}
