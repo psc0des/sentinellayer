@@ -693,6 +693,12 @@ resource "azurerm_container_app" "backend" {
     target_port      = 8000
     transport        = "auto"
 
+    # Sticky sessions: pin each client to the same replica for the duration
+    # of the session. Required because SSE queues and scan/alert state are
+    # in-memory per-replica. Without this, the SSE stream for a scan started
+    # on Replica A would be routed to Replica B (no queue → immediate error).
+    sticky_sessions_affinity = "sticky"
+
     # SEC-06: CORS is enforced at the application layer in dashboard_api.py
     # (FastAPI CORSMiddleware). The AzureRM Container App resource does not
     # expose a cors_policy block — network-level CORS is not available on

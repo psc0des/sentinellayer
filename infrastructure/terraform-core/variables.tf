@@ -220,9 +220,9 @@ variable "backend_min_replicas" {
 }
 
 variable "backend_max_replicas" {
-  description = "Maximum number of Container App replicas. Must be 1 — all scan/alert state is in-memory per-replica; multi-replica causes SSE streams to hit the wrong instance."
+  description = "Maximum number of Container App replicas. Sticky sessions (sticky_sessions_affinity) pins each client to one replica, so in-memory SSE queues are safe with multi-replica."
   type        = number
-  default     = 1
+  default     = 3
 }
 
 # ---------------------------------------------------------------------------

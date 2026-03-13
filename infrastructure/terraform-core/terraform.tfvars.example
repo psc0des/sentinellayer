@@ -53,7 +53,7 @@ backend_image        = "ruriskry-backend:latest"
 backend_cpu          = 1.0
 backend_memory       = "2Gi"
 backend_min_replicas = 1
-backend_max_replicas = 1  # Do not increase — in-memory state (SSE queues, scan/alert records) is per-replica
+backend_max_replicas = 3
 
 # LLM tuning
 # llm_timeout: hard wall-clock cap per agent call. Must be >300s for multi-step loops.
