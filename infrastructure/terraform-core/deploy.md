@@ -457,6 +457,7 @@ npx @azure/static-web-apps-cli deploy ./dist \
 | All agent scans return `401 PermissionDenied ... lacks Microsoft.CognitiveServices/accounts/OpenAI/responses/write` | `local_authentication_enabled = false` on Foundry disables API key auth; the Container App MI is missing the `Cognitive Services OpenAI User` role | Handled automatically by `azurerm_role_assignment.foundry_openai_user` in Terraform. If you're hitting this on an existing deploy that pre-dates the fix, run `terraform apply` to add the role assignment. |
 | State lock stuck after network drop | Connection reset before Terraform could release the blob lease | Break the lease: `az storage blob lease break --account-name ruriskrytfstate<suffix> --container-name tfstate --blob-name terraform-core.tfstate` |
 | `terraform plan` shows "No changes" after manually running `az containerapp update --set-env-vars` | The Container App's active revision already has the value you set, so Azure reports no drift — even if `terraform.tfvars` disagrees. Terraform state is now inconsistent with reality. | Never use `az containerapp update --set-env-vars` for config changes. Always update the value in `terraform.tfvars` and run `terraform apply`. To verify the live value: `az containerapp show --name ruriskry-core-backend-<suffix> --resource-group ruriskry-core-engine-rg --query "properties.template.containers[0].env" -o table` |
+| "Scan log unavailable (backend was restarted while scan was running)" on every new scan | Container App running multiple replicas without sticky sessions — scan starts on Replica A (SSE queue created there) but browser SSE stream is load-balanced to Replica B/C (no queue) | `sticky_sessions_affinity = "sticky"` is already set in `main.tf`. If deploying to a pre-existing Container App, apply manually: `az containerapp ingress sticky-sessions set --name ruriskry-core-backend-<suffix> --resource-group ruriskry-core-engine-rg --affinity sticky` |
 
 ---
 
@@ -491,7 +492,7 @@ terraform destroy
 
 | Resource | Approximate cost |
 |----------|--------------------|
-| Container App (1 replica, 1 vCPU / 2 GiB) | ~$35/month |
+| Container App (1–3 replicas, 1 vCPU / 2 GiB, sticky sessions) | ~$35–105/month |
 | Azure AI Foundry (gpt-5-mini GlobalStandard, 200K TPM) | Pay-per-token |
 | Azure AI Search (free tier) | $0 |
 | Cosmos DB (free tier) | $0 |
