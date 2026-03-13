@@ -110,10 +110,14 @@ async def run_with_throttle(coro_fn, *args, **kwargs):
         # already in use.  Released automatically when the `async with` block
         # exits, whether by return or exception.
         # ------------------------------------------------------------------
-        logger.debug(
-            "LLM throttle: waiting for semaphore slot (attempt %d/%d)",
-            attempt + 1, max_retries + 1,
-        )
+        if sem._value == 0:  # noqa: SLF001
+            logger.info(
+                "LLM throttle: all %d slots busy — waiting for a free slot "
+                "(attempt %d/%d). This is normal when alert investigations and "
+                "governance pipelines are running concurrently.",
+                settings.llm_concurrency_limit,
+                attempt + 1, max_retries + 1,
+            )
         async with sem:
             logger.debug("LLM throttle: semaphore acquired — calling LLM")
             try:

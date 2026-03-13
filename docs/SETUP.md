@@ -337,7 +337,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-prod` | Path within the repo to the Terraform config directory. |
 | `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |
 | `LLM_TIMEOUT` | No | `600` | Hard timeout (seconds) for any single agentic LLM call. Applied at two layers: (1) each individual HTTP request to Azure OpenAI, (2) the entire `agent.run()` agentic loop via `asyncio.wait_for`. gpt-5-mini multi-step audit loops need 10+ minutes; 600s is the production-tested minimum. Scans that exceed this limit set `scan_error` and show a red Error badge. |
-| `LLM_CONCURRENCY_LIMIT` | No | `3` | Maximum simultaneous LLM calls across all governance agents (shared semaphore). Set to `1` for very tight quota deployments. |
+| `LLM_CONCURRENCY_LIMIT` | No | `6` | Maximum simultaneous LLM calls across all agents (3 operational + 4 governance + execution share one semaphore). `6` is safe at 200K TPM. Set lower only if hitting 429 errors. |
 | `ORG_NAME` | No | `Contoso` | Display name for your organisation — used in triage context and future reporting. |
 | `ORG_RESOURCE_COUNT` | No | `0` | Approximate total Azure resources under management. Used by risk triage for scale-aware context. |
 | `ORG_COMPLIANCE_FRAMEWORKS` | No | `""` | Comma-separated compliance frameworks in scope (e.g. `HIPAA,PCI-DSS,SOC2`). Any production resource is treated as compliance-scoped when this is non-empty, routing it to Tier 3 governance. |

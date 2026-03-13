@@ -94,12 +94,13 @@ class Settings(BaseSettings):
     demo_mode: bool = False
 
     # --- LLM Rate Limiting ---
-    # Maximum number of simultaneous LLM calls across all governance agents.
-    # Azure OpenAI free-tier deployments typically allow ~3 RPM; higher tiers allow more.
-    # All four governance agents share one process-level semaphore from llm_throttle.py.
-    # Set to 1 to serialise all LLM calls (safest for very tight quota deployments).
-    # Env var: LLM_CONCURRENCY_LIMIT=3
-    llm_concurrency_limit: int = 3
+    # Maximum number of simultaneous LLM calls across ALL agents in the process
+    # (3 operational + 4 governance + execution agent = up to 8 potential concurrent callers).
+    # All agents share one process-level semaphore from llm_throttle.py.
+    # At 200K TPM / 200 RPM each call uses ~5-10K tokens so 6 concurrent calls is safe.
+    # Set lower (e.g. 3) only if hitting 429s; set to 1 to fully serialise.
+    # Env var: LLM_CONCURRENCY_LIMIT=6
+    llm_concurrency_limit: int = 6
 
     # Hard wall-clock timeout (seconds) for any single agentic LLM call.
     # Applied in two layers:
