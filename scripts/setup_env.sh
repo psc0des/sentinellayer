@@ -47,9 +47,10 @@ if ! command -v terraform >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "terraform.tfstate" ]; then
-  echo "ERROR: terraform.tfstate not found."
-  echo "Run 'terraform apply' in infrastructure/terraform-core/ first."
+if ! terraform output -raw foundry_endpoint >/dev/null 2>&1; then
+  echo "ERROR: Terraform has no outputs available."
+  echo "Run 'terraform apply' in infrastructure/terraform-core/ first,"
+  echo "or run 'terraform init' if using remote state."
   exit 1
 fi
 

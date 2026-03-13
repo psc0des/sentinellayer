@@ -628,18 +628,20 @@ class ExecutionGateway:
         agent = ExecutionAgent(cfg=settings)
         result = await agent.rollback(action, plan)
 
-        record.status = ExecutionStatus.rolled_back
         record.reviewed_by = reviewed_by
         record.updated_at = datetime.now(timezone.utc)
         record.rollback_log = result.get("steps_completed", [])
 
         if result["success"]:
+            record.status = ExecutionStatus.rolled_back
             record.notes += f"\nRolled back: {result['summary']}"
             logger.info(
                 "ExecutionGateway: %s — rollback completed by '%s': %s",
                 execution_id[:8], reviewed_by, result["summary"],
             )
         else:
+            # Keep status as 'applied' — the fix is still in place; the rollback failed.
+            # The rollback_log on the record carries the failure detail for the UI.
             record.notes += f"\nRollback failed: {result['summary']}"
             logger.error(
                 "ExecutionGateway: %s — rollback failed: %s",

@@ -140,8 +140,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/agents` | List operational agents connected via A2A |
 | GET | `/api/agents/{agent_name}/history` | Recent decisions for one A2A agent |
 | GET | `/api/agents/{agent_name}/last-run` | Most recent completed scan for one agent |
-| GET | `/api/notification-status` | Teams webhook configuration status |
-| POST | `/api/test-notification` | Send a sample DENIED Adaptive Card to the configured Teams webhook |
+| GET | `/api/notification-status` | Slack webhook configuration status |
+| POST | `/api/test-notification` | Send a test notification to the configured Slack webhook |
 | POST | `/api/alert-trigger` | Webhook — trigger async alert investigation from Azure Monitor |
 | GET | `/api/alerts` | List all alert records newest-first |
 | GET | `/api/alerts/active-count` | Count of currently firing/investigating alerts |
@@ -163,7 +163,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record |
 | GET | `/api/execution/{execution_id}/agent-fix-preview` | Generate LLM-driven execution plan (steps, summary, impact, rollback, backward-compat `commands`) |
 | POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
-| POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back`, stores `rollback_log` |
+| POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back` on success, keeps `applied` on failure; always stores `rollback_log` |
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
 | GET | `/api/config` | Safe system configuration — mode, timeouts, feature flags (no secrets) |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
@@ -587,26 +587,26 @@ Cosmos internal fields (`_rid`, `_etag`, etc.) are stripped. Mock mode reads fro
 
 ### `GET /api/notification-status` (Phase 17)
 
-Return the current Teams notification configuration status. The dashboard header uses this
-to render the 🔔 Teams indicator pill.
+Return the current Slack notification configuration status. The dashboard header uses this
+to render the 🔔 Slack indicator pill.
 
 **Response:**
 ```json
 {
-  "teams_configured": true,
-  "teams_enabled": true
+  "slack_configured": true,
+  "slack_enabled": true
 }
 ```
 
-`teams_configured` is `true` when `TEAMS_WEBHOOK_URL` is non-empty.
-`teams_enabled` reflects `TEAMS_NOTIFICATIONS_ENABLED` (default `true`).
+`slack_configured` is `true` when `SLACK_WEBHOOK_URL` is non-empty.
+`slack_enabled` reflects `SLACK_NOTIFICATIONS_ENABLED` (default `true`).
 
 ---
 
 ### `POST /api/test-notification` (Phase 17)
 
-Send a sample DENIED Adaptive Card to the configured Teams webhook. Useful for judges to
-verify the Teams integration works without running a full governance evaluation.
+Send a sample DENIED Slack message to the configured Slack webhook. Useful for verifying
+the Slack integration works without running a full governance evaluation.
 
 Returns immediately if no webhook is configured.
 
@@ -617,7 +617,7 @@ Returns immediately if no webhook is configured.
 
 **Response (skipped):**
 ```json
-{ "status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured" }
+{ "status": "skipped", "reason": "SLACK_WEBHOOK_URL not configured" }
 ```
 
 **Response (failed):**
@@ -625,7 +625,7 @@ Returns immediately if no webhook is configured.
 { "status": "failed" }
 ```
 
-The sample card shows a realistic DENIED verdict for `vm-dr-01` with SRI 77.0 and POL-DR-001
+The sample message shows a realistic DENIED verdict for `vm-dr-01` with SRI 77.0 and POL-DR-001
 violation — identical format to real governance notifications.
 
 ---

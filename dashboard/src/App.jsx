@@ -25,7 +25,7 @@ import {
   fetchNotificationStatus,
   fetchScanHistory,
   fetchAlerts,
-  testTeamsNotification,
+  testSlackNotification,
 } from './api'
 import Sidebar from './components/Sidebar'
 import Overview  from './pages/Overview'
@@ -85,8 +85,8 @@ function AppShell() {
   const [pendingReviews, setPendingReviews] = useState([])
   const [loading,        setLoading]        = useState(true)
   const [error,          setError]          = useState(null)
-  const [teamsStatus,    setTeamsStatus]    = useState(null)
-  const [teamsBtnLabel,  setTeamsBtnLabel]  = useState('Teams Connected')
+  const [slackStatus,    setSlackStatus]    = useState(null)
+  const [slackBtnLabel,  setSlackBtnLabel]  = useState('Slack Connected')
 
   /**
    * fetchAll — fetch all shared data in parallel.
@@ -126,8 +126,8 @@ function AppShell() {
 
   useEffect(() => {
     fetchNotificationStatus()
-      .then(setTeamsStatus)
-      .catch(() => setTeamsStatus(null))
+      .then(setSlackStatus)
+      .catch(() => setSlackStatus(null))
   }, [])
 
   // Silent background refresh — errors are swallowed
@@ -158,31 +158,31 @@ function AppShell() {
         }}>
           <div className="flex-1" />
 
-          {/* Teams notification button */}
-          {teamsStatus?.teams_configured && teamsStatus?.teams_enabled ? (
+          {/* Slack notification button */}
+          {slackStatus?.slack_configured && slackStatus?.slack_enabled ? (
             <button
               onClick={async () => {
-                setTeamsBtnLabel('Sending…')
+                setSlackBtnLabel('Sending…')
                 try {
-                  const res = await testTeamsNotification()
-                  setTeamsBtnLabel(res.status === 'sent' ? 'Sent!' : 'Failed')
+                  const res = await testSlackNotification()
+                  setSlackBtnLabel(res.status === 'sent' ? 'Sent!' : 'Failed')
                 } catch {
-                  setTeamsBtnLabel('Failed')
+                  setSlackBtnLabel('Failed')
                 }
-                setTimeout(() => setTeamsBtnLabel('Teams Connected'), 2000)
+                setTimeout(() => setSlackBtnLabel('Slack Connected'), 2000)
               }}
               className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-              title="Click to send a test notification to Teams"
+              title="Click to send a test notification to Slack"
             >
               <Bell className="w-3 h-3" />
-              {teamsBtnLabel}
+              {slackBtnLabel}
             </button>
-          ) : teamsStatus ? (
+          ) : slackStatus ? (
             <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border bg-slate-800 border-slate-700 text-slate-500"
-              title="Set TEAMS_WEBHOOK_URL in .env to enable"
+              title="Set SLACK_WEBHOOK_URL in .env to enable"
             >
               <Bell className="w-3 h-3" />
-              Teams: Off
+              Slack: Off
             </div>
           ) : null}
 

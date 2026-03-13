@@ -72,7 +72,7 @@ from src.governance_agents.blast_radius_agent import BlastRadiusAgent
 from src.governance_agents.financial_agent import FinancialImpactAgent
 from src.governance_agents.historical_agent import HistoricalPatternAgent
 from src.governance_agents.policy_agent import PolicyComplianceAgent
-from src.notifications.teams_notifier import send_teams_notification
+from src.notifications.slack_notifier import send_verdict_notification
 from src.operational_agents.cost_agent import CostOptimizationAgent
 from src.operational_agents.deploy_agent import DeployAgent
 from src.operational_agents.monitoring_agent import MonitoringAgent
@@ -269,17 +269,17 @@ class RuriSkryPipeline:
         )
 
         # ------------------------------------------------------------------
-        # Fire-and-forget Teams notification (Phase 17)
+        # Fire-and-forget Slack notification (Phase 32A)
         # ------------------------------------------------------------------
-        # For DENIED or ESCALATED verdicts, send a Teams notification
+        # For DENIED or ESCALATED verdicts, send a Slack Block Kit message
         # asynchronously.  The task runs in the background — the pipeline
         # returns the verdict immediately.  Errors are caught inside
-        # send_teams_notification() so they never affect governance.
+        # send_verdict_notification() so they never affect governance.
         # ------------------------------------------------------------------
         try:
-            asyncio.create_task(send_teams_notification(verdict, action))
+            asyncio.create_task(send_verdict_notification(verdict, action))
         except Exception:
-            logger.debug("Teams notification task could not be created.", exc_info=True)
+            logger.debug("Slack notification task could not be created.", exc_info=True)
 
         return verdict
 

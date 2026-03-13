@@ -43,6 +43,7 @@ import json
 import logging
 import re
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -67,7 +68,11 @@ from src.core.models import (
     Urgency,
 )
 from src.core.scan_run_tracker import ScanRunTracker
-from src.notifications.teams_notifier import send_teams_notification
+from src.notifications.slack_notifier import (
+    send_alert_notification,
+    send_alert_resolved_notification,
+    send_verdict_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,12 +155,36 @@ async def _get_resource_tags(resource_id: str) -> dict[str, str]:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: mark any orphaned 'running' scans as error (process died mid-scan)."""
+    from src.core.scan_run_tracker import ScanRunTracker
+    try:
+        tracker = ScanRunTracker()
+        recent = tracker.get_recent(500)
+        orphaned = [r for r in recent if r.get("status") == "running"]
+        for record in orphaned:
+            sid = record.get("scan_id") or record.get("id")
+            if not sid:
+                continue
+            record["status"] = "error"
+            record["scan_error"] = "Scan interrupted by backend restart."
+            record["completed_at"] = datetime.now(timezone.utc).isoformat()
+            _scans[sid] = record
+            _persist_scan_record(sid)
+            logger.warning("Startup: marked orphaned scan %s as error (was running)", sid[:8])
+    except Exception as exc:
+        logger.warning("Startup: could not clean up orphaned scans: %s", exc)
+    yield  # application runs
+
+
 app = FastAPI(
     title="RuriSkry Dashboard API",
     description=(
         "Governance decision history and risk metrics for the RuriSkry dashboard."
     ),
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # SEC-06: CORS is restricted to the exact dashboard origin + localhost.
@@ -418,6 +447,13 @@ async def _run_agent_scan(
                 examined_names.add(m.group(1).lower())
 
         unresolved_pairs = _get_execution_gateway().get_unresolved_proposals()
+        # Only re-flag proposals that belong to THIS agent — never cross-contaminate
+        # scan records with unresolved issues from other agent types.
+        current_agent_id = _AGENT_REGISTRY_NAMES.get(agent_type, "")
+        unresolved_pairs = [
+            (a, r) for a, r in unresolved_pairs
+            if getattr(a, "agent_id", None) == current_agent_id
+        ]
         requeued = 0
         auto_dismissed = 0
         for unresolved_action, exec_record in unresolved_pairs:
@@ -1201,6 +1237,18 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
     _persist_alert_record(alert_id)
     await _emit_alert_event(alert_id, "alert_investigating", message=f"Agent investigating {resource_id}")
 
+    # Fire-and-forget Slack notification — alert received
+    try:
+        asyncio.create_task(send_alert_notification(
+            alert_id=alert_id,
+            resource_id=resource_id,
+            metric=alert_payload.get("metric", "unknown"),
+            severity=alert_payload.get("severity", "unknown"),
+            description=alert_payload.get("description", ""),
+        ))
+    except Exception:
+        logger.debug("Slack alert-fired notification task could not be created.", exc_info=True)
+
     try:
         agent = MonitoringAgent()
         proposals = await agent.scan(alert_payload=alert_payload)
@@ -1290,6 +1338,18 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
             "totals": {"approved": approved, "escalated": escalated, "denied": denied},
         })
         _persist_alert_record(alert_id)
+
+        # Fire-and-forget Slack notification — investigation complete
+        try:
+            asyncio.create_task(send_alert_resolved_notification(
+                alert_id=alert_id,
+                resource_id=resource_id,
+                approved=approved,
+                escalated=escalated,
+                denied=denied,
+            ))
+        except Exception:
+            logger.debug("Slack alert-resolved notification task could not be created.", exc_info=True)
 
         summary = f"{approved} approved, {escalated} escalated, {denied} denied"
         logger.info("alert %s: resolved — %d verdicts (%s)", alert_id[:8], len(verdicts), summary)
@@ -1856,13 +1916,23 @@ async def stream_scan_events(scan_id: str):
             # Scan exists but queue is gone (e.g. already completed before client connected).
             # Check if scan is already done and emit a synthetic complete event.
             record = _get_scan_record(scan_id) or {}
+            status = record.get("status")
+            if status == "complete":
+                msg = f"Scan completed — {record.get('proposals_count', 0)} proposal(s) found. View results in Decisions."
+                evt = "scan_complete"
+            elif status == "error":
+                msg = f"Scan ended with an error: {record.get('scan_error') or 'unknown error'}."
+                evt = "scan_error"
+            else:
+                msg = "Scan log unavailable (backend was restarted while scan was running)."
+                evt = "scan_error"
             synthetic = {
-                "event": "scan_complete" if record.get("status") == "complete" else "scan_error",
+                "event": evt,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "scan_id": scan_id,
                 "agent": record.get("agent_type"),
-                "message": "Scan already finished (connected after completion).",
-                "status": record.get("status"),
+                "message": msg,
+                "status": status,
             }
             yield f"data: {json.dumps(synthetic)}\n\n"
             return
@@ -1922,41 +1992,41 @@ async def cancel_scan(scan_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 16 — Teams notification status
+# Endpoint 16 — Slack notification status
 # ---------------------------------------------------------------------------
 
 
 @app.get("/api/notification-status")
 async def notification_status() -> dict:
-    """Return the current Teams notification configuration status.
+    """Return the current Slack notification configuration status.
 
     The dashboard header uses this to show a 🔔 indicator.
     """
     return {
-        "teams_configured": bool(settings.teams_webhook_url),
-        "teams_enabled": settings.teams_notifications_enabled,
+        "slack_configured": bool(settings.slack_webhook_url),
+        "slack_enabled": settings.slack_notifications_enabled,
     }
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 17 — send a test Teams notification
+# Endpoint 17 — send a test Slack notification
 # ---------------------------------------------------------------------------
 
 
 @app.post("/api/test-notification")
 async def test_notification() -> dict:
-    """Send a sample DENIED notification to the configured Teams webhook.
+    """Send a sample DENIED notification to the configured Slack webhook.
 
-    Useful for judges to verify the Teams integration works without running
+    Useful for verifying the Slack integration works without running
     a full governance evaluation.  Returns ``{"status": "sent"}`` on success,
     or ``{"status": "skipped", "reason": "..."}`` if the webhook is not
     configured.
     """
-    webhook_url = settings.teams_webhook_url
+    webhook_url = settings.slack_webhook_url
     if not webhook_url:
-        return {"status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured"}
-    if not settings.teams_notifications_enabled:
-        return {"status": "skipped", "reason": "TEAMS_NOTIFICATIONS_ENABLED is false"}
+        return {"status": "skipped", "reason": "SLACK_WEBHOOK_URL not configured"}
+    if not settings.slack_notifications_enabled:
+        return {"status": "skipped", "reason": "SLACK_NOTIFICATIONS_ENABLED is false"}
 
     # Build a sample DENIED verdict
     sample_action = ProposedAction(
@@ -2002,7 +2072,7 @@ async def test_notification() -> dict:
         },
     )
 
-    success = await send_teams_notification(sample_verdict, sample_action)
+    success = await send_verdict_notification(sample_verdict, sample_action)
     return {"status": "sent" if success else "failed"}
 
 
@@ -2347,6 +2417,17 @@ async def get_config() -> dict:
         "use_live_topology": settings.use_live_topology,
         "version": "1.0.0",
     }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint — health check
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+async def health_check() -> dict:
+    """Liveness probe for Container App and deploy scripts."""
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

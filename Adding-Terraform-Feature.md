@@ -41,7 +41,7 @@ GovernanceVerdict (from pipeline.evaluate())
        ▼
 ExecutionGateway (new component)
   ├── Check verdict: DENIED → log + no action
-  ├── Check verdict: ESCALATED → create review ticket + Teams notification
+  ├── Check verdict: ESCALATED → create review ticket + Slack notification
   ├── Check verdict: APPROVED →
   │     ├── Is resource IaC-managed? (check managed_by tag)
   │     │     ├── YES → Generate Terraform PR (GitOps path)
@@ -54,8 +54,8 @@ ExecutionGateway (new component)
 
 | Verdict | Action | Dashboard Status |
 |---------|--------|-----------------|
-| **DENIED** | Block. Log to audit trail. Teams alert. | "Blocked" (red) |
-| **ESCALATED** | Create review request. Teams alert. Human decides. | "Awaiting Review" (yellow) |
+| **DENIED** | Block. Log to audit trail. Slack alert. | "Blocked" (red) |
+| **ESCALATED** | Create review request. Slack alert. Human decides. | "Awaiting Review" (yellow) |
 | **APPROVED** | Auto-generate Terraform PR if IaC-managed. Human approves PR. | "PR Created" → "Merged" → "Applied" (green) |
 
 ---
@@ -157,7 +157,7 @@ through the correct execution path.
 
 The gateway NEVER directly modifies Azure resources. It routes verdicts to:
 - DENIED  → log + block
-- ESCALATED → review request + Teams notification
+- ESCALATED → review request + Slack notification
 - APPROVED + IaC-managed → generate Terraform PR via GitHub API
 - APPROVED + not IaC-managed → mark as manual execution required
 """

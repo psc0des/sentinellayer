@@ -47,10 +47,11 @@ class Settings(BaseSettings):
     azure_keyvault_url: str = ""
     azure_managed_identity_client_id: str = ""
 
-    # --- Microsoft Teams Notifications ---
-    teams_webhook_url: str = ""
-    teams_notifications_enabled: bool = True
+    # --- Slack Notifications ---
+    slack_webhook_url: str = ""
+    slack_notifications_enabled: bool = True
     dashboard_url: str = "http://localhost:5173"
+    slack_timeout: int = 10  # seconds per HTTP request to Slack webhook
 
     # --- SRI™ Thresholds ---
     sri_auto_approve_threshold: int = 25

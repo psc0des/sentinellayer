@@ -184,10 +184,22 @@ The script is safe to re-run. Use the table below to decide:
 ### Generate local .env (for local development)
 
 ```bash
-bash scripts/setup_env.sh
+bash scripts/setup_env.sh                # safe mode — no plaintext keys
+bash scripts/setup_env.sh --include-keys # includes raw API keys (local dev only)
+bash scripts/setup_env.sh --no-prompt    # non-interactive — uses Azure CLI defaults
 ```
 
-Writes endpoints and Key Vault secret names to `.env` from Terraform outputs.
+Reads Terraform outputs (works with both local and remote state) and writes `.env` from the `.env.example` template. Requires `terraform init` to have been run so the state backend is accessible.
+
+### Set up Slack notifications (optional)
+
+See [`docs/slack-setup.md`](../../docs/slack-setup.md) for the full guide. In short:
+
+1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Enable Incoming Webhooks → add a webhook to your channel
+3. Set `slack_webhook_url` in `terraform.tfvars` → `terraform apply`
+
+Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
 
 ### Wire alert rules to the RuriSkry backend
 
@@ -315,7 +327,7 @@ az keyvault secret show --vault-name $KV --name foundry-primary-key --query id -
 az keyvault secret show --vault-name $KV --name search-primary-key  --query id -o tsv
 az keyvault secret show --vault-name $KV --name cosmos-primary-key  --query id -o tsv
 
-# 3. Backend health check
+# 3. Backend health check (returns {"status": "ok"})
 curl https://<backend_url>/health
 
 # 4. Container App logs (if something looks wrong)

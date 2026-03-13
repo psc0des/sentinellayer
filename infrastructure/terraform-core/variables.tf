@@ -247,11 +247,17 @@ variable "llm_concurrency_limit" {
   default     = 6
 }
 
-variable "teams_webhook_url" {
-  description = "Microsoft Teams Incoming Webhook URL for DENIED/ESCALATED alerts. Leave empty to disable."
+variable "slack_webhook_url" {
+  description = "Slack Incoming Webhook URL for DENIED/ESCALATED governance alerts and Azure Monitor alert notifications. Leave empty to disable."
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "slack_notifications_enabled" {
+  description = "Master on/off switch for all Slack notifications. Set false to pause without removing the webhook URL."
+  type        = bool
+  default     = true
 }
 
 # ---------------------------------------------------------------------------

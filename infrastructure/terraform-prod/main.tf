@@ -644,3 +644,56 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "dr01_heartbeat" {
     azurerm_monitor_data_collection_rule_association.dr01
   ]
 }
+
+# =============================================================================
+# 15. Heartbeat Alert on vm-web-01 (down / deallocated VM detection)
+# =============================================================================
+# Fires when vm-web-01 sends no heartbeat for 15 minutes — indicating the VM
+# has been deallocated or has lost connectivity.
+# In the demo flow: no heartbeat → monitoring agent detects stopped web server
+# → proposes restart_service → RuriSkry evaluates → APPROVES (web tier must run).
+# NOTE: The CPU alert (section 13) cannot detect a deallocated VM because a
+# stopped VM emits no metrics. A heartbeat query fires on *silence* — correct
+# for down-VM detection.
+
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "web01_heartbeat" {
+  name                = "alert-vm-web-01-heartbeat"
+  resource_group_name = azurerm_resource_group.prod.name
+  location            = azurerm_resource_group.prod.location
+  description         = "Detects when vm-web-01 stops sending heartbeats — stopped or deallocated VM"
+  severity            = 1
+  enabled             = true
+
+  evaluation_frequency = "PT5M"
+  window_duration      = "PT15M"
+  scopes               = [azurerm_log_analytics_workspace.prod.id]
+
+  criteria {
+    # If no heartbeat rows for vm-web-01 in last 15m, alert fires.
+    query = <<-QUERY
+      Heartbeat
+      | where _ResourceId =~ "${azurerm_linux_virtual_machine.web01.id}"
+      | where TimeGenerated > ago(15m)
+    QUERY
+
+    time_aggregation_method = "Count"
+    threshold               = 0
+    operator                = "LessThanOrEqual"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = 1
+      number_of_evaluation_periods             = 1
+    }
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.prod.id]
+  }
+
+  tags = local.common_tags
+
+  depends_on = [
+    azurerm_virtual_machine_extension.ama_web01,
+    azurerm_monitor_data_collection_rule_association.web01
+  ]
+}

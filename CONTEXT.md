@@ -4,7 +4,7 @@
 ## What Is This Project?
 RuriSkry is a production-grade AI Action Governance & Simulation Engine. It intercepts AI agent infrastructure actions, simulates their impact, and scores them using the Skry Risk Index (SRI™) before allowing execution.
 
-Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 777+ automated tests.
+Originally built for the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable Cosmos DB audit trails, Slack alerting, explainable AI verdicts with counterfactual analysis, and 792+ automated tests.
 
 ## Project Structure
 ```
@@ -53,7 +53,7 @@ src/
 │   ├── openai_client.py         # Azure OpenAI / gpt-5-mini (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── notifications/               # Outbound alerting
-│   └── teams_notifier.py        # send_teams_notification() — Adaptive Card to Teams webhook
+│   └── slack_notifier.py        # send_verdict_notification/send_alert_notification/send_alert_resolved_notification — Block Kit; shared AsyncClient singleton, rate limiter, smart retry
 ├── api/
 │   └── dashboard_api.py         # FastAPI REST endpoints — 33 total (Phase 10 agents,
 │                                #   Phase 12 alert-trigger + _normalize_azure_alert_payload(),
@@ -288,13 +288,20 @@ maps each `ActionType` to its inverse — `RESTART_SERVICE`→`deallocate_vm`,
 restored, `DELETE_RESOURCE`→cannot auto-rollback. Live path: `_rollback_with_framework()` LLM
 reads `rollback_hint` from stored plan + current state, calls Azure SDK write tools in reverse.
 `ExecutionGateway.rollback_agent_fix()` validates `status == applied`, calls `agent.rollback()`,
-sets `status → rolled_back`, stores `rollback_log`. `POST /api/execution/{id}/rollback` endpoint.
+sets `status → rolled_back` **only when rollback succeeds**; on failure keeps `status = applied`
+(fix is still in place) and appends failure detail to `rollback_log` + `notes`. Stores `rollback_log`.
+`POST /api/execution/{id}/rollback` endpoint.
 `ExecutionRecord` gains `rollback_log: Optional[list]` field; `ExecutionStatus.rolled_back` added.
 Dashboard: amber `↩ Rollback` button appears next to `Applied` badge in both
 `EvaluationDrilldown.jsx` and `Alerts.jsx`. Confirm dialog shows `rollback_hint` from stored plan.
 `rolled_back` status badge (amber) added to both `EXEC_STATUS_CONFIG` maps. `ExecutionLogView`
 accepts `label` prop to show "Rollback Steps" separately from execution log.
-**Tests: 777 passed.**
+On rollback failure, a rose-colored "Rollback attempted but failed" banner + failed steps log
+is shown; the Rollback button remains so the user can retry.
+**AgentTerminal live progress**: `handleAgentFixExecute()` fires a `setInterval` while the API
+call is pending (2s cadence), appending progress lines so the terminal appears active during the
+LLM+SDK wait (30–60s). Interval cleared before real step-by-step animation starts.
+**Tests: 779 passed.**
 
 **Phase 30 post-release fixes (COMPLETE)**
 
@@ -394,7 +401,11 @@ until human dismisses them ("flag until fixed" governance pattern).
 - `dashboard_api.py` — `_get_resource_tags()` walks up to parent resource for sub-resource ARM
   IDs (e.g. `.../securityRules/rule-name` → looks up parent NSG tags). Re-flag logic: strips
   duplicate `[Unresolved since ...]` prefix; extracts NSG parent name for `/securityRules/`
-  ARM IDs so auto-dismiss matches correctly.
+  ARM IDs so auto-dismiss matches correctly. **Agent-id filter (Phase 31 bugfix):**
+  `get_unresolved_proposals()` returns ALL agents' records, so `_run_agent_scan()` immediately
+  filters the result to `agent_id == _AGENT_REGISTRY_NAMES[agent_type]` before re-appending —
+  prevents cross-agent contamination where a cost scan would re-evaluate monitoring-agent
+  proposals and pollute its own record.
 - `EvaluationDrilldown.jsx` — `awaiting_review` (ESCALATED) and `manual_required` (APPROVED)
   share the same 4-button panel: Create Terraform PR / Fix using Agent / Fix in Azure Portal /
   Decline. Choosing any action on an ESCALATED record auto-approves it. `pr_created` panel:
@@ -472,14 +483,16 @@ until human dismisses them ("flag until fixed" governance pattern).
 - `dashboard/src/App.jsx` — `drilldownEval` state drives navigation to/from the drilldown.
 - Test result: **434 passed, 10 xfailed, 0 failed** ✅
 
-**Phase 17 — Microsoft Teams Notifications (complete)**
+**Phase 17 — Slack Notifications (complete)**
 
-- `src/notifications/teams_notifier.py` (NEW) — async fire-and-forget Adaptive Card via Teams Incoming Webhook.
-  Triggered after every DENIED or ESCALATED verdict via `asyncio.create_task()` in `pipeline.py`.
-  APPROVED verdicts skipped. Empty webhook URL = silent no-op. Retries once; never raises.
-- `src/config.py` — 3 new settings: `teams_webhook_url`, `teams_notifications_enabled`, `dashboard_url`.
+- `src/notifications/slack_notifier.py` (NEW) — async fire-and-forget Block Kit messages via Slack Incoming Webhook.
+  Three notification functions: `send_verdict_notification` (DENIED/ESCALATED verdicts → `pipeline.py`),
+  `send_alert_notification` (alert received), `send_alert_resolved_notification` (investigation complete).
+  Enterprise hardened: shared `httpx.AsyncClient` singleton (TLS reuse), rate limiter (≥1.1 s between sends),
+  smart retry (4xx=no retry, 429=Retry-After header, 5xx=exponential backoff). Never raises.
+- `src/config.py` — settings: `slack_webhook_url`, `slack_notifications_enabled`, `slack_timeout`, `dashboard_url`.
 - `src/api/dashboard_api.py` — 2 new endpoints: `GET /api/notification-status`, `POST /api/test-notification` (17 total).
-- Frontend: 🔔 Teams pill in header — green clickable button (sends test notification) when configured, grey static pill when not.
+- Frontend: 🔔 Slack pill in header — green clickable button (sends test notification) when configured, grey static pill when not.
 - Test result: **429 passed, 10 xfailed, 0 failed** ✅
 
 **Phase 16 — Scan Durability, Live Log & Agent Action Menus (complete)**

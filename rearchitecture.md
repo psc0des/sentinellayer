@@ -600,7 +600,7 @@ Some things in the current architecture are already enterprise-grade:
 - **Execution Gateway** — IaC-safe Terraform PR flow
 - **HITL flow** — human-in-the-loop approve/dismiss/escalate
 - **Audit trail** — Cosmos DB with full verdict snapshots
-- **Teams notifications** — real-time alerting on DENIED/ESCALATED
+- **Slack notifications** — real-time alerting on DENIED/ESCALATED
 
 These are the foundation. The enterprise evolution builds on top of them.
 

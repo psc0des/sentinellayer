@@ -31,7 +31,7 @@ Security notes:
 - ACR `admin_enabled = false` — credentials never appear in tfstate or env vars
 - Foundry `local_authentication_enabled = false` — Managed Identity only; agents use `DefaultAzureCredential` so local dev (`az login`) still works unchanged. The Container App MI is granted the `Cognitive Services OpenAI User` role via `azurerm_role_assignment.foundry_openai_user` in Terraform — without this role, all agent scans fail with 401 PermissionDenied.
 - Cosmos DB and Key Vault accessed via Managed Identity (no API keys in tfstate)
-- Teams webhook stored as a Key Vault secret, injected via Container App secret mechanism
+- Slack webhook stored as a Key Vault secret, injected via Container App secret mechanism
 - CORS enforced at the FastAPI application layer using `DASHBOARD_URL` env var
 - `terraform destroy` automatically removes the RG lock first (the lock `depends_on` all major resources, so Terraform destroys it before anything else)
 
@@ -138,35 +138,45 @@ See `infrastructure/terraform-prod/README.md` for full detail including cost est
 
 ---
 
-## Optional: Configure Teams Notifications (Phase 17)
+## Optional: Wire Azure Monitor Alerts (real-time governance)
 
-RuriSkry can post an Adaptive Card to a Microsoft Teams channel whenever a verdict is
-DENIED or ESCALATED. Zero config required to run without it — just leave `TEAMS_WEBHOOK_URL`
-empty.
+RuriSkry agents run periodic scans, but you can also wire Azure Monitor alerts
+so any infrastructure event (VM stops, CPU spikes, disk fills) triggers an
+immediate governance investigation.
 
-**Step 1 — Create an Incoming Webhook in Teams:**
-1. Open Teams → go to the channel you want alerts in
-2. Click **···** (More options) → **Connectors** → search "Incoming Webhook" → **Configure**
-3. Give it a name (e.g. "RuriSkry Governance") → click **Create**
-4. Copy the webhook URL (looks like `https://xxx.webhook.office.com/webhookb2/...`)
+See [`docs/alert-wiring.md`](alert-wiring.md) for:
+- What is wired automatically vs what requires manual steps
+- Step-by-step: adding a new VM (AMA, DCR association, alert rules)
+- Adding alerts for non-VM resources (storage, databases, Container Apps)
+- Large-environment approach using Azure Policy for automatic coverage
+- Troubleshooting common wiring problems
 
-**Step 2 — Set the env var (local development):**
+---
+
+## Optional: Configure Slack Notifications (Phase 17)
+
+RuriSkry can post a Slack message to a channel whenever a verdict is DENIED or ESCALATED.
+Zero config required to run without it — just leave `SLACK_WEBHOOK_URL` empty.
+
+See [`docs/slack-setup.md`](slack-setup.md) for the full step-by-step Slack app creation guide.
+
+**Set the env var (local development):**
 ```bash
 # .env (local only — in deployed environments the webhook URL is stored as a Key Vault secret
 #        and injected via the Container App secret mechanism, not as a plain env var)
-TEAMS_WEBHOOK_URL=https://xxx.webhook.office.com/webhookb2/...
-TEAMS_NOTIFICATIONS_ENABLED=true
-DASHBOARD_URL=http://localhost:5173   # URL in the "View in Dashboard" card button
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+SLACK_NOTIFICATIONS_ENABLED=true
+DASHBOARD_URL=http://localhost:5173   # URL in the "View in Dashboard" button
 ```
 
-**Step 3 — Test it:**
+**Test it:**
 ```bash
-# With the API running, click the green 🔔 Teams button in the dashboard header
+# With the API running, click the green 🔔 Slack button in the dashboard header
 # — or call the endpoint directly:
 curl -X POST http://localhost:8000/api/test-notification
 ```
 
-This sends a realistic sample DENIED card for `vm-dr-01` (SRI 77.0, POL-DR-001 violation).
+This sends a realistic sample DENIED message for `vm-dr-01` (SRI 77.0, POL-DR-001 violation).
 If the webhook URL is empty or wrong, the endpoint returns `{"status": "skipped"}` or
 `{"status": "failed"}` — it never crashes the API.
 
@@ -276,7 +286,7 @@ terraform -chdir=infrastructure/terraform-core output backend_url
 ```
 
 All env vars (endpoints, feature flags, org context) are wired automatically by
-Terraform from the other provisioned resources. Secrets (API keys, Teams webhook URL) are
+Terraform from the other provisioned resources. Secrets (API keys, Slack webhook URL) are
 stored in Key Vault and injected at runtime via the Container App's Managed Identity —
 no `.env` file goes inside the container. ACR pulls also use the same Managed Identity
 (`AcrPull` role) — no registry credentials anywhere in tfstate or the container.
@@ -326,9 +336,10 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `COSMOS_CONTAINER_SCAN_RUNS` | Live only | `governance-scan-runs` | Container for scan-run records (auto-created) |
 | `COSMOS_CONTAINER_ALERTS` | Live only | `governance-alerts` | Container for alert investigation records (auto-created) |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
-| `TEAMS_WEBHOOK_URL` | No | `""` | Microsoft Teams Incoming Webhook URL. Empty = notifications disabled (zero-config default). |
-| `TEAMS_NOTIFICATIONS_ENABLED` | No | `true` | Master on/off switch for Teams notifications. Has no effect if `TEAMS_WEBHOOK_URL` is empty. |
-| `DASHBOARD_URL` | No | `http://localhost:5173` | URL embedded in the "View in Dashboard" button on Teams Adaptive Cards. |
+| `SLACK_WEBHOOK_URL` | No | `""` | Slack Incoming Webhook URL. Empty = notifications disabled (zero-config default). |
+| `SLACK_NOTIFICATIONS_ENABLED` | No | `true` | Master on/off switch for Slack notifications. Has no effect if `SLACK_WEBHOOK_URL` is empty. |
+| `SLACK_TIMEOUT` | No | `10` | HTTP timeout (seconds) for each Slack webhook POST. Covers connect + read. Increase only if your network to Slack is consistently slow. |
+| `DASHBOARD_URL` | No | `http://localhost:5173` | URL embedded in the "View in Dashboard" button on Slack Block Kit messages. In production this is set automatically from Terraform output. |
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
 | `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |

@@ -142,8 +142,8 @@ export async function fetchAgentHistory(agentName, limit = 20) {
 }
 
 /**
- * Fetch the Teams notification configuration status.
- * @returns {{ teams_configured: boolean, teams_enabled: boolean }}
+ * Fetch the Slack notification configuration status.
+ * @returns {{ slack_configured: boolean, slack_enabled: boolean }}
  */
 export async function fetchNotificationStatus() {
   const res = await fetch(`${BASE}/notification-status`)
@@ -152,10 +152,10 @@ export async function fetchNotificationStatus() {
 }
 
 /**
- * Send a test notification to the configured Teams webhook.
+ * Send a test notification to the configured Slack webhook.
  * @returns {{ status: string, reason?: string }}
  */
-export async function testTeamsNotification() {
+export async function testSlackNotification() {
   const res = await fetch(`${BASE}/test-notification`, { method: 'POST' })
   if (!res.ok) throw new Error(`API error ${res.status}: failed to send test notification`)
   return res.json()

@@ -503,10 +503,30 @@ class MonitoringAgent:
         if alert_payload:
             instructions = _ALERT_INSTRUCTIONS
             alert_summary = json.dumps(alert_payload, indent=2)
+            metric = alert_payload.get("metric", "")
+            is_heartbeat = any(k in metric.lower() for k in ("heartbeat", "availab", "stopped", "down"))
+            alert_type_hint = (
+                "This is a HEARTBEAT / AVAILABILITY alert — the resource is likely stopped "
+                "or deallocated. "
+                "CRITICAL: empty metrics confirm the VM is down — do NOT treat empty metrics "
+                "as 'nothing to do'. "
+                "Call get_resource_details first to read powerState, then query_activity_log "
+                "to find why it stopped, then propose restart_service (HIGH urgency)."
+                if is_heartbeat else
+                "Identify the alert type from the metric name and follow the matching step "
+                "(A–E) in your instructions. Confirm all findings with real Azure API data "
+                "before calling propose_action."
+            )
             prompt = (
-                f"An Azure Monitor alert has fired:\n{alert_summary}\n\n"
-                "Please investigate this alert: confirm the metrics, understand "
-                "the resource and its dependents, then propose the appropriate remediation."
+                f"An Azure Monitor alert has fired:\n\n{alert_summary}\n\n"
+                f"{alert_type_hint}\n\n"
+                "Follow ALL steps in your instructions: "
+                "(1) Read the alert payload and identify resource_id and alert type. "
+                "(2) Call get_resource_details on the alerted resource — check powerState, "
+                "current configuration, and health. "
+                "(3) Call query_metrics or query_activity_log based on alert type. "
+                "(4) Call propose_action with confirmed evidence — include power state, "
+                "metric values, and activity log findings in the reason."
             )
         else:
             instructions = _SCAN_INSTRUCTIONS

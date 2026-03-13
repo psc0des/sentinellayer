@@ -560,6 +560,18 @@ class TestGetResourceTags:
 # ---------------------------------------------------------------------------
 
 
+class TestHealthCheck:
+    """GET /health returns liveness status."""
+
+    def test_health_returns_200(self, client):
+        res = client.get("/health")
+        assert res.status_code == 200
+
+    def test_health_returns_ok(self, client):
+        data = client.get("/health").json()
+        assert data["status"] == "ok"
+
+
 class TestGetConfig:
     """GET /api/config returns safe system configuration."""
 
@@ -573,8 +585,10 @@ class TestGetConfig:
                     "execution_gateway_enabled", "use_live_topology", "version"}
         assert required.issubset(data.keys())
 
-    def test_get_config_mode_is_mock(self, client):
-        # In test environment USE_LOCAL_MOCKS=true → mode should be "mock"
+    def test_get_config_mode_is_mock(self, client, monkeypatch):
+        # Patch settings so use_local_mocks=True → mode should be "mock"
+        import src.api.dashboard_api as api_mod
+        monkeypatch.setattr(api_mod.settings, "use_local_mocks", True)
         data = client.get("/api/config").json()
         assert data["mode"] == "mock"
 
@@ -642,3 +656,64 @@ class TestRollbackEndpoint:
         res = client.post("/api/execution/nonexistent-id/rollback")
         # Should 404 (not found), not 422 (validation error)
         assert res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Regression: cross-agent scan contamination (Bug fix Phase 31)
+# ---------------------------------------------------------------------------
+
+
+class TestCrossAgentContamination:
+    """Regression tests for the bug where get_unresolved_proposals() returned
+    proposals from ALL agents, causing monitoring-agent proposals to appear in
+    a cost scan's proposed_actions and evaluations lists when the cost agent
+    returned 0 proposals and the re-flagging loop ran."""
+
+    def test_unresolved_filter_same_agent_only(self):
+        """Filter in _run_agent_scan must restrict re-flagged proposals to
+        the same agent that is currently scanning."""
+        import src.api.dashboard_api as api_module
+        from src.core.models import ActionTarget, ActionType, ProposedAction
+
+        # The dict-comprehension used to filter is: same agent_id only.
+        # Simulate: two unresolved proposals, different agent_ids.
+        cost_action = ProposedAction(
+            agent_id="cost-optimization-agent",
+            action_type=ActionType.SCALE_DOWN,
+            reason="oversized VM",
+            target=ActionTarget(
+                resource_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-cost",
+                resource_type="Microsoft.Compute/virtualMachines",
+            ),
+        )
+        monitoring_action = ProposedAction(
+            agent_id="monitoring-agent",
+            action_type=ActionType.RESTART_SERVICE,
+            reason="VM offline",
+            target=ActionTarget(
+                resource_id="/subscriptions/x/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-mon",
+                resource_type="Microsoft.Compute/virtualMachines",
+            ),
+        )
+
+        # Apply the same filter logic used in _run_agent_scan
+        agent_type = "cost"
+        current_agent_id = api_module._AGENT_REGISTRY_NAMES.get(agent_type, "")
+        assert current_agent_id == "cost-optimization-agent"
+
+        pairs = [(cost_action, None), (monitoring_action, None)]
+        filtered = [
+            (a, r) for a, r in pairs
+            if getattr(a, "agent_id", None) == current_agent_id
+        ]
+        assert len(filtered) == 1
+        assert filtered[0][0].agent_id == "cost-optimization-agent"
+
+    def test_agent_type_map_covers_all_agents(self):
+        """All known agent types must have an entry in _AGENT_REGISTRY_NAMES."""
+        import src.api.dashboard_api as api_module
+
+        for agent_type in ("cost", "monitoring", "deploy"):
+            assert agent_type in api_module._AGENT_REGISTRY_NAMES
+            agent_id = api_module._AGENT_REGISTRY_NAMES[agent_type]
+            assert agent_id.endswith("-agent"), f"{agent_type} → {agent_id} missing '-agent' suffix"

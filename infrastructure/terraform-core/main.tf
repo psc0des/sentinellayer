@@ -405,14 +405,14 @@ resource "azurerm_key_vault_secret" "cosmos_primary_key" {
   depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
 }
 
-# SEC-07: Teams webhook stored in Key Vault — not as a plain env var.
-# The webhook URL grants anyone who has it the ability to post to your Teams
+# SEC-07: Slack webhook stored in Key Vault — not as a plain env var.
+# The webhook URL grants anyone who has it the ability to post to your Slack
 # channel. Storing it in Key Vault and injecting via Managed Identity means
 # it never appears in tfstate, az containerapp show output, or env var dumps.
-resource "azurerm_key_vault_secret" "teams_webhook" {
-  count        = var.teams_webhook_url != "" ? 1 : 0
-  name         = "teams-webhook-url"
-  value        = var.teams_webhook_url
+resource "azurerm_key_vault_secret" "slack_webhook" {
+  count        = var.slack_webhook_url != "" ? 1 : 0
+  name         = "slack-webhook-url"
+  value        = var.slack_webhook_url
   key_vault_id = azurerm_key_vault.ruriskry.id
 
   depends_on = [azurerm_key_vault_access_policy.managed_identity_readers]
@@ -548,12 +548,12 @@ resource "azurerm_container_app" "backend" {
     identity = azurerm_user_assigned_identity.acr_pull.id
   }
 
-  # SEC-07: Teams webhook — read from Key Vault via Managed Identity.
+  # SEC-07: Slack webhook — read from Key Vault via Managed Identity.
   dynamic "secret" {
-    for_each = var.teams_webhook_url != "" ? [1] : []
+    for_each = var.slack_webhook_url != "" ? [1] : []
     content {
-      name                = "teams-webhook-url"
-      key_vault_secret_id = "${azurerm_key_vault.ruriskry.vault_uri}secrets/teams-webhook-url"
+      name                = "slack-webhook-url"
+      key_vault_secret_id = "${azurerm_key_vault.ruriskry.vault_uri}secrets/slack-webhook-url"
       identity            = "System"
     }
   }
@@ -635,14 +635,18 @@ resource "azurerm_container_app" "backend" {
         value = tostring(var.execution_gateway_enabled)
       }
 
-      # ── Teams notifications ───────────────────────────────────────────────
-      # SEC-07: Injected from Key Vault secret via Managed Identity — not a plain value.
+      # ── Slack notifications ───────────────────────────────────────────────
+      # SEC-07: Webhook URL injected from Key Vault secret via Managed Identity — not a plain value.
       dynamic "env" {
-        for_each = var.teams_webhook_url != "" ? [1] : []
+        for_each = var.slack_webhook_url != "" ? [1] : []
         content {
-          name        = "TEAMS_WEBHOOK_URL"
-          secret_name = "teams-webhook-url"
+          name        = "SLACK_WEBHOOK_URL"
+          secret_name = "slack-webhook-url"
         }
+      }
+      env {
+        name  = "SLACK_NOTIFICATIONS_ENABLED"
+        value = tostring(var.slack_notifications_enabled)
       }
       env {
         name  = "DASHBOARD_URL"

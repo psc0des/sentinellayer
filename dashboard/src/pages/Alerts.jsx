@@ -357,12 +357,28 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
       { type: 'init', text: `[${ts()}] ▶  Connecting to Azure environment...` },
     ])
 
+    // Show live progress while the API call is pending (LLM + Azure SDK can take 20-60s)
+    const progressMsgs = [
+      'Requesting execution plan from AI...',
+      'Validating approved governance decision...',
+      'Preparing Azure SDK tool calls...',
+      'Waiting for Azure control plane response...',
+    ]
+    let progIdx = 0
+    const progressInterval = setInterval(() => {
+      if (progIdx < progressMsgs.length) {
+        setTerminalLines(prev => [...prev, { type: 'info', text: `[${ts()}] ⟳  ${progressMsgs[progIdx++]}` }])
+      }
+    }, 2000)
+
     let updated
     try {
       updated = await executeAgentFix(execId)
+      clearInterval(progressInterval)
       setExecStatus(updated.status)
       setAgentFixResult(updated)
     } catch (err) {
+      clearInterval(progressInterval)
       setTerminalLines(prev => [...prev,
         { type: 'error', text: `[${ts()}] ✗  Error: ${err.message}` },
       ])
@@ -372,7 +388,7 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
     }
 
     const steps = updated.execution_log ?? []
-    const animLines = []
+    const animLines = [{ type: 'info', text: `[${ts()}] ▶  Agent returned ${steps.length} step(s) — animating results...` }]
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i]
       animLines.push({ type: 'step',    text: `[${ts()}] ▶  [${i + 1}/${steps.length}] ${s.operation}` })
@@ -468,7 +484,17 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
         </p>
       )}
 
-      {/* Rolled back state */}
+      {/* Rollback failed — status stays 'applied', show failure detail */}
+      {rollbackResult && execStatus === 'applied' && rollbackResult.rollback_log?.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-rose-400/90 bg-rose-500/5 border border-rose-500/20 rounded px-2 py-1">
+            ↩ Rollback attempted but failed — fix is still applied. Review the steps below and retry manually.
+          </p>
+          <ExecutionLogView steps={rollbackResult.rollback_log} verification={null} label="Rollback Steps" />
+        </div>
+      )}
+
+      {/* Rolled back state — success */}
       {execStatus === 'rolled_back' && (
         <div className="space-y-1">
           <p className="text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded px-2 py-1">

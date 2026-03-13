@@ -9,7 +9,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (Monitoring bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Microsoft Teams alerting, explainable AI verdicts with counterfactual analysis, and 777+ automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 792+ automated tests.
 
 ---
 
@@ -125,7 +125,7 @@ flowchart LR
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | Governance visualization + REST API — 5-page "Ops Nerve Center" app: DM Sans UI + JetBrains Mono data fonts, CSS design token system, dot-grid background, teal breathing logo glow, amber urgency pulse on HITL reviews, NumberTicker count-up metrics, GlowCard glass panels, gradient SRI chart, animated VerdictBadges |
-| Teams Notifications | Microsoft Teams Incoming Webhook (Adaptive Cards) | Real-time alerts for DENIED/ESCALATED verdicts |
+| Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts + Azure Monitor alerts |
 | Azure Monitor → RuriSkry | `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | CPU/heartbeat/custom alerts POST to `/api/alert-trigger` → async investigation via `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
 
@@ -175,15 +175,16 @@ Agent scans are persisted to **Cosmos DB** (or local JSON) and survive server re
 9 event types from discovery through verdict. Late-connecting clients receive buffered events.
 Scans are cancellable via `PATCH /api/scan/{id}/cancel`.
 
-### Teams Notifications
-DENIED and ESCALATED verdicts trigger an instant **Microsoft Teams Adaptive Card** via
-Incoming Webhook — no one needs to watch the dashboard. The card shows the verdict badge,
-resource and agent info, SRI composite + 4-dimension breakdown, governance reason, top
-policy violation, and a "View in Dashboard" button.
+### Slack Notifications
+DENIED and ESCALATED verdicts trigger an instant **Slack message** via Incoming Webhook —
+no one needs to watch the dashboard. The message shows the verdict badge, resource and
+agent info, SRI composite + 4-dimension breakdown, governance reason, and top policy
+violation. Azure Monitor alerts (fired + resolved) are also notified.
 
-- **Zero-config default** — leave the Teams webhook secret empty to disable silently (in deployed environments the URL is stored as a Key Vault secret and injected via Container App secret mechanism, not as a plain env var)
+- **Zero-config default** — leave the Slack webhook URL empty to disable silently (in deployed environments the URL is stored as a Key Vault secret and injected via Container App secret mechanism, not as a plain env var)
 - **Fire-and-forget** — never blocks or delays a governance decision
-- **Test button** in the dashboard header sends a realistic sample card
+- **Master switch** — `SLACK_NOTIFICATIONS_ENABLED=false` pauses all notifications without removing the webhook URL
+- See [`docs/slack-setup.md`](docs/slack-setup.md) for the full setup guide
 
 ### Decision Explanation & Counterfactual Drilldown
 Click any row in the Live Activity Feed to open a **6-section full-page drilldown**:
@@ -203,7 +204,7 @@ APPROVED verdicts don't execute directly on Azure — that would cause **IaC sta
 (Terraform reverts the change on next `terraform apply`). Instead, the Execution Gateway
 routes verdicts to IaC-safe paths:
 
-- **DENIED** → blocked, logged, Teams alert
+- **DENIED** → blocked, logged, Slack alert
 - **ESCALATED** → human review required (Approve/Dismiss buttons in dashboard drilldown)
 - **APPROVED + IaC-managed** → auto-generate a **Terraform PR** against the IaC repo;
   human reviews and merges; CI/CD runs `terraform apply`
@@ -226,7 +227,7 @@ Two-phase execution with human review in between:
 2. **Human reviews** — dashboard shows the plan as a steps table before any write operation
 3. **Execute phase** — LLM calls Azure SDK write tools exactly as planned (`start_vm`, `resize_vm`, `delete_nsg_rule`, etc.); fails safe if any step fails
 
-This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (777 tests pass, no Azure/OpenAI required) and live mode.
+This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (792 tests pass, no Azure/OpenAI required) and live mode.
 
 ### One-Click Rollback (Phase 30)
 
@@ -260,7 +261,7 @@ on 429s; operational agents return `[]` (no false positives from stale seed data
 
 ### Setup
 
-Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
+Detailed infra runbook: [`infrastructure/terraform-core/deploy.md`](infrastructure/terraform-core/deploy.md)
 
 ```bash
 # Clone the repository
@@ -274,53 +275,66 @@ source .venv/bin/activate  # Linux/Mac
 
 # Install dependencies
 pip install -r requirements.txt
+```
 
-# Provision all Azure infrastructure + deploy backend + deploy dashboard (one command)
+### Deploy to Azure (one command)
+
+`scripts/deploy.sh` is the **single entry point** for provisioning and deploying the entire system. It handles everything: Terraform init, staged infrastructure apply (ACR + identity first, then all resources), Docker image build/push, Container App image swap, GitHub PAT prompt, React dashboard build + deploy to Static Web Apps, and health check. Run it from the repo root in **Git Bash** or **WSL** (not PowerShell).
+
+```bash
+# 1. One-time: create remote state storage (see deploy.md § "One-time Setup")
+
+# 2. Configure your deployment
 cp infrastructure/terraform-core/terraform.tfvars.example \
    infrastructure/terraform-core/terraform.tfvars
-# Edit terraform.tfvars: set subscription_id and suffix at minimum
-# (see deploy.md for the one-time remote state storage setup)
+# Edit terraform.tfvars — set subscription_id and suffix at minimum
+
+# 3. Deploy everything
 bash scripts/deploy.sh
-# If Stage 2 fails, resume without rebuilding: bash scripts/deploy.sh --stage2
-cd ../..
 
-# Generate .env from Terraform outputs (Key Vault + Managed Identity mode)
-bash scripts/setup_env.sh
-# For local fallback with plaintext keys in .env:
-# bash scripts/setup_env.sh --include-keys
-# For CI/non-interactive mode:
-# bash scripts/setup_env.sh --no-prompt
+# If Stage 2 fails partway, resume without rebuilding Stage 1 or Docker:
+bash scripts/deploy.sh --stage2
+```
 
-# (Optional) Seed demo incidents into AI Search — for local/mock dev only.
-# In production, historical context builds up organically via DecisionTracker.
-# python scripts/seed_data.py
+When it finishes, you'll see live URLs for both the dashboard and backend.
 
-# Run RuriSkry — MCP stdio server (for Claude Desktop)
-python -m src.mcp_server.server
+### Generate local .env (for local development)
 
-# Run RuriSkry — A2A HTTP server (for agent-to-agent protocol)
-uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
+`scripts/setup_env.sh` reads Terraform outputs and generates a `.env` file so you can run the backend locally (`uvicorn src.api.dashboard_api:app --reload`) against real Azure services. **This is only needed for local development** — the production Container App gets its env vars directly from Terraform.
 
-# Run RuriSkry — Dashboard REST API
+```bash
+bash scripts/setup_env.sh                # safe mode — Key Vault secret names only (recommended)
+bash scripts/setup_env.sh --include-keys # also writes raw API keys into .env (local dev only)
+bash scripts/setup_env.sh --no-prompt    # non-interactive — uses Azure CLI defaults for sub/tenant IDs
+```
+
+### Run locally
+
+```bash
+# Run RuriSkry — Dashboard REST API (most common for development)
 uvicorn src.api.dashboard_api:app --reload
 
-# Run demos
-python demo.py        # direct pipeline demo (3 scenarios)
-python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
-python demo_live.py   # two-layer intelligence demo — ops agents investigate + RuriSkry evaluates
-
 # Run React dashboard (in separate terminal)
-cd dashboard
-npm install
-npm run dev
+cd dashboard && npm install && npm run dev
+
+# Other entry points:
+python -m src.mcp_server.server    # MCP stdio server (for Claude Desktop)
+python demo.py                     # direct pipeline demo (3 scenarios)
+python demo_a2a.py                 # A2A protocol demo
+python demo_live.py                # two-layer intelligence demo
 ```
 
 ### Run Tests
 
 ```bash
-# Expected: 777 passed, 0 failed
+# Expected: 792 passed, 0 failed
+# Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 ```
+
+### Set up Slack notifications (optional)
+
+See [`docs/slack-setup.md`](docs/slack-setup.md) — create a Slack app, enable Incoming Webhooks, set `slack_webhook_url` in `terraform.tfvars`, and apply.
 
 ---
 
@@ -361,10 +375,10 @@ ruriskry/
 │   │   ├── search_client.py         # Azure AI Search client
 │   │   ├── openai_client.py         # Azure OpenAI / gpt-5-mini client
 │   │   └── secrets.py               # Key Vault secret resolver
-│   ├── notifications/          # Outbound alerting (Phase 17)
-│   │   └── teams_notifier.py        # Adaptive Card → Teams webhook on DENIED/ESCALATED
+│   ├── notifications/          # Outbound alerting
+│   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 33 endpoints: scan triggers, scan-history, alerts (list/status/stream/active-count), SSE stream, cancel, last-run, alert webhook, Teams status/test, explanation, HITL gateway
+│       └── dashboard_api.py         # 36 endpoints: scan triggers, scan-history, alerts, SSE, explanation, HITL gateway, config, health
 ├── dashboard/                  # React + Vite governance dashboard
 ├── data/                       # Seed data for demo
 │   ├── agents/                      # A2A agent registry (mock)
@@ -378,7 +392,11 @@ ruriskry/
 ├── demo_live.py                # Two-layer intelligence demo (Phase 12)
 ├── tests/
 ├── docs/
+│   └── slack-setup.md               # Slack webhook setup guide for contributors
 └── scripts/
+    ├── deploy.sh                    # One-command full deploy (Terraform + Docker + dashboard)
+    ├── setup_env.sh                 # Generate .env from Terraform outputs (for local dev)
+    └── seed_data.py                 # Seed demo incidents into AI Search
 ```
 
 ---
@@ -411,8 +429,8 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
-durable Cosmos DB audit trails, Microsoft Teams alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 777-test suite.
+durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
+drilldowns, and a comprehensive 792-test suite.
 
 ---
 

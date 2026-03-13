@@ -349,12 +349,28 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
             { type: 'init', text: `[${ts()}] ▶  Connecting to Azure environment...` },
         ])
 
+        // Show live progress while the API call is pending (LLM + Azure SDK can take 20-60s)
+        const progressMsgs = [
+            'Requesting execution plan from AI...',
+            'Validating approved governance decision...',
+            'Preparing Azure SDK tool calls...',
+            'Waiting for Azure control plane response...',
+        ]
+        let progIdx = 0
+        const progressInterval = setInterval(() => {
+            if (progIdx < progressMsgs.length) {
+                setTerminalLines(prev => [...prev, { type: 'info', text: `[${ts()}] ⟳  ${progressMsgs[progIdx++]}` }])
+            }
+        }, 2000)
+
         let updated
         try {
             updated = await executeAgentFix(executionId)
+            clearInterval(progressInterval)
             setExecutionStatus(updated)
             setAgentFixResult(updated)
         } catch (err) {
+            clearInterval(progressInterval)
             setTerminalLines(prev => [...prev,
                 { type: 'error', text: `[${ts()}] ✗  Error: ${err.message}` },
             ])
@@ -365,7 +381,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
 
         // Animate each step line in with a short delay so it feels live
         const steps = updated.execution_log ?? []
-        const animLines = []
+        const animLines = [{ type: 'info', text: `[${ts()}] ▶  Agent returned ${steps.length} step(s) — animating results...` }]
         for (let i = 0; i < steps.length; i++) {
             const s = steps[i]
             animLines.push({ type: 'step',    text: `[${ts()}] ▶  [${i + 1}/${steps.length}] ${s.operation}` })
@@ -840,7 +856,21 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                             />
                         )}
 
-                        {/* Rollback result log */}
+                        {/* Rollback failed — status stays 'applied', rollback_log has failed steps */}
+                        {executionStatus.status === 'applied' && executionStatus.rollback_log?.length > 0 && (
+                            <div className="space-y-2">
+                                <div className="text-xs rounded-lg px-3 py-2 border bg-rose-500/10 border-rose-500/30 text-rose-300">
+                                    ↩ Rollback attempted but failed — fix is still applied. Review the steps below and retry manually.
+                                </div>
+                                <ExecutionLogView
+                                    steps={executionStatus.rollback_log}
+                                    verification={null}
+                                    label="Rollback Steps"
+                                />
+                            </div>
+                        )}
+
+                        {/* Rollback result log — success */}
                         {executionStatus.status === 'rolled_back' && (
                             <div className="space-y-2">
                                 <div className="text-xs rounded-lg px-3 py-2 border bg-amber-500/10 border-amber-500/30 text-amber-300">

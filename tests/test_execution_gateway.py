@@ -1129,7 +1129,11 @@ class TestVerificationFlow:
         record.status = ExecutionStatus.manual_required
         gateway._save(record)
 
-        updated = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
+        # Force mock mode so ExecutionAgent uses deterministic paths (no LLM/Azure)
+        with patch("src.core.execution_gateway.settings") as mock_s:
+            mock_s.use_local_mocks = True
+            mock_s.azure_openai_endpoint = ""
+            updated = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
         assert updated.verification is not None
         assert "confirmed" in updated.verification
         assert updated.verification["confirmed"] is True
@@ -1147,25 +1151,58 @@ class TestRollbackFlow:
     def gateway(self, tmp_path):
         return ExecutionGateway(executions_dir=tmp_path / "executions")
 
+    async def _applied_restart_record(self, gateway, resource_id: str):
+        """Helper: create an applied ExecutionRecord with RESTART_SERVICE action.
+
+        Uses RESTART_SERVICE because _rollback_mock has a deterministic handler for
+        it (success=True) — avoids relying on execute_agent_fix or a live LLM call.
+        """
+        from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+        action = ProposedAction(
+            agent_id="monitoring-agent",
+            action_type=ActionType.RESTART_SERVICE,
+            target=ActionTarget(
+                resource_id=f"/subscriptions/x/resourceGroups/rg/providers/"
+                            f"Microsoft.Compute/virtualMachines/{resource_id}",
+                resource_type="Microsoft.Compute/virtualMachines",
+            ),
+            reason="VM offline",
+            urgency=Urgency.HIGH,
+        )
+        verdict = GovernanceVerdict(
+            action_id=f"test-rollback-{resource_id}",
+            timestamp=datetime.now(timezone.utc),
+            proposed_action=action,
+            skry_risk_index=SRIBreakdown(
+                sri_infrastructure=10.0, sri_policy=0.0,
+                sri_historical=5.0, sri_cost=2.0, sri_composite=5.5,
+            ),
+            decision=SRIVerdict.APPROVED,
+            reason="APPROVED — test",
+        )
+        record = await gateway.process_verdict(verdict, {})
+        record.status = ExecutionStatus.applied
+        record.execution_plan = {
+            "steps": [{"operation": "start_vm", "target": resource_id,
+                       "params": {"resource_group": "rg", "vm_name": resource_id},
+                       "reason": "test"}],
+            "summary": "Start VM", "estimated_impact": "",
+            "rollback_hint": f"az vm deallocate -g rg -n {resource_id}",
+            "commands": [],
+        }
+        gateway._save(record)
+        return record
+
     @pytest.mark.asyncio
     async def test_rollback_sets_status_rolled_back(self, gateway):
-        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-rollback-01")
-        record = await gateway.process_verdict(verdict, {})
-        record.status = ExecutionStatus.manual_required
-        gateway._save(record)
-        applied = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
-        assert applied.status == ExecutionStatus.applied
-        rolled = await gateway.rollback_agent_fix(applied.execution_id, reviewed_by="test-user")
+        record = await self._applied_restart_record(gateway, "vm-rollback-01")
+        rolled = await gateway.rollback_agent_fix(record.execution_id, reviewed_by="test-user")
         assert rolled.status == ExecutionStatus.rolled_back
 
     @pytest.mark.asyncio
     async def test_rollback_stores_rollback_log(self, gateway):
-        verdict = _make_verdict(SRIVerdict.APPROVED, resource_id="vm-rollback-02")
-        record = await gateway.process_verdict(verdict, {})
-        record.status = ExecutionStatus.manual_required
-        gateway._save(record)
-        applied = await gateway.execute_agent_fix(record.execution_id, reviewed_by="test-user")
-        rolled = await gateway.rollback_agent_fix(applied.execution_id, reviewed_by="test-user")
+        record = await self._applied_restart_record(gateway, "vm-rollback-02")
+        rolled = await gateway.rollback_agent_fix(record.execution_id, reviewed_by="test-user")
         assert rolled.rollback_log is not None
         assert isinstance(rolled.rollback_log, list)
 

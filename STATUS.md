@@ -4,7 +4,17 @@
 > picking up this project. It tells you exactly what is done, what is live,
 > and what comes next. Architecture and coding standards are in `CONTEXT.md`.
 
-**Last updated:** 2026-03-13 (LLM timeout + capacity fix — scan quality restored: root cause of 0-proposal deploys scans was NOT model quality but (1) **LLM_TIMEOUT=120s too short** for gpt-5-mini's comprehensive multi-step agent loops — a 7-domain security audit makes 15-20 tool calls and needs ~10 min; increased to 600s; (2) **100K TPM hitting 429** — increased Foundry capacity from 100 to 200 (200K TPM, 200 RPM); after fix: deploy scan completed in ~11 min with **18 proposals** (vs 12 with gpt-4.1) — gpt-5-mini is MORE thorough, finding Cosmos DB public access, Key Vault purge protection gaps, storage TLS 1.0, VM password auth, activity log audit gaps; `config.py` default updated `llm_timeout: 600`; `variables.tf` default updated; **777 tests passing**; backend revision `--0000016`)
+**Last updated:** 2026-03-14 (Three production bug fixes: (1) **vm-web-01 heartbeat alert** — added `alert-vm-web-01-heartbeat` (`azurerm_monitor_scheduled_query_rules_alert_v2`, severity=1) to `terraform-prod/main.tf`; vm-web-01 previously had only a CPU metric alert which never fires for a deallocated VM (no metrics emitted); heartbeat alert fires on silence; `terraform apply -target` applied; `docs/alert-wiring.md` created — step-by-step guide for wiring new resources; (2) **MonitoringAgent alert user prompt** — weak 3-line prompt caused agent to call `query_metrics` on deallocated VM, get empty results, and return 0 proposals; replaced with enumerated 4-step prompt matching scan-mode pattern; heartbeat alerts now detected by metric name and given explicit hint: "empty metrics = VM is down = restart_service"; (3) **Backend startup orphan cleanup** — added FastAPI `lifespan` hook that marks any `status="running"` scans as `status="error"` on startup; previously a redeployment left in-flight scans stuck as "running" forever, causing SSE streams to return confusing "Scan already finished (connected after completion)" message; also improved SSE synthetic messages to be context-specific (complete/error/orphan); `asynccontextmanager` import added; **792 tests passing, 0 failed**)
+
+**Last updated (prev):** 2026-03-14 (Slack enterprise hardening: `slack_notifier.py` full rewrite — shared `httpx.AsyncClient` singleton (TLS connection reuse), rate limiter (`asyncio.Lock` + 1.1s min interval), smart retry (4xx=no retry, 429=Retry-After header, 5xx=exponential backoff 2s→4s, 3 max attempts), structured logging with `extra={}` on all calls for Azure Monitor queryability, one-time localhost URL warning, `notification_type` param for log traceability, resource names truncated to 100 chars; `settings.slack_timeout` made configurable (default 10s); test suite expanded 5→16 tests (5 verdict, 2 alert, 4 resolved, 4 retry behaviour, 1 localhost warning); `autouse` fixture resets all module-level state between tests; **792 tests passing, 0 failed**)
+
+**Last updated (prev):** 2026-03-13 (Teams→Slack migration complete + `/health` endpoint added + `setup_env.sh` remote state fix: (1) `src/notifications/teams_notifier.py` deleted — replaced by `slack_notifier.py` (already existed); `src/config.py` `teams_webhook_url`/`teams_notifications_enabled` removed; all Teams references replaced with Slack across all docs; (2) `dashboard/src/App.jsx` active bug fixed — was checking `teamsStatus?.teams_configured` (always falsy since API returns `slack_configured`); renamed all state vars to `slackStatus`/`slackBtnLabel`; header now correctly shows "Slack Connected"/"Slack: Off"; (3) `GET /health` added to `dashboard_api.py` — deploy.sh referenced it but it was missing; (4) `scripts/setup_env.sh` remote state check fixed — old check looked for local `terraform.tfstate` (fails with Azure Blob backend); now uses `terraform output -raw foundry_endpoint`; (5) `tests/test_slack_notifier.py` (renamed from `test_teams_notification.py`) — 4 dead Teams tests removed, 4 new Slack tests added; (6) `docs/slack-setup.md` created — full 5-step contributor guide; dashboard redeployed; all 7 pages verified clean with Playwright; Slack webhook confirmed: `{"status":"sent"}`; **781 tests passing, 0 failed**)
+
+**Last updated (prev):** 2026-03-13 (Two UX/correctness fixes: (1) **Terminal animation** — `handleAgentFixExecute()` in both `Alerts.jsx` and `EvaluationDrilldown.jsx` now fires a `setInterval` (2s cadence) while the `executeAgentFix()` API call is pending, appending live progress lines ("Requesting execution plan from AI...", "Waiting for Azure control plane response...", etc.) so the terminal feels interactive during the 30–60s LLM+SDK wait; interval cleared before real step animation starts; (2) **Rollback status correctness** — `ExecutionGateway.rollback_agent_fix()` was unconditionally setting `status = rolled_back` before checking `result["success"]`; fixed to only set `rolled_back` when rollback succeeds; on failure, status stays `applied` (fix is still in place) and a rose-colored "Rollback attempted but failed" banner + failed step log is shown in both `Alerts.jsx` and `EvaluationDrilldown.jsx`; rollback tests in `test_execution_gateway.py` fixed to use `ActionType.RESTART_SERVICE` (auto-rollbackable) and inject `applied` state directly to isolate from `execute_agent_fix` LLM dependency; **779 tests passing**; backend revision `--0000019` + dashboard deployed)
+
+**Last updated (prev):** 2026-03-13 (Bug fix — cross-agent scan contamination: `get_unresolved_proposals()` returned `manual_required` records from ALL agents; when a cost scan ran and the Advisor API returned 0 proposals, the re-flagging loop in `_run_agent_scan()` was injecting unresolved monitoring-agent proposals into the cost scan's `proposals` list — those then got evaluated and stored with `agent_id: "monitoring-agent"` in the cost scan record, causing cost verdicts to be invisible in the Decisions tab; fix: added agent-id filter immediately after `get_unresolved_proposals()` call (`current_agent_id = _AGENT_REGISTRY_NAMES.get(agent_type)` + list comprehension); 2 regression tests added; **779 tests passing**; backend deployed)
+
+**Last updated (prev):** 2026-03-13 (LLM timeout + capacity fix — scan quality restored: root cause of 0-proposal deploys scans was NOT model quality but (1) **LLM_TIMEOUT=120s too short** for gpt-5-mini's comprehensive multi-step agent loops — a 7-domain security audit makes 15-20 tool calls and needs ~10 min; increased to 600s; (2) **100K TPM hitting 429** — increased Foundry capacity from 100 to 200 (200K TPM, 200 RPM); after fix: deploy scan completed in ~11 min with **18 proposals** (vs 12 with gpt-4.1) — gpt-5-mini is MORE thorough, finding Cosmos DB public access, Key Vault purge protection gaps, storage TLS 1.0, VM password auth, activity log audit gaps; `config.py` default updated `llm_timeout: 600`; `variables.tf` default updated; **777 tests passing**; backend revision `--0000016`)
 
 **Last updated (prev):** 2026-03-13 (Enterprise agent prompt validation — all 3 operational agents audited and fixed for enterprise readiness: (1) **Monitoring agent user prompt** expanded from VM-only (4 sentences) to full 6-step enumeration matching `_SCAN_INSTRUCTIONS` — databases/failover, Container Apps/replicas, AMA extension observability gaps, orphaned resources, Resource Health + Advisor calls; same bug as deploy/cost agents where LLM followed narrow user prompt and skipped system instruction steps; (2) **Cost agent user prompt** expanded from 6 to 8 steps — added PaaS/database rightsizing (AKS node CPU, App Service CpuPercentage, SQL DTU, Cosmos RU/s vs TotalRequests) and storage account waste; (3) **Deploy agent tool fix** — `propose_action` fallback `resource_type` changed from `_NSG_RESOURCE_TYPE` to `"unknown"` — previously, non-NSG findings (Key Vault, storage) would be incorrectly typed as NSG resources; `get_resource_details` tool description expanded with security-relevant property names (encryption, auth config, publicNetworkAccess, enableSoftDelete, enablePurgeProtection, powerState); **777 tests passing**; backend deployed revision `--0000015`)
 
@@ -54,7 +64,7 @@
 
 **Last updated (prev):** 2026-03-10 (Production deployment hardening: `scripts/deploy.sh` one-command deploy — staged apply (ACR + User-Assigned MI + AcrPull role + 90s sleep → docker build/push → full apply → dashboard → tfvars wiring); `--stage2` flag for resuming after Stage 1; image-exists detection skips redundant Docker rebuild; cross-platform python3/python detection; `npx` prerequisite check; `azurerm_user_assigned_identity.acr_pull` fixes `Operation expired` — AcrPull granted before Container App exists, no chicken-and-egg race; `azurerm_management_lock` `depends_on` all major resources — `terraform destroy` removes lock first automatically, no manual `az lock delete` needed; removed `terraform_data.docker_push` provisioner (was fragile, trigger-based); `terraform.tfvars.example` updated with correct defaults (`ruriskry-core-rg`, `create_foundry_project=true`, `foundry_capacity=50`, placeholder `iac_github_repo`); `deploy.md` fully rewritten with prerequisites table, Windows/Git Bash callout, failure recovery table, `--stage2` guidance; Docker Desktop now required (local build replaces ACR Tasks); provider lock files committed for both terraform-core and terraform-prod)
 
-**Last updated (prev):** 2026-03-08 (Deployment infra: `infrastructure/terraform` renamed to `infrastructure/terraform-core`; ACR + Container Apps Environment + Container App + Static Web App resources added to `terraform-core/main.tf`; new variables (backend_image, backend_cpu/memory, backend_min/max_replicas, execution_gateway_enabled, llm_timeout, llm_concurrency_limit, teams_webhook_url, dashboard_url, org_name/compliance/risk_tolerance, static_web_app_location); new outputs (acr_login_server, acr_name, backend_url, dashboard_url, dashboard_deployment_token); `Dockerfile` + `.dockerignore` created at repo root; `docs/ARCHITECTURE.md` + `docs/SETUP.md` updated with deployment architecture and deploy commands; all references to old `infrastructure/terraform/` path updated)
+**Last updated (prev):** 2026-03-08 (Deployment infra: `infrastructure/terraform` renamed to `infrastructure/terraform-core`; ACR + Container Apps Environment + Container App + Static Web App resources added to `terraform-core/main.tf`; new variables (backend_image, backend_cpu/memory, backend_min/max_replicas, execution_gateway_enabled, llm_timeout, llm_concurrency_limit, slack_webhook_url, dashboard_url, org_name/compliance/risk_tolerance, static_web_app_location); new outputs (acr_login_server, acr_name, backend_url, dashboard_url, dashboard_deployment_token); `Dockerfile` + `.dockerignore` created at repo root; `docs/ARCHITECTURE.md` + `docs/SETUP.md` updated with deployment architecture and deploy commands; all references to old `infrastructure/terraform/` path updated)
 
 **Last updated (prev):** 2026-03-08 (Demo cleanup: Triage Intelligence card hidden in `Overview.jsx` (`{false && metrics && ...}`) — card will be re-enabled post-hackathon. Triage backend (Phases 26/27A) remains fully functional. README.md cleaned of triage mentions for public presentation. Internal dev docs (CONTEXT.md, ARCHITECTURE.md, SETUP.md, API.md) kept accurate since code still exists.)
 
@@ -92,8 +102,8 @@
 | Microsoft Agent Framework | ✅ Complete | `agent-framework-core` + GPT-4.1 |
 | Decision tracker | ✅ Complete | Azure Cosmos DB (live) / JSON (mock) |
 | MCP server | ✅ Complete | FastMCP stdio (`server.py`) |
-| Dashboard API | ✅ Complete | FastAPI REST (33 endpoints; alerts lifecycle (list/status/stream/active-count); `GET /api/scan-history` — operational scan audit; scan runs durable; SSE live log; Teams status + test; explanation engine; HITL agent fix) |
-| Teams notifications (Phase 17) | ✅ Complete | `src/notifications/teams_notifier.py` — Adaptive Card to Teams webhook on DENIED/ESCALATED |
+| Dashboard API | ✅ Complete | FastAPI REST (33 endpoints; alerts lifecycle (list/status/stream/active-count); `GET /api/scan-history` — operational scan audit; scan runs durable; SSE live log; Slack status + test; explanation engine; HITL agent fix) |
+| Slack notifications (Phase 17) | ✅ Complete | `src/notifications/slack_notifier.py` — Slack Block Kit message on DENIED/ESCALATED |
 | Live Azure topology (Phase 19) | ✅ Complete | `ResourceGraphClient._azure_enrich_topology()` — tag-based + KQL network topology; `cost_lookup.py` — Azure Retail Prices API; `USE_LIVE_TOPOLOGY=true` opt-in flag |
 | Async end-to-end migration (Phase 20) | ✅ Complete | All 7 agents: every `@af.tool` callback `async def` (incl. historical + policy, fixed post-audit); async Azure SDK clients (`aio.*`); `asyncio.gather()` for 4 concurrent KQL queries; `aclose()` on `ResourceGraphClient`, `BlastRadiusAgent`, `FinancialImpactAgent` |
 | Decision explanation engine (Phase 18) | ✅ Complete | `src/core/explanation_engine.py` — counterfactual analysis, per-dimension factors, LLM summary |
@@ -358,38 +368,38 @@ audit trail.
 
 ---
 
-### Phase 17 — Microsoft Teams Notifications
+### Phase 17 — Slack Notifications
 
-DENIED and ESCALATED governance verdicts now trigger an instant Adaptive Card notification
-to a Microsoft Teams channel via Incoming Webhook — no one needs to watch the dashboard 24/7.
+DENIED and ESCALATED governance verdicts now trigger an instant Slack Block Kit message
+to a Slack channel via Incoming Webhook — no one needs to watch the dashboard 24/7.
 
-**`src/notifications/teams_notifier.py`** (NEW)
-- [x] `send_teams_notification(verdict, proposed_action)` — async, fire-and-forget.
-- [x] Builds an Adaptive Card: verdict badge (🚫/⚠️), resource/agent/action facts, SRI composite + 4-dimension breakdown, reasoning (≤300 chars), top policy violation, "View in Dashboard" button, timestamp.
-- [x] APPROVED verdicts silently skipped. Empty `TEAMS_WEBHOOK_URL` silently skipped.
+**`src/notifications/slack_notifier.py`** (NEW)
+- [x] `send_verdict_notification(verdict, proposed_action)` — async, fire-and-forget.
+- [x] Builds a Slack Block Kit message: verdict badge (🚫/⚠️), resource/agent/action facts, SRI composite + 4-dimension breakdown, reasoning (≤300 chars), top policy violation, "View in Dashboard" button, timestamp.
+- [x] APPROVED verdicts silently skipped. Empty `SLACK_WEBHOOK_URL` silently skipped.
 - [x] Retries once after 2 s on network failure. Never raises — all exceptions logged.
 
 **`src/core/pipeline.py`**
-- [x] `asyncio.create_task(send_teams_notification(verdict, action))` after every verdict (fire-and-forget). Wrapped in `try/except` so notification errors never affect governance outcomes.
+- [x] `asyncio.create_task(send_verdict_notification(verdict, action))` after every verdict (fire-and-forget). Wrapped in `try/except` so notification errors never affect governance outcomes.
 
 **`src/config.py`**
-- [x] `teams_webhook_url: str = ""` — empty = disabled (zero-config default).
-- [x] `teams_notifications_enabled: bool = True` — master on/off switch.
-- [x] `dashboard_url: str = "http://localhost:5173"` — configurable "View in Dashboard" link in the card.
+- [x] `slack_webhook_url: str = ""` — empty = disabled (zero-config default).
+- [x] `slack_notifications_enabled: bool = True` — master on/off switch.
+- [x] `dashboard_url: str = "http://localhost:5173"` — configurable "View in Dashboard" link in the message.
 
 **`src/api/dashboard_api.py`** — 2 new endpoints (17 total)
-- [x] `GET /api/notification-status` — returns `{teams_configured, teams_enabled}` for the dashboard indicator.
-- [x] `POST /api/test-notification` — sends a sample DENIED Adaptive Card; useful for judges to verify the integration without running a full scan.
+- [x] `GET /api/notification-status` — returns `{slack_configured, slack_enabled}` for the dashboard indicator.
+- [x] `POST /api/test-notification` — sends a sample DENIED Slack Block Kit message; useful for verifying the integration without running a full scan.
 
 **Frontend**
-- [x] `dashboard/src/App.jsx` — 🔔 Teams pill in header: green clickable button when webhook configured (click sends test notification with live "Sending… → ✓ Sent!" feedback), grey static pill when not configured.
-- [x] `dashboard/src/api.js` — `fetchNotificationStatus()`, `testTeamsNotification()` helpers.
+- [x] `dashboard/src/App.jsx` — 🔔 Slack pill in header: green clickable button when webhook configured (click sends test notification with live "Sending… → ✓ Sent!" feedback), grey static pill when not configured.
+- [x] `dashboard/src/api.js` — `fetchNotificationStatus()`, `testSlackNotification()` helpers.
 
 **`.env.example`**
-- [x] New `TEAMS_WEBHOOK_URL`, `TEAMS_NOTIFICATIONS_ENABLED`, `DASHBOARD_URL` entries.
+- [x] New `SLACK_WEBHOOK_URL`, `SLACK_NOTIFICATIONS_ENABLED`, `DASHBOARD_URL` entries.
 
 **Tests**
-- [x] `tests/test_teams_notification.py` — 5 tests: denied sends, escalated sends, approved skips, no-webhook skips, notification failure does not block pipeline.
+- [x] `tests/test_slack_notifier.py` — 5 tests: denied sends, escalated sends, approved skips, no-webhook skips, notification failure does not block pipeline.
 - [x] **Test result: 429 passed, 10 xfailed, 0 failed** ✅ (was 424 before this phase)
 
 ### Phase 16 — Scan Durability, Live Log & Agent Action Menus
@@ -906,8 +916,8 @@ reviews and merges; CI/CD runs `terraform apply`; IaC state stays in sync.
 **Architecture:**
 ```
 GovernanceVerdict → ExecutionGateway
-    ├── DENIED    → blocked (log + Teams alert)
-    ├── ESCALATED → awaiting_review (Teams alert + dashboard HITL buttons)
+    ├── DENIED    → blocked (log + Slack alert)
+    ├── ESCALATED → awaiting_review (Slack alert + dashboard HITL buttons)
     └── APPROVED  → IaC-managed? → YES → auto-generate Terraform PR
                                  → NO  → manual_required (HITL)
 ```
@@ -1096,16 +1106,16 @@ through RuriSkry automatically — fully autonomous cloud governance loop.
 | `infrastructure/terraform-prod/main.tf` | `depends-on` + `governs` tags on 4 governed resources | Phase 19 |
 | `src/core/explanation_engine.py` | `DecisionExplainer` — factors, counterfactuals, LLM summary, module-level cache | Phase 18 |
 | `tests/test_explanation_engine.py` | 5 tests — denied/escalated/approved shapes, factor ordering, API endpoint round-trip | Phase 18 |
-| `src/api/dashboard_api.py` | FastAPI REST — 18 endpoints; durable scan store; SSE live log; cancel; last-run; Teams status + test; explanation | Phase 18 |
-| `src/notifications/teams_notifier.py` | Adaptive Card → Teams Incoming Webhook on DENIED/ESCALATED; fire-and-forget | Phase 17 |
-| `tests/test_teams_notification.py` | 5 tests — denied, escalated, approved skip, no-webhook skip, pipeline resilience | Phase 17 |
+| `src/api/dashboard_api.py` | FastAPI REST — 18 endpoints; durable scan store; SSE live log; cancel; last-run; Slack status + test; explanation | Phase 18 |
+| `src/notifications/slack_notifier.py` | Block Kit attachments → Slack Incoming Webhook on DENIED/ESCALATED; fire-and-forget | Phase 17 |
+| `tests/test_slack_notifier.py` | 5 tests — denied, escalated, approved skip, no-webhook skip, pipeline resilience | Phase 17 |
 | `demo_live.py` | Two-layer intelligence demo — A2A server auto-starts; no hardcoded RG fallback | Phase 15 |
 | `dashboard/src/components/AgentControls.jsx` | Scan control panel — per-agent buttons, polling, Run All, LiveLogPanel trigger | Phase 16 |
 | `dashboard/src/components/LiveLogPanel.jsx` | SSE slide-out panel — 9 event type styles, auto-scroll, EventSource cleanup | Phase 16 |
 | `dashboard/src/components/ConnectedAgents.jsx` | Agent card grid — ⋮ action menu, per-agent scan/log/results/history/details panels | Phase 16 |
 | `dashboard/src/components/EvaluationDrilldown.jsx` | 6-section full-page drilldown — SRI bars, explanation, counterfactuals, reasoning, JSON audit trail | Phase 18 |
 | `dashboard/src/api.js` | Frontend fetch helpers incl. streamScanEvents, cancelScan, fetchAgentLastRun, fetchNotificationStatus, fetchExplanation | Phase 18 |
-| `dashboard/src/App.jsx` | Root component — 🔔 Teams pill, drilldown navigation via drilldownEval state | Phase 18 |
+| `dashboard/src/App.jsx` | Root component — 🔔 Slack pill, drilldown navigation via drilldownEval state | Phase 18 |
 | `dashboard/src/components/LiveActivityFeed.jsx` | Real-time feed — rows clickable, onDrilldown prop | Phase 18 |
 | `data/scans/` | Local JSON scan-run store (mock mode for ScanRunTracker) | Phase 16 |
 | `data/alerts/` | Local JSON alert investigation store (mock mode for AlertTracker) | Alerts |

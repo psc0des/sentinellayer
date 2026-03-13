@@ -79,8 +79,11 @@ org_name                  = "YourOrgName"
 org_compliance_frameworks = ""
 org_risk_tolerance        = "moderate"
 
-# Teams notifications (optional — leave empty to disable)
-teams_webhook_url = ""
+# Slack notifications (optional — leave slack_webhook_url empty to disable)
+# Get the webhook URL from: api.slack.com/apps → Incoming Webhooks → Add New Webhook to Workspace
+# The URL is stored in Key Vault and injected via Managed Identity (never in tfstate).
+slack_webhook_url           = ""
+slack_notifications_enabled = true
 
 # Static Web App location (limited regions — leave as eastus2 unless needed)
 static_web_app_location = "eastus2"

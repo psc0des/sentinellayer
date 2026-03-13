@@ -153,7 +153,7 @@ right-sizing or deletion.
 | **Agent discovers** | Heartbeat flatlined. Queries `get_resource_details` — VM state: "stopped". |
 | **Proposed action** | `restart_service` |
 | **Governance verdict** | ESCALATED (SRI medium — DR resource, tagged `criticality=critical`, Policy Agent flags review requirement) |
-| **Dashboard** | `awaiting_review` — on-call SRE gets Teams notification (webhook), sees ESCALATED banner |
+| **Dashboard** | `awaiting_review` — on-call SRE gets Slack notification (webhook), sees ESCALATED banner |
 | **Human action** | Approves in dashboard → Gateway calls `virtual_machines.begin_restart()` |
 | **Outcome** | VM restarted. Heartbeat restored. RCA documented in audit trail. |
 
@@ -167,7 +167,7 @@ right-sizing or deletion.
 | **Agent discovers** | Critical service with no redundancy — structural reliability risk |
 | **Proposed action** | `update_config` — enable deployment slots / geo-redundancy |
 | **Governance verdict** | ESCALATED (SRI high — critical payment service, Historical Agent finds similar SPOF incident in 2023) |
-| **Dashboard** | `awaiting_review` — architect notified via Teams |
+| **Dashboard** | `awaiting_review` — architect notified via Slack |
 | **Human action** | Reviews finding → escalates to architecture review, not a quick fix |
 | **Outcome** | SPOF documented. Architecture task created. Not auto-fixed — correctly escalated. |
 
@@ -248,7 +248,7 @@ decides whether a rule is genuinely dangerous before proposing removal.
 | **Agent discovers** | Port 22 reachable from the internet — brute-force attack surface |
 | **Proposed action** | `modify_nsg` — delete rule `Allow-SSH` |
 | **Governance verdict** | ESCALATED (SRI medium — dev NSG, lower criticality than prod, but still a real risk) |
-| **Dashboard** | `awaiting_review` — security lead notified via Teams |
+| **Dashboard** | `awaiting_review` — security lead notified via Slack |
 | **Human action** | Approves → Gateway calls `NetworkManagementClient.security_rules.begin_delete()` |
 | **Outcome** | Rule deleted. SSH access restricted to VPN/Bastion only. |
 
@@ -315,7 +315,7 @@ decides whether a rule is genuinely dangerous before proposing removal.
 | SRI Score | Verdict | What the engine does |
 |-----------|---------|---------------------|
 | 0–25 | **APPROVED** | Routes to Terraform PR (IaC) or `manual_required` (no IaC) |
-| 26–60 | **ESCALATED** | `awaiting_review` — HITL buttons in dashboard, Teams notification sent |
+| 26–60 | **ESCALATED** | `awaiting_review` — HITL buttons in dashboard, Slack notification sent |
 | 61–100 | **DENIED** | `blocked` — logged to audit trail, no execution path opened |
 
 ---

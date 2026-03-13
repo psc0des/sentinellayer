@@ -205,9 +205,9 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 Additional security controls managed by Terraform:
 - **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. The lock `depends_on` all major resources so `terraform destroy` removes it automatically before deleting anything else — no manual step required
 - **Subscription-level Reader** — `azurerm_role_assignment.subscription_reader` grants the Container App's Managed Identity `Reader` at subscription scope for cross-RG Resource Graph scanning
-- **Azure Monitor Action Group** — `azurerm_monitor_action_group.ruriskry` (`terraform-core`) points at `https://<backend-fqdn>/api/alert-trigger`. Attach alert rules to this group (portal or `az monitor metrics alert update --add-action`) so Azure Monitor alerts POST to the backend and trigger automatic governance evaluation
+- **Azure Monitor Action Group** — `azurerm_monitor_action_group.ruriskry` (`terraform-core`) points at `https://<backend-fqdn>/api/alert-trigger`. Attach alert rules to this group (portal or `az monitor metrics alert update --add-action`) so Azure Monitor alerts POST to the backend and trigger automatic governance evaluation. See [`docs/alert-wiring.md`](alert-wiring.md) for a step-by-step guide on wiring new resources.
 - **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` with exact origin matching against `DASHBOARD_URL`. The Container App references `azurerm_static_web_app.dashboard.default_host_name` directly in `main.tf` — Terraform creates the SWA first (implicit dependency), reads the URL in-memory, and passes the exact value into `DASHBOARD_URL` in the same apply — no tfvars patching, no re-apply, no stale CORS window, no wildcard patterns needed
-- **Teams webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
+- **Slack webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
 
 In mock mode (`USE_LOCAL_MOCKS=true`), all four Azure services are replaced by local JSON files
 and in-memory logic — no cloud connection needed.
@@ -302,7 +302,7 @@ This architecture is **intentional**:
 - **Single deployment unit** — one Container App image, one `az containerapp update`, done
 - **Scales vertically** — increase the Container App's CPU/memory to handle more concurrent scans; add replicas for availability
 
-The operational agents (`CostOptimizationAgent`, `MonitoringAgent`, `DeployAgent`) are instantiated once at FastAPI startup (`lifespan` handler) and reused across requests. They hold no per-request state — all state lives in Cosmos DB or local JSON.
+The operational agents (`CostOptimizationAgent`, `MonitoringAgent`, `DeployAgent`) are instantiated lazily per request and hold no per-request state — all state lives in Cosmos DB or local JSON. The FastAPI `lifespan` hook runs on startup to mark any orphaned `"running"` scans as `"error"` (handles the case where the process was killed mid-scan during a redeployment).
 
 ---
 
@@ -375,7 +375,7 @@ first line of defence. A purely rule-based ops agent is a weak Layer 1.
 
 **Intelligent monitoring-agent — actual end-to-end flow (live):**
 ```
-Azure Monitor alert fires (e.g. vm-dr-01 heartbeat loss, vm-web-01 CPU > 80%)
+Azure Monitor alert fires (e.g. vm-dr-01 heartbeat loss, vm-web-01 heartbeat loss, vm-web-01 CPU > 80%)
     ↓ ag-ruriskry-prod Action Group (terraform-prod, use_common_alert_schema=false)
 POST /api/alert-trigger  ← Azure POSTs Common Alert Schema payload
     ↓
@@ -489,7 +489,7 @@ GovernanceVerdict
        │
        ▼
 ExecutionGateway.route_verdict()
-  ├── DENIED    → status=blocked (log + Teams alert, no action)
+  ├── DENIED    → status=blocked (log + Slack alert, no action)
   ├── ESCALATED → status=awaiting_review
   └── APPROVED  → status=manual_required
         │         (IaC metadata stored on record for on-demand PR creation)
@@ -508,7 +508,7 @@ the dashboard drilldown. The human chooses how to act — nothing executes autom
 
 | Verdict | Automatic Step | Dashboard Status | HITL Panel |
 |---------|----------------|-----------------|------------|
-| DENIED | Block. Log + Teams alert. | Blocked (red) | None |
+| DENIED | Block. Log + Slack alert. | Blocked (red) | None |
 | ESCALATED | Create review request. | Awaiting Review (yellow) | 4-button panel (action auto-approves) |
 | APPROVED | Store record. | Manual Required (grey) | 4-button panel |
 
@@ -542,7 +542,7 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 - **Durable state** — `ExecutionRecord` persisted as JSON in `data/executions/`; survives restarts
 - **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Decline / Ignore** or the agent stops flagging it. `pr_created`, `awaiting_review`, `blocked`, `dismissed`, `applied`, and `rolled_back` records are excluded.
 - **Dedup `action_id` update** — when a resource is re-scanned and an existing `manual_required` record is found for the same `(resource_id, action_type)`, the record's `action_id` is updated to the latest verdict's `action_id` before returning. This ensures the drilldown's `by-action` lookup always resolves to the live execution record.
-- **Rollback** — after a fix is applied (`status=applied`), `ExecutionGateway.rollback_agent_fix()` calls `ExecutionAgent.rollback()`, sets `status → rolled_back`, and stores `rollback_log`. Mock path maps each `ActionType` to its deterministic inverse (RESTART→deallocate, SCALE_UP/DOWN→resize back, NSG→restore rule, DELETE→cannot auto-rollback). Live path is LLM-driven using `rollback_hint` from the stored plan. The dashboard shows an amber ↩ Rollback button next to the Applied badge in both `EvaluationDrilldown` and `Alerts`.
+- **Rollback** — after a fix is applied (`status=applied`), `ExecutionGateway.rollback_agent_fix()` calls `ExecutionAgent.rollback()`. On success: sets `status → rolled_back`, stores `rollback_log`. On failure: keeps `status = applied` (fix is still in place), stores failed `rollback_log`, appends failure note. Mock path maps each `ActionType` to its deterministic inverse (RESTART→deallocate, SCALE_UP/DOWN→resize back, NSG→restore rule, DELETE→cannot auto-rollback). Live path is LLM-driven using `rollback_hint` from the stored plan. The dashboard shows an amber ↩ Rollback button next to the Applied badge; on failure a rose-colored "Rollback attempted but failed" banner shows and the button remains for retry.
 - **NSG rule auto-dismiss** — when a scan finds resource `nsg-east-prod` clean, the system dismisses all `manual_required` records whose ARM ID contains `/securityRules/` with that NSG as parent. The parent name is extracted from the ARM ID segment before `/securityRules/`.
 - **Deterministic historical boost** — `HistoricalPatternAgent._governance_history_boost()` reads `DecisionTracker.get_recent(50)` and adds +25 per prior ESCALATED / +5 per prior APPROVED for the same `action_type` (cap +60). Ensures consistent ESCALATED routing when Azure AI Search BM25 returns sparse results.
 
@@ -581,37 +581,54 @@ falling back to rules.` in logs for governance agents; ops agents silently retur
 
 ---
 
-## Teams Notification Layer (Phase 17)
+## Slack Notification Layer (Phase 17 + hardened 2026-03-14)
 
-Every DENIED or ESCALATED verdict automatically triggers a Microsoft Teams Adaptive Card —
-no one needs to watch the dashboard 24/7.
+Every DENIED or ESCALATED verdict automatically triggers a Slack message via Incoming Webhook —
+no one needs to watch the dashboard 24/7. Three notification types are implemented:
+
+| Function | Trigger | Wired in |
+|---|---|---|
+| `send_verdict_notification` | DENIED / ESCALATED governance verdict | `pipeline.py` |
+| `send_alert_notification` | Azure Monitor alert received (investigation started) | `dashboard_api.py` alert-trigger endpoint |
+| `send_alert_resolved_notification` | Alert investigation complete | `dashboard_api.py` background task |
 
 ```
 RuriSkryPipeline.evaluate()
     ↓ verdict
-asyncio.create_task(send_teams_notification(verdict, action))   ← fire-and-forget
+asyncio.create_task(send_verdict_notification(verdict, action))   ← fire-and-forget
     ↓ runs concurrently, never blocks governance
-httpx.AsyncClient.post(TEAMS_WEBHOOK_URL, json=adaptive_card)
+_get_client()                                                      ← shared singleton (TLS reuse)
+    ↓
+_acquire_rate_slot()                                               ← rate limiter (≥1.1s between sends)
+    ↓
+httpx.AsyncClient.post(SLACK_WEBHOOK_URL, json=block_kit_payload)
 ```
 
 **Key design decisions:**
 
 - **Fire-and-forget via `asyncio.create_task()`** — the pipeline returns the verdict
-  immediately; the notification runs in the background. A slow Teams endpoint never delays
+  immediately; the notification runs in the background. A slow Slack endpoint never delays
   governance.
-- **Never raises** — `send_teams_notification` wraps everything in `except Exception`.
-  Notification failure is logged and swallowed; the governance decision is unaffected.
+- **Shared `httpx.AsyncClient` singleton** — one client per process, initialized lazily with
+  double-checked locking. Reuses the TLS connection across all notifications instead of
+  opening a new TCP+TLS handshake per call.
+- **Rate limiter** — `asyncio.Lock` + `time.monotonic()` enforces ≥1.1 s between sends,
+  staying under Slack's ~1 msg/sec limit during burst alert loads.
+- **Smart retry** — errors are categorized: 4xx (client error) = no retry; 429 = obeys
+  `Retry-After` header (capped 30 s); 5xx / network timeout = exponential backoff
+  (2 s → 4 s), 3 max attempts. Never retries when retrying would be pointless.
+- **Never raises** — all public functions return `bool`. Notification failure is logged
+  with structured `extra={}` fields and swallowed; the governance decision is unaffected.
 - **APPROVED verdicts skipped** — only actionable alerts sent; no noise.
-- **Retry-once** — one retry after 2 s on network failure, then gives up cleanly.
-- **Zero-config default** — `TEAMS_WEBHOOK_URL=""` silently disables notifications.
-  No env var = no error, no Teams connection needed to run RuriSkry.
+- **Zero-config default** — `SLACK_WEBHOOK_URL=""` silently disables notifications.
+  No env var = no error, no Slack connection needed to run RuriSkry.
 
-**Adaptive Card payload** — contains: verdict badge (🚫/⚠️), resource + agent + action
+**Block Kit payload** — contains: verdict badge (🚫/⚠️), resource + agent + action
 facts, SRI composite + 4-dimension breakdown, governance reason (≤300 chars), top policy
 violation if any, "View in Dashboard" button (configurable URL), timestamp.
 
 **Dashboard integration** — `GET /api/notification-status` drives the 🔔 pill in the header.
-`POST /api/test-notification` sends a realistic sample DENIED card for judges to verify the
+`POST /api/test-notification` sends a realistic sample DENIED message to verify the
 integration without running a full scan.
 
 ---
@@ -678,7 +695,7 @@ src/
 │   └── agent_registry.py     # Tracks connected agents + stats
 ├── mcp_server/server.py       # FastMCP stdio — skry_evaluate_action (async)
 ├── notifications/             # Outbound alerting (Phase 17)
-│   └── teams_notifier.py      # Adaptive Card → Teams webhook on DENIED/ESCALATED; fire-and-forget
+│   └── slack_notifier.py      # Block Kit attachments → Slack webhook on DENIED/ESCALATED; fire-and-forget
 ├── api/dashboard_api.py       # FastAPI REST — 33 async endpoints (evaluations, agents,
 │                              #   scan triggers, alerts lifecycle, SSE streams, cancel,
 │                              #   last-run, notification-status, test-notification, explanation, HITL)
@@ -694,7 +711,7 @@ src/
 │   ├── search_client.py       # Azure AI Search client (live: BM25 full-text; mock: keyword matching)
 │   ├── openai_client.py       # Azure OpenAI / gpt-5-mini client (live: Responses API; mock: canned string)
 │   └── secrets.py             # Key Vault secret resolver (env → KV → empty string)
-└── config.py                  # SRI thresholds + env vars + DEMO_MODE + Teams settings
+└── config.py                  # SRI thresholds + env vars + DEMO_MODE + Slack settings
 dashboard/
 └── src/
     ├── pages/
