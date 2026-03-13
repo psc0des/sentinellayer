@@ -300,7 +300,8 @@ This architecture is **intentional**:
 - **No service discovery overhead** — agents call each other as Python function calls, not HTTP requests
 - **`asyncio.gather()` works natively** — all 4 governance agents run in true parallel inside one event loop; no message broker needed
 - **Single deployment unit** — one Container App image, one `az containerapp update`, done
-- **Scales vertically** — increase the Container App's CPU/memory to handle more concurrent scans; add replicas for availability
+- **Scales horizontally with sticky sessions** — `sticky_sessions_affinity = "sticky"` is set on the Container App ingress; this pins each browser session to the same replica so SSE queues (in-memory per-replica) are always reachable. Without sticky sessions, multi-replica deployments cause "Scan log unavailable" errors because the SSE stream can land on a different replica than the one that started the scan. `max_replicas = 3` by default.
+- **Scales vertically** — increase the Container App's CPU/memory to handle more concurrent scans
 
 The operational agents (`CostOptimizationAgent`, `MonitoringAgent`, `DeployAgent`) are instantiated lazily per request and hold no per-request state — all state lives in Cosmos DB or local JSON. The FastAPI `lifespan` hook runs on startup to mark any orphaned `"running"` scans as `"error"` (handles the case where the process was killed mid-scan during a redeployment).
 
