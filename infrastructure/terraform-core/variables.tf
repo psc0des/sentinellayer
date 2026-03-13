@@ -220,9 +220,9 @@ variable "backend_min_replicas" {
 }
 
 variable "backend_max_replicas" {
-  description = "Maximum number of Container App replicas."
+  description = "Maximum number of Container App replicas. Must be 1 — all scan/alert state is in-memory per-replica; multi-replica causes SSE streams to hit the wrong instance."
   type        = number
-  default     = 3
+  default     = 1
 }
 
 # ---------------------------------------------------------------------------
