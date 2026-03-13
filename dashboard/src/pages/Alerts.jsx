@@ -10,7 +10,7 @@
  * (Create Terraform PR, Fix by Agent, Open in Portal, Decline/Ignore).
  */
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useOutletContext } from 'react-router-dom'
 import {
@@ -249,6 +249,50 @@ function ExecutionLogView({ steps, verification, label = 'Execution Log' }) {
   )
 }
 
+// ── AgentTerminal ─────────────────────────────────────────────────────────────
+
+const TERM_COLORS = {
+  init:        'text-slate-600',
+  info:        'text-slate-500',
+  step:        'text-violet-400',
+  success:     'text-emerald-400',
+  error:       'text-rose-400',
+  verify_ok:   'text-emerald-300',
+  verify_warn: 'text-amber-300',
+  complete:    'text-emerald-400 font-bold',
+  failed:      'text-rose-400 font-bold',
+}
+
+function AgentTerminal({ lines, running }) {
+  const bottomRef = useRef(null)
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines])
+  return (
+    <div className="rounded-lg overflow-hidden border border-slate-700/40 bg-[#080c08] font-mono text-xs leading-relaxed mt-3">
+      <div className="flex items-center gap-1.5 px-3 py-2 bg-[#111611] border-b border-slate-700/30">
+        <span className="w-2.5 h-2.5 rounded-full bg-rose-500/60" />
+        <span className="w-2.5 h-2.5 rounded-full bg-amber-500/60" />
+        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/60" />
+        <span className="mx-auto text-slate-600 text-[10px] tracking-[0.2em] uppercase select-none">execution terminal</span>
+        {running && (
+          <span className="flex items-center gap-1.5 text-[10px] text-emerald-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            running
+          </span>
+        )}
+      </div>
+      <div className="p-3 min-h-[60px] max-h-60 overflow-y-auto space-y-0.5">
+        {lines.map((line, i) => (
+          <div key={i} className={`${TERM_COLORS[line.type] ?? 'text-slate-400'} whitespace-pre-wrap break-all leading-5`}>
+            {line.text}
+          </div>
+        ))}
+        {running && <span className="text-emerald-400 animate-pulse">█</span>}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  )
+}
+
 // ── AlertFindingActions ───────────────────────────────────────────────────────
 // Action buttons for a single governance finding within an alert.
 // Mirrors the execution panel in EvaluationDrilldown.jsx.
@@ -261,6 +305,7 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
   const [agentFixExpanded, setAgentFixExpanded] = useState(false)
   const [agentFixExecuting, setAgentFixExecuting] = useState(false)
   const [agentFixResult, setAgentFixResult] = useState(null)
+  const [terminalLines, setTerminalLines] = useState([])
   const [prUrl, setPrUrl] = useState(null)
   const [error, setError] = useState(null)
   const [rollbackExecuting, setRollbackExecuting] = useState(false)
@@ -288,9 +333,10 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
   }
 
   async function handleAgentFixPreview() {
-    if (agentFixPreview) { setAgentFixExpanded(e => !e); return }
+    if (agentFixPreview) { setAgentFixExpanded(e => !e); setTerminalLines([]); return }
     setAgentFixLoading(true)
     setAgentFixExpanded(true)
+    setTerminalLines([])
     try {
       const data = await fetchAgentFixPreview(execId)
       setAgentFixPreview(data)
@@ -303,17 +349,53 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
 
   async function handleAgentFixExecute() {
     if (!window.confirm('This will run az CLI commands against your Azure environment. Continue?')) return
+    const ts = () => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     setAgentFixExecuting(true)
     setAgentFixResult(null)
+    setTerminalLines([
+      { type: 'init', text: `[${ts()}] ▶  Execution started` },
+      { type: 'init', text: `[${ts()}] ▶  Connecting to Azure environment...` },
+    ])
+
+    let updated
     try {
-      const updated = await executeAgentFix(execId)
+      updated = await executeAgentFix(execId)
       setExecStatus(updated.status)
       setAgentFixResult(updated)
     } catch (err) {
+      setTerminalLines(prev => [...prev,
+        { type: 'error', text: `[${ts()}] ✗  Error: ${err.message}` },
+      ])
       setAgentFixResult({ status: 'failed', notes: err.message })
-    } finally {
       setAgentFixExecuting(false)
+      return
     }
+
+    const steps = updated.execution_log ?? []
+    const animLines = []
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]
+      animLines.push({ type: 'step',    text: `[${ts()}] ▶  [${i + 1}/${steps.length}] ${s.operation}` })
+      animLines.push({ type: s.success ? 'success' : 'error',
+                       text: `[${ts()}]    ${s.success ? '✓' : '✗'}  ${s.message}` })
+    }
+    if (updated.verification) {
+      const v = updated.verification
+      animLines.push({ type: 'info',     text: `[${ts()}] ▶  Running post-execution verification...` })
+      animLines.push({ type: v.confirmed ? 'verify_ok' : 'verify_warn',
+                       text: `[${ts()}]    ${v.confirmed ? '✓' : '⚠'}  ${v.message}` })
+    }
+    const ok = steps.filter(s => s.success).length
+    animLines.push({
+      type: updated.status === 'applied' ? 'complete' : 'failed',
+      text: `[${ts()}] ${'─'.repeat(4)} ${updated.status === 'applied' ? 'EXECUTION COMPLETE' : 'EXECUTION FAILED'} — ${ok}/${steps.length} steps ${'─'.repeat(4)}`,
+    })
+
+    for (const line of animLines) {
+      await new Promise(r => setTimeout(r, 140))
+      setTerminalLines(prev => [...prev, line])
+    }
+    setAgentFixExecuting(false)
   }
 
   async function handleRollback() {
@@ -464,24 +546,19 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
                       disabled={agentFixExecuting}
                       className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
                     >
-                      {agentFixExecuting
-                        ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Running…</>
-                        : <>▶ Run</>}
+                      {agentFixExecuting ? <>Running…</> : <>▶ Run</>}
                     </button>
-                    <button
-                      onClick={() => setAgentFixExpanded(false)}
-                      className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-medium transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    {!agentFixExecuting && !terminalLines.length && (
+                      <button
+                        onClick={() => setAgentFixExpanded(false)}
+                        className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
-                  {agentFixResult && (
-                    <>
-                      <div className={`text-xs rounded px-2 py-1.5 border ${agentFixResult.status === 'applied' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
-                        {agentFixResult.status === 'applied' ? '✓ Fix applied.' : '✗ Fix failed.'} {agentFixResult.notes}
-                      </div>
-                      <ExecutionLogView steps={agentFixResult.execution_log} verification={agentFixResult.verification} />
-                    </>
+                  {terminalLines.length > 0 && (
+                    <AgentTerminal lines={terminalLines} running={agentFixExecuting} />
                   )}
                 </>
               )}
@@ -528,18 +605,15 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
                   <div className="flex gap-2">
                     <button onClick={handleAgentFixExecute} disabled={agentFixExecuting}
                       className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium disabled:opacity-50">
-                      {agentFixExecuting ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Running…</> : <>▶ Run</>}
+                      {agentFixExecuting ? <>Running…</> : <>▶ Run</>}
                     </button>
-                    <button onClick={() => setAgentFixExpanded(false)}
-                      className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-medium">Cancel</button>
+                    {!agentFixExecuting && !terminalLines.length && (
+                      <button onClick={() => setAgentFixExpanded(false)}
+                        className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs font-medium">Cancel</button>
+                    )}
                   </div>
-                  {agentFixResult && (
-                    <>
-                      <div className={`text-xs rounded px-2 py-1.5 border ${agentFixResult.status === 'applied' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}>
-                        {agentFixResult.status === 'applied' ? '✓ Fix applied.' : '✗ Fix failed.'} {agentFixResult.notes}
-                      </div>
-                      <ExecutionLogView steps={agentFixResult.execution_log} verification={agentFixResult.verification} />
-                    </>
+                  {terminalLines.length > 0 && (
+                    <AgentTerminal lines={terminalLines} running={agentFixExecuting} />
                   )}
                 </>
               )}
