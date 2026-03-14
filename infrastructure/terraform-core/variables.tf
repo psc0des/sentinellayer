@@ -202,15 +202,15 @@ variable "backend_image" {
 }
 
 variable "backend_cpu" {
-  description = "vCPU allocated to the backend container (e.g. 0.5, 1.0, 2.0)."
+  description = "vCPU allocated to the backend container (e.g. 0.5, 1.0, 2.0). 2.0 required for concurrent 3-agent scans — 1.0 causes OOM restarts mid-scan."
   type        = number
-  default     = 1.0
+  default     = 2.0
 }
 
 variable "backend_memory" {
-  description = "Memory allocated to the backend container (e.g. '2Gi'). Must match a valid cpu/memory pair."
+  description = "Memory allocated to the backend container (e.g. '2Gi'). Must match a valid cpu/memory pair. 4Gi pairs with 2.0 vCPU."
   type        = string
-  default     = "2Gi"
+  default     = "4Gi"
 }
 
 variable "backend_min_replicas" {

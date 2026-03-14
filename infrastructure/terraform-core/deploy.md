@@ -492,7 +492,7 @@ terraform destroy
 
 | Resource | Approximate cost |
 |----------|--------------------|
-| Container App (1–3 replicas, 1 vCPU / 2 GiB, sticky sessions) | ~$35–105/month |
+| Container App (1–3 replicas, 2 vCPU / 4 GiB, sticky sessions) | ~$70–210/month |
 | Azure AI Foundry (gpt-5-mini GlobalStandard, 200K TPM) | Pay-per-token |
 | Azure AI Search (free tier) | $0 |
 | Cosmos DB (free tier) | $0 |

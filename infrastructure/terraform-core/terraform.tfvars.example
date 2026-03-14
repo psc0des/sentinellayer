@@ -50,8 +50,8 @@ managed_identity_principal_ids = []
 # Docker image to run in the Container App.
 # Build and push to ACR first (see docs/SETUP.md → Cloud Deployment).
 backend_image        = "ruriskry-backend:latest"
-backend_cpu          = 1.0
-backend_memory       = "2Gi"
+backend_cpu          = 2.0    # 2.0 required for concurrent 3-agent scans; 1.0 causes OOM restarts mid-scan
+backend_memory       = "4Gi"  # must match a valid cpu/memory pair for Azure Container Apps
 backend_min_replicas = 1
 backend_max_replicas = 3
 
