@@ -121,6 +121,44 @@
   .ops-agent .name { color: #93c5fd; }
   .ops-icon { font-size: 24px; margin-bottom: 4px; }
 
+  /* ProposedAction evidence artifact */
+  .evidence-artifact {
+    margin: 12px auto 0;
+    max-width: 700px;
+    background: #0d1520;
+    border: 1px solid rgba(34,197,94,0.25);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .evidence-label {
+    background: rgba(34,197,94,0.08);
+    border-bottom: 1px solid rgba(34,197,94,0.15);
+    padding: 5px 14px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #4ade80;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .evidence-label::before { content: '{}'; font-size: 12px; opacity: 0.7; }
+  .evidence-code {
+    padding: 10px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    color: #22c55e;
+    white-space: pre;
+    display: inline-block;
+    width: 100%;
+    text-align: left;
+  }
+  .evidence-code .key { color: #93c5fd; }
+  .evidence-code .str { color: #22c55e; }
+  .evidence-code .num { color: #f59e0b; }
+
   /* Step description between layers */
   .step-connector {
     text-align: center;
@@ -200,43 +238,6 @@
   }
   .pipeline-box .name { color: #2dd4bf; font-size: 15px; }
 
-  /* Triage box */
-  .triage-box {
-    background: rgba(30,41,59,0.4);
-    border: 1px dashed rgba(148,163,184,0.2);
-    border-radius: 10px;
-    padding: 10px 20px;
-    margin-bottom: 14px;
-    display: flex;
-    align-items: center;
-    gap: 20px;
-  }
-  .triage-box .triage-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #f59e0b;
-    white-space: nowrap;
-  }
-  .triage-tiers {
-    display: flex;
-    gap: 14px;
-    font-size: 11px;
-    font-family: 'JetBrains Mono', monospace;
-    color: #94a3b8;
-  }
-  .triage-tiers span { white-space: nowrap; }
-  .tier-tag {
-    display: inline-block;
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    margin-right: 4px;
-  }
-  .t1 { background: rgba(16,185,129,0.15); color: #34d399; }
-  .t2 { background: rgba(245,158,11,0.15); color: #fbbf24; }
-  .t3 { background: rgba(239,68,68,0.15); color: #f87171; }
-
   /* Governance agents row */
   .gov-agents-row {
     display: grid;
@@ -266,6 +267,13 @@
     font-family: 'JetBrains Mono', monospace;
     margin-top: 3px;
   }
+  .gov-agent .agent-desc {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #64748b;
+    margin-top: 4px;
+    line-height: 1.4;
+  }
 
   .gov-blast {
     background: linear-gradient(135deg, rgba(168,85,247,0.1), rgba(168,85,247,0.03));
@@ -274,10 +282,11 @@
   .gov-blast .name, .gov-blast .sri-dim { color: #c084fc; }
 
   .gov-policy {
-    background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(59,130,246,0.03));
-    border-color: rgba(59,130,246,0.3);
+    background: linear-gradient(135deg, rgba(239,68,68,0.1), rgba(239,68,68,0.04));
+    border-color: rgba(239,68,68,0.4);
+    border-width: 1.5px;
   }
-  .gov-policy .name, .gov-policy .sri-dim { color: #93c5fd; }
+  .gov-policy .name, .gov-policy .sri-dim { color: #fca5a5; }
 
   .gov-hist {
     background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.03));
@@ -291,6 +300,22 @@
   }
   .gov-fin .name, .gov-fin .sri-dim { color: #34d399; }
 
+  /* Policy violation badge */
+  .policy-violation-badge {
+    display: inline-block;
+    margin-top: 7px;
+    padding: 3px 8px;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.4);
+    border-radius: 4px;
+    font-size: 9px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #f87171;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    line-height: 1.4;
+  }
+
   /* Parallel badge */
   .parallel-badge {
     text-align: center;
@@ -298,6 +323,83 @@
     font-size: 10px;
     font-family: 'JetBrains Mono', monospace;
     color: #475569;
+  }
+
+  /* SRI Evidence Box */
+  .sri-evidence-box {
+    margin: 0 0 12px;
+    background: #0d1520;
+    border: 1px solid rgba(45,212,191,0.2);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .sri-evidence-header {
+    background: rgba(45,212,191,0.07);
+    border-bottom: 1px solid rgba(45,212,191,0.15);
+    padding: 6px 16px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #2dd4bf;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+  }
+  .sri-evidence-body {
+    padding: 10px 16px;
+    display: flex;
+    gap: 28px;
+    align-items: center;
+    justify-content: center;
+  }
+  .sri-dim-rows { display: flex; flex-direction: column; gap: 4px; }
+  .sri-dim-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .sri-dim-row .dim-name { color: #94a3b8; width: 100px; }
+  .sri-dim-row .dim-score { color: #f1f5f9; font-weight: 600; width: 28px; text-align: right; }
+  .sri-dim-row .dim-calc { color: #475569; width: 100px; }
+  .sri-dim-row .dim-tag {
+    padding: 1px 7px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .dim-tag-critical { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+  .sri-divider {
+    width: 1px;
+    height: 68px;
+    background: rgba(45,212,191,0.15);
+  }
+  .sri-total-block {
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .sri-total-score {
+    font-size: 36px;
+    font-weight: 700;
+    color: #f87171;
+    line-height: 1;
+    letter-spacing: -1px;
+  }
+  .sri-total-label {
+    font-size: 9px;
+    color: #64748b;
+    margin-top: 2px;
+    letter-spacing: 1px;
+  }
+  .sri-total-verdict {
+    margin-top: 6px;
+    display: inline-block;
+    padding: 3px 10px;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.35);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #f87171;
   }
 
   /* Decision Engine */
@@ -361,22 +463,22 @@
   .output-box .detail { font-size: 10px; }
 
   .out-exec {
+    background: linear-gradient(135deg, rgba(16,185,129,0.08), rgba(16,185,129,0.02));
+    border-color: rgba(16,185,129,0.25);
+  }
+  .out-exec .name { color: #34d399; }
+
+  .out-hitl {
     background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.03));
     border-color: rgba(245,158,11,0.25);
   }
-  .out-exec .name { color: #fbbf24; }
+  .out-hitl .name { color: #fbbf24; }
 
-  .out-audit {
-    background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(45,212,191,0.02));
-    border-color: rgba(45,212,191,0.2);
+  .out-denied {
+    background: linear-gradient(135deg, rgba(239,68,68,0.1), rgba(239,68,68,0.03));
+    border-color: rgba(239,68,68,0.25);
   }
-  .out-audit .name { color: #2dd4bf; }
-
-  .out-explain {
-    background: linear-gradient(135deg, rgba(168,85,247,0.08), rgba(168,85,247,0.02));
-    border-color: rgba(168,85,247,0.2);
-  }
-  .out-explain .name { color: #c084fc; }
+  .out-denied .name { color: #f87171; }
 
   /* Azure + integrations bottom section */
   .bottom-section {
@@ -458,39 +560,25 @@
   .int-box .name { font-size: 12px; font-weight: 600; color: #cbd5e1; }
   .int-box .detail { font-size: 9px; color: #64748b; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
 
-  /* Left side annotation */
-  .side-note {
-    position: absolute;
-    right: -10px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: rgba(30,41,59,0.6);
-    border: 1px solid rgba(100,116,139,0.15);
-    border-radius: 8px;
-    padding: 8px 12px;
+  /* Azure connection note */
+  .azure-conn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin: 6px 0;
+  }
+  .azure-conn .conn-line {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(59,130,246,0.3), transparent);
+  }
+  .azure-conn .conn-text {
     font-size: 10px;
-    color: #94a3b8;
-    max-width: 160px;
-    line-height: 1.4;
-  }
-
-  /* Data flow annotation */
-  .data-flow {
-    position: absolute;
-    font-size: 9px;
     font-family: 'JetBrains Mono', monospace;
-    padding: 3px 8px;
-    border-radius: 4px;
+    color: #60a5fa;
     white-space: nowrap;
-  }
-
-  /* Footer */
-  .footer {
-    text-align: center;
-    margin-top: 20px;
-    font-size: 11px;
-    color: #334155;
-    font-family: 'JetBrains Mono', monospace;
+    opacity: 0.6;
   }
 
   /* Two-layer callout */
@@ -517,25 +605,13 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
-  /* Azure connection note */
-  .azure-conn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    margin: 6px 0;
-  }
-  .azure-conn .conn-line {
-    flex: 1;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(59,130,246,0.3), transparent);
-  }
-  .azure-conn .conn-text {
-    font-size: 10px;
+  /* Footer */
+  .footer {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 11px;
+    color: #334155;
     font-family: 'JetBrains Mono', monospace;
-    color: #60a5fa;
-    white-space: nowrap;
-    opacity: 0.6;
   }
 </style>
 </head>
@@ -545,7 +621,7 @@
   <!-- Title -->
   <div class="title-bar">
     <h1><span class="accent">RuriSkry</span> — System Architecture</h1>
-    <div class="subtitle">AI Action Governance & Simulation Engine &middot; Two-Layer Intelligence</div>
+    <div class="subtitle">AI Action Governance Engine &middot; Every AI agent action intercepted, scored with SRI&trade;, and governed before it reaches infrastructure</div>
   </div>
 
   <!-- LAYER 1: Operational Agents -->
@@ -556,7 +632,7 @@
       <div class="two-layer-callout">
         <span class="callout-icon">🔄</span>
         <span class="callout-text">Two-Layer Intelligence:</span>
-        <span class="callout-detail">Ops agents query real Azure data via gpt-5-mini, then RuriSkry provides an independent second opinion</span>
+        <span class="callout-detail">Ops agents query real Azure data via gpt-5-mini &rarr; propose actions &rarr; RuriSkry provides an independent governance second opinion before any change executes</span>
       </div>
       <div class="row">
         <div class="box ops-agent">
@@ -577,6 +653,18 @@
           <div class="name">Deploy Agent</div>
           <div class="detail">7-domain security audit<br>NSG / storage / tagging</div>
         </div>
+      </div>
+
+      <!-- ProposedAction evidence artifact -->
+      <div class="evidence-artifact">
+        <div class="evidence-label">ProposedAction — emitted by Cost Agent (example)</div>
+        <div class="evidence-code">{
+  <span class="key">"action_type"</span>:   <span class="str">"delete_resource"</span>,
+  <span class="key">"resource_type"</span>:  <span class="str">"VirtualMachine"</span>,
+  <span class="key">"resource_id"</span>:    <span class="str">".../virtualMachines/vm-prod-23"</span>,
+  <span class="key">"reason"</span>:         <span class="str">"VM averaging 3% CPU for 14 days — $340/month waste"</span>,
+  <span class="key">"agent"</span>:          <span class="str">"cost_agent"</span>
+}</div>
       </div>
     </div>
   </div>
@@ -604,12 +692,12 @@
           <div class="detail">Agent-to-Agent protocol<br>enterprise microservices</div>
         </div>
         <div class="box entry-box">
-          <div class="name">🔌 MCP stdio</div>
-          <div class="detail">Claude Desktop<br>IDE integrations</div>
+          <div class="name">📡 Azure Monitor Webhook</div>
+          <div class="detail">Alert rules &rarr; POST /api/alert-trigger<br>auto-triggers investigation scan</div>
         </div>
         <div class="box entry-box">
           <div class="name">🐍 Direct Python</div>
-          <div class="detail">Pipeline API<br>tests / demos</div>
+          <div class="detail">pipeline.evaluate(action)<br>tests / local development</div>
         </div>
       </div>
     </div>
@@ -639,16 +727,6 @@
           <div class="detail" style="color: #5eead4;">Unified entry point &mdash; intercepts every action before it touches infrastructure</div>
         </div>
 
-        <!-- Risk Triage -->
-        <div class="triage-box">
-          <div class="triage-label">⚡ Risk Triage</div>
-          <div class="triage-tiers">
-            <span><span class="tier-tag t1">T1</span> non-prod, isolated &rarr; deterministic (0 LLM calls)</span>
-            <span><span class="tier-tag t2">T2</span> prod, no network &rarr; single LLM call</span>
-            <span><span class="tier-tag t3">T3</span> compliance / destructive &rarr; full pipeline</span>
-          </div>
-        </div>
-
         <div class="inner-step">
           <svg width="200" height="16" viewBox="0 0 200 16">
             <defs><marker id="arr3" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#2dd4bf" opacity="0.5"/></marker></defs>
@@ -666,41 +744,69 @@
             <div class="agent-icon">💥</div>
             <div class="name">Blast Radius</div>
             <div class="sri-dim">SRI:Infrastructure</div>
-            <div class="detail">How many downstream<br>resources are affected?</div>
+            <div class="agent-desc">How many downstream<br>resources are affected?</div>
           </div>
           <div class="gov-agent gov-policy">
             <div class="weight">w: 0.25</div>
             <div class="agent-icon">📋</div>
             <div class="name">Policy Compliance</div>
             <div class="sri-dim">SRI:Policy</div>
-            <div class="detail">Does this violate any<br>governance policies?</div>
+            <div class="agent-desc">Does this violate any<br>governance policies?</div>
+            <div class="policy-violation-badge">POL-DR-001 CRITICAL<br>disaster-recovery bypass prohibited</div>
           </div>
           <div class="gov-agent gov-hist">
             <div class="weight">w: 0.25</div>
             <div class="agent-icon">📜</div>
             <div class="name">Historical Pattern</div>
             <div class="sri-dim">SRI:Historical</div>
-            <div class="detail">Has a similar action<br>caused issues before?</div>
+            <div class="agent-desc">Has a similar action<br>caused issues before?</div>
           </div>
           <div class="gov-agent gov-fin">
             <div class="weight">w: 0.20</div>
             <div class="agent-icon">📊</div>
             <div class="name">Financial Impact</div>
             <div class="sri-dim">SRI:Cost</div>
-            <div class="detail">What's the cost change<br>and budget impact?</div>
+            <div class="agent-desc">What's the cost change<br>and budget impact?</div>
           </div>
         </div>
 
-        <!-- SRI Formula -->
-        <div style="text-align: center; margin: 6px 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #64748b;">
-          <span style="color: #2dd4bf; font-weight: 600;">Skry Risk Index (SRI&trade;)</span> = weighted composite of 4 dimensions &rarr; 0&ndash;100 risk score
-        </div>
-
-        <div class="inner-step">
-          <svg width="200" height="16" viewBox="0 0 200 16">
-            <defs><marker id="arr4" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#2dd4bf" opacity="0.5"/></marker></defs>
-            <line x1="100" y1="0" x2="100" y2="14" stroke="#2dd4bf" stroke-width="1.5" opacity="0.3" marker-end="url(#arr4)"/>
-          </svg>
+        <!-- SRI Breakdown Evidence Box -->
+        <div class="sri-evidence-box">
+          <div class="sri-evidence-header">SRI™ Breakdown — DELETE vm-prod-23 (example output)</div>
+          <div class="sri-evidence-body">
+            <div class="sri-dim-rows">
+              <div class="sri-dim-row">
+                <span class="dim-name">Infrastructure</span>
+                <span class="dim-score">78</span>
+                <span class="dim-calc">× 0.30 = 23.4</span>
+                <span></span>
+              </div>
+              <div class="sri-dim-row">
+                <span class="dim-name">Policy</span>
+                <span class="dim-score">82</span>
+                <span class="dim-calc">× 0.25 = 20.5</span>
+                <span class="dim-tag dim-tag-critical">POL-DR-001 CRITICAL</span>
+              </div>
+              <div class="sri-dim-row">
+                <span class="dim-name">Historical</span>
+                <span class="dim-score">68</span>
+                <span class="dim-calc">× 0.25 = 17.0</span>
+                <span></span>
+              </div>
+              <div class="sri-dim-row">
+                <span class="dim-name">Cost</span>
+                <span class="dim-score">45</span>
+                <span class="dim-calc">× 0.20 = &nbsp;9.0</span>
+                <span></span>
+              </div>
+            </div>
+            <div class="sri-divider"></div>
+            <div class="sri-total-block">
+              <div class="sri-total-score">69.9</div>
+              <div class="sri-total-label">SKRY RISK INDEX</div>
+              <div class="sri-total-verdict">✗ DENIED</div>
+            </div>
+          </div>
         </div>
 
         <!-- Decision Engine -->
@@ -709,7 +815,7 @@
           <div class="verdicts">
             <span class="verdict-pill v-approved">&#x2705; APPROVED &nbsp;SRI &le; 25</span>
             <span class="verdict-pill v-escalated">&#x26A0;&#xFE0F; ESCALATED &nbsp;SRI 26&ndash;60</span>
-            <span class="verdict-pill v-denied">&#x274C; DENIED &nbsp;SRI &gt; 60 or CRITICAL</span>
+            <span class="verdict-pill v-denied">&#x274C; DENIED &nbsp;SRI &gt; 60 or CRITICAL policy</span>
           </div>
         </div>
       </div>
@@ -720,14 +826,14 @@
   <div class="step-connector" style="padding-left: 44px;">
     <svg class="svg-arrow" width="600" height="32" viewBox="0 0 600 32">
       <defs>
-        <marker id="arr5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#f59e0b" opacity="0.6"/></marker>
-        <marker id="arr6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2dd4bf" opacity="0.6"/></marker>
-        <marker id="arr7" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#a78bfa" opacity="0.6"/></marker>
+        <marker id="arr5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#34d399" opacity="0.7"/></marker>
+        <marker id="arr6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#fbbf24" opacity="0.7"/></marker>
+        <marker id="arr7" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#f87171" opacity="0.7"/></marker>
       </defs>
-      <line x1="120" y1="4" x2="120" y2="26" stroke="#f59e0b" stroke-width="1.5" opacity="0.4" marker-end="url(#arr5)"/>
-      <line x1="300" y1="4" x2="300" y2="26" stroke="#2dd4bf" stroke-width="1.5" opacity="0.4" marker-end="url(#arr6)"/>
-      <line x1="480" y1="4" x2="480" y2="26" stroke="#a78bfa" stroke-width="1.5" opacity="0.4" marker-end="url(#arr7)"/>
-      <text x="300" y="16" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.6">GovernanceVerdict + SRI breakdown</text>
+      <line x1="120" y1="4" x2="120" y2="26" stroke="#34d399" stroke-width="1.5" opacity="0.5" marker-end="url(#arr5)"/>
+      <line x1="300" y1="4" x2="300" y2="26" stroke="#fbbf24" stroke-width="1.5" opacity="0.5" marker-end="url(#arr6)"/>
+      <line x1="480" y1="4" x2="480" y2="26" stroke="#f87171" stroke-width="1.5" opacity="0.5" marker-end="url(#arr7)"/>
+      <text x="300" y="16" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.6">GovernanceVerdict + SRI breakdown + policy violations</text>
     </svg>
   </div>
 
@@ -738,29 +844,29 @@
       <div class="output-grid">
         <div class="output-box out-exec">
           <div class="name">⚙️ Execution Gateway</div>
-          <div class="detail" style="color: #fbbf24;">
-            APPROVED &rarr; LLM plans fix &rarr; human reviews<br>
-            &rarr; LLM executes &rarr; auto-verify &rarr; rollback<br>
-            ESCALATED &rarr; dashboard HITL buttons<br>
-            DENIED &rarr; blocked + Slack alert
+          <div class="detail" style="color: #6ee7b7;">
+            APPROVED → LLM plans remediation steps<br>
+            → human reviews in dashboard<br>
+            → LLM executes via Azure SDK<br>
+            → auto-verify + 1-click rollback
           </div>
         </div>
-        <div class="output-box out-audit">
-          <div class="name">📝 Decision Tracker</div>
-          <div class="detail" style="color: #5eead4;">
-            Every verdict persisted<br>
-            Cosmos DB (prod) / JSON (dev)<br>
-            Immutable audit trail<br>
-            Scan-run history
+        <div class="output-box out-hitl">
+          <div class="name">👤 HITL Dashboard</div>
+          <div class="detail" style="color: #fde68a;">
+            ESCALATED → human-in-the-loop<br>
+            Approve / Reject / Dismiss / Re-flag<br>
+            6-section LLM drilldown per verdict<br>
+            Counterfactual: what would change outcome?
           </div>
         </div>
-        <div class="output-box out-explain">
-          <div class="name">🔮 Explanation Engine</div>
-          <div class="detail" style="color: #c084fc;">
-            Click any verdict &rarr; 6-section drilldown<br>
-            LLM plain-English summary<br>
-            Counterfactual: &ldquo;what would change<br>
-            this outcome?&rdquo; with score transitions
+        <div class="output-box out-denied">
+          <div class="name">🚫 Blocked + Slack Alert</div>
+          <div class="detail" style="color: #fca5a5;">
+            DENIED → action never reaches Azure<br>
+            Reason + violated policies logged<br>
+            Slack alert fired immediately<br>
+            Immutable audit trail in Cosmos DB
           </div>
         </div>
       </div>
@@ -810,7 +916,7 @@
             <div class="azure-svc">
               <div class="svc-icon">📡</div>
               <div class="name">Monitor</div>
-              <div class="detail">Alert rules<br>&rarr; webhook trigger</div>
+              <div class="detail">Alert rules<br>→ webhook trigger</div>
             </div>
             <div class="azure-svc">
               <div class="svc-icon">🚀</div>
@@ -831,7 +937,7 @@
             <div class="int-icon">💬</div>
             <div class="int-info">
               <div class="name">Slack Notifications</div>
-              <div class="detail">DENIED/ESCALATED verdicts + alert events</div>
+              <div class="detail">DENIED / ESCALATED verdicts + alert events</div>
             </div>
           </div>
           <div class="int-box">
