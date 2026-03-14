@@ -17,6 +17,7 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { BASE } from '../api'
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -172,7 +173,10 @@ export default function LiveLogPanel({ scanId, agentType, scanEntries, onClose, 
   // How many agents have finished (for the status line in multi mode)
   const doneCount = doneSet.size
 
-  return (
+  // Portal to document.body: bypasses any CSS stacking context from parent
+  // elements (backdropFilter, overflow, transform) that would otherwise
+  // confine a position:fixed child to a local containing block.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div
@@ -242,6 +246,7 @@ export default function LiveLogPanel({ scanId, agentType, scanEntries, onClose, 
           </p>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   )
 }

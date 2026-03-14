@@ -113,12 +113,23 @@ function AppShell() {
     setLoading(true)
     setError(null)
     try {
-      await fetchAll()
+      // Phase 1 — fast calls only; unblocks LoadingScreen immediately.
+      // metrics + agents are lightweight REST endpoints (no large Cosmos scans).
+      const [metricsData, agentsData] = await Promise.all([
+        fetchMetrics(),
+        fetchAgents(),
+      ])
+      setMetrics(metricsData)
+      setAgents(agentsData.agents ?? [])
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
+    // Phase 2 — everything else loads in background after page is visible.
+    // fetchAll() runs the full 6-call refresh; errors are swallowed (same as
+    // the background poll).
+    fetchAll().catch(() => {})
   }, [fetchAll])
 
   useEffect(() => { load() }, [load])
