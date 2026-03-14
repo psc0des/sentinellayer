@@ -65,50 +65,9 @@ RuriSkry is the missing governance layer. Before any agent action executes, it r
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    OPS["Operational Agents<br/>SRE | Cost | Deploy"]
-    A2A["A2A HTTP Server<br/>port 8000 / SSE"]
-    MCP["MCP stdio Server<br/>Claude Desktop / IDEs"]
-    PY["Direct Python Entry<br/>demo.py"]
-    IN["Unified Request Input"]
-
-    OPS --> A2A
-    OPS --> MCP
-    OPS --> PY
-    A2A --> IN
-    MCP --> IN
-    PY --> IN
-
-    subgraph CORE["RuriSkry Core"]
-        direction TB
-        PIPE["RuriSkryPipeline.evaluate()"]
-
-        subgraph GOV["SRI Governance Agents"]
-            direction TB
-            BR["Blast Radius<br/>weight 0.30"]
-            POL["Policy Compliance<br/>weight 0.25"]
-            HIST["Historical Pattern<br/>weight 0.25"]
-            FIN["Financial Impact<br/>weight 0.20"]
-        end
-
-        PIPE --> GOV
-        GOV --> ENGINE["Governance Decision Engine<br/>denied: critical viol OR >60 | escalated: 26-60 OR HIGH viol | approved: ≤25"]
-        ENGINE --> TRACKER["Decision Tracker<br/>immutable audit trail"]
-    end
-
-    IN --> PIPE
-
-    OUT["Storage + Integrations"]
-    TRACKER --> OUT
-    OUT --> COSMOS["Azure Cosmos DB<br/>governance-decisions"]
-    OUT --> AZURE["Azure Services<br/>Foundry + AI Search + Key Vault"]
-    OUT --> DASH["Dashboard API + React UI"]
-
-    TRACKER --> EXEC["Execution Gateway<br/>IaC-safe routing"]
-    EXEC --> PR["Terraform PR<br/>GitHub API"]
-    EXEC --> HITL["HITL Dashboard<br/>Approve / Dismiss"]
-```
+<p align="center">
+  <img src="docs/architecture-diagram.png" alt="RuriSkry System Architecture" width="100%">
+</p>
 
 ---
 
@@ -124,7 +83,7 @@ flowchart LR
 | Incident Search | Azure AI Search (BM25) | Historical incident similarity |
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
-| Dashboard | React + Vite + FastAPI | Governance visualization + REST API — 5-page "Ops Nerve Center" app: DM Sans UI + JetBrains Mono data fonts, CSS design token system, dot-grid background, teal breathing logo glow, amber urgency pulse on HITL reviews, NumberTicker count-up metrics, GlowCard glass panels, gradient SRI chart, animated VerdictBadges |
+| Dashboard | React + Vite + FastAPI | 7-page governance UI with SSE real-time streaming, custom design system, animated components |
 | Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts + Azure Monitor alerts |
 | Azure Monitor → RuriSkry | `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | CPU/heartbeat/custom alerts POST to `/api/alert-trigger` → async investigation via `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
@@ -148,7 +107,7 @@ Graph tags, Monitor metrics, NSG rules, activity logs) via gpt-5-mini before pro
 then provides an **independent second opinion** using 4 governance agents in parallel. The ops
 agent catches obvious risks; RuriSkry catches what the ops agent missed.
 
-Each operational agent has been given enterprise-grade system instructions (2026-03-13):
+Each operational agent has enterprise-grade system instructions:
 the **Monitoring Agent** runs a 6-step proactive scan covering VM power state, database health,
 container app health, observability gaps, and orphaned resources — and handles 5 distinct Azure
 Monitor alert types with evidence-specific investigation steps. The **Deploy Agent** audits 7
@@ -199,7 +158,7 @@ Click any row in the Live Activity Feed to open a **6-section full-page drilldow
 
 No extra setup needed — the explanation engine works in both mock and live mode.
 
-### Execution Gateway & Human-in-the-Loop (Phase 21)
+### Execution Gateway & Human-in-the-Loop
 APPROVED verdicts don't execute directly on Azure — that would cause **IaC state drift**
 (Terraform reverts the change on next `terraform apply`). Instead, the Execution Gateway
 routes verdicts to IaC-safe paths:
@@ -214,7 +173,7 @@ IaC detection reads `managed_by=terraform` from Azure resource tags — queried 
 `ResourceGraphClient` in live mode; falls back to `seed_resources.json` in mock mode.
 The governance engine evaluates; Terraform executes; humans approve. IaC state never drifts.
 
-### LLM-Driven Execution Agent (Phase 28)
+### LLM-Driven Execution Agent
 The **"Fix by Agent"** button is now fully LLM-driven end-to-end. The complete pipeline is:
 
 ```
@@ -229,11 +188,11 @@ Two-phase execution with human review in between:
 
 This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (792 tests pass, no Azure/OpenAI required) and live mode.
 
-### One-Click Rollback (Phase 30)
+### One-Click Rollback
 
 After a fix is applied by the agent, an amber **↩ Rollback** button appears next to the Applied badge. Clicking it shows a confirm dialog with the exact inverse operation (`rollback_hint` from the stored execution plan), then calls `ExecutionAgent.rollback()` which inverts each step: `RESTART_SERVICE` → deallocate VM, `SCALE_UP/DOWN` → resize back to original SKU, `MODIFY_NSG` → restore rule. The `rolled_back` status and `rollback_log` are stored for the audit trail.
 
-### Post-Execution Verification (Phase 29)
+### Post-Execution Verification
 After the Execute phase completes, the engine runs a **verification pass**: read-only Azure tools re-check the resource to confirm the fix actually took effect. The result (`{confirmed, message, checked_at}`) is stored on the `ExecutionRecord` and shown in the dashboard as a ✓ Verified / ⚠ Unconfirmed banner with the per-step execution log.
 
 The dashboard also gained:
@@ -245,6 +204,40 @@ The dashboard also gained:
 All 7 agents call Azure OpenAI through `run_with_throttle()` — an `asyncio.Semaphore` +
 exponential backoff wrapper. Governance agents fall back to deterministic rule-based scoring
 on 429s; operational agents return `[]` (no false positives from stale seed data).
+
+---
+
+## Dashboard
+
+A 7-page React governance UI with real-time SSE streaming, custom design tokens, and animated components.
+
+### Overview — Ops Nerve Center
+<p align="center">
+  <img src="dashboard/screenshots/visual-scan-overview.png" alt="Overview Dashboard" width="100%">
+</p>
+
+> NumberTicker count-up metrics, SRI trend chart, alert activity, execution metrics, pending HITL reviews, and recent scan runs — all auto-refreshing.
+
+### Live Scan Streaming
+<p align="center">
+  <img src="dashboard/screenshots/visual-scan-scans.png" alt="Live Scan Streaming" width="100%">
+</p>
+
+> Trigger scans for any operational agent and watch proposals stream in via Server-Sent Events. Each proposal gets a real-time governance verdict with SRI breakdown.
+
+### Governance Decisions
+<p align="center">
+  <img src="dashboard/screenshots/visual-scan-decisions.png" alt="Governance Decisions" width="100%">
+</p>
+
+> Full decision history with VerdictBadges (APPROVED / ESCALATED / DENIED). Click any row to open the 6-section drilldown with counterfactual analysis.
+
+### Azure Monitor Alerts
+<p align="center">
+  <img src="dashboard/screenshots/visual-scan-alerts.png" alt="Alerts Dashboard" width="100%">
+</p>
+
+> Azure Monitor alerts flow in via webhook, trigger async investigation by the Monitoring Agent, and produce governance verdicts — all visible in real-time.
 
 ---
 
@@ -265,7 +258,7 @@ Detailed infra runbook: [`infrastructure/terraform-core/deploy.md`](infrastructu
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/ruriskry.git
+git clone https://github.com/psc0des/ruriskry.git
 cd ruriskry
 
 # Create virtual environment
@@ -360,7 +353,7 @@ ruriskry/
 │   │   ├── scan_run_tracker.py      # Cosmos DB / JSON scan-run store
 │   │   ├── explanation_engine.py    # Counterfactual analysis + LLM summary
 │   │   └── interception.py          # Action interception façade
-│   ├── a2a/                    # A2A Protocol layer (Phase 10)
+│   ├── a2a/                    # A2A Protocol layer
 │   │   ├── ruriskry_a2a_server.py   # A2A server + Agent Card
 │   │   ├── operational_a2a_clients.py  # A2A client wrappers
 │   │   └── agent_registry.py        # Connected agent tracking
@@ -378,7 +371,7 @@ ruriskry/
 │   ├── notifications/          # Outbound alerting
 │   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 36 endpoints: scan triggers, scan-history, alerts, SSE, explanation, HITL gateway, config, health
+│       └── dashboard_api.py         # 35+ REST endpoints: scans, alerts, SSE, explanation, HITL, config
 ├── dashboard/                  # React + Vite governance dashboard
 ├── data/                       # Seed data for demo
 │   ├── agents/                      # A2A agent registry (mock)
@@ -388,8 +381,8 @@ ruriskry/
 │   ├── seed_resources.json
 │   └── policies.json
 ├── demo.py                     # Direct pipeline demo (3 scenarios)
-├── demo_a2a.py                 # A2A protocol demo (Phase 10)
-├── demo_live.py                # Two-layer intelligence demo (Phase 12)
+├── demo_a2a.py                 # A2A protocol demo
+├── demo_live.py                # Two-layer intelligence demo
 ├── tests/
 ├── docs/
 │   └── slack-setup.md               # Slack webhook setup guide for contributors

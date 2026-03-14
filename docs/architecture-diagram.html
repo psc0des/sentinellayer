@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RuriSkry Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0f1a;
+    color: #e2e8f0;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 40px;
+  }
+
+  .diagram {
+    width: 1400px;
+    position: relative;
+  }
+
+  /* Title */
+  .title-bar {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .title-bar h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #f1f5f9;
+    letter-spacing: -0.5px;
+  }
+  .title-bar h1 .accent { color: #2dd4bf; }
+  .title-bar .subtitle {
+    font-size: 14px;
+    color: #64748b;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Row layout */
+  .row {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 16px;
+    position: relative;
+  }
+
+  /* Boxes */
+  .box {
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+    position: relative;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .box .label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 6px;
+    opacity: 0.7;
+  }
+  .box .name {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .box .detail {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-top: 3px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Section labels */
+  .section-label {
+    position: absolute;
+    left: -8px;
+    top: 50%;
+    transform: translateY(-50%) rotate(-90deg);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #475569;
+    white-space: nowrap;
+  }
+
+  /* ── Operational Agents (top) ── */
+  .ops-agent {
+    background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(59,130,246,0.04));
+    border-color: rgba(59,130,246,0.25);
+    width: 200px;
+  }
+  .ops-agent .label { color: #60a5fa; }
+  .ops-agent .name { color: #93c5fd; }
+  .ops-icon {
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+
+  /* ── Entry Points ── */
+  .entry-box {
+    background: rgba(30,41,59,0.5);
+    border-color: rgba(100,116,139,0.2);
+    width: 180px;
+    padding: 12px 16px;
+  }
+  .entry-box .name { font-size: 13px; color: #94a3b8; }
+  .entry-box .detail { font-size: 10px; }
+
+  /* ── Core pipeline ── */
+  .core-section {
+    background: linear-gradient(135deg, rgba(13,17,30,0.95), rgba(15,23,42,0.95));
+    border: 1.5px solid rgba(45,212,191,0.2);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 16px;
+    position: relative;
+    box-shadow: 0 0 60px rgba(45,212,191,0.04);
+  }
+  .core-section::before {
+    content: 'RURISKRY GOVERNANCE CORE';
+    position: absolute;
+    top: -11px;
+    left: 32px;
+    background: #0d1120;
+    padding: 0 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #2dd4bf;
+  }
+
+  /* Pipeline box */
+  .pipeline-box {
+    background: linear-gradient(135deg, rgba(45,212,191,0.1), rgba(45,212,191,0.03));
+    border-color: rgba(45,212,191,0.3);
+    width: 100%;
+    padding: 14px 20px;
+    margin-bottom: 20px;
+  }
+  .pipeline-box .name { color: #2dd4bf; font-size: 16px; }
+
+  /* Triage box */
+  .triage-box {
+    background: rgba(30,41,59,0.4);
+    border: 1px dashed rgba(148,163,184,0.2);
+    border-radius: 10px;
+    padding: 12px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+  .triage-box .triage-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #f59e0b;
+    white-space: nowrap;
+  }
+  .triage-tiers {
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #94a3b8;
+  }
+  .triage-tiers span { white-space: nowrap; }
+  .tier-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .t1 { background: rgba(16,185,129,0.15); color: #34d399; }
+  .t2 { background: rgba(245,158,11,0.15); color: #fbbf24; }
+  .t3 { background: rgba(239,68,68,0.15); color: #f87171; }
+
+  /* Governance agents row */
+  .gov-agents-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .gov-agent {
+    border-radius: 10px;
+    padding: 16px 14px;
+    text-align: center;
+    border: 1px solid;
+    position: relative;
+  }
+  .gov-agent .weight {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    opacity: 0.6;
+  }
+  .gov-agent .agent-icon { font-size: 24px; margin-bottom: 6px; }
+  .gov-agent .name { font-size: 13px; font-weight: 600; }
+  .gov-agent .sri-dim {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 3px;
+  }
+
+  .gov-blast {
+    background: linear-gradient(135deg, rgba(168,85,247,0.1), rgba(168,85,247,0.03));
+    border-color: rgba(168,85,247,0.3);
+  }
+  .gov-blast .name, .gov-blast .sri-dim { color: #c084fc; }
+
+  .gov-policy {
+    background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(59,130,246,0.03));
+    border-color: rgba(59,130,246,0.3);
+  }
+  .gov-policy .name, .gov-policy .sri-dim { color: #93c5fd; }
+
+  .gov-hist {
+    background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.03));
+    border-color: rgba(245,158,11,0.3);
+  }
+  .gov-hist .name, .gov-hist .sri-dim { color: #fbbf24; }
+
+  .gov-fin {
+    background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(16,185,129,0.03));
+    border-color: rgba(16,185,129,0.3);
+  }
+  .gov-fin .name, .gov-fin .sri-dim { color: #34d399; }
+
+  /* Parallel badge */
+  .parallel-badge {
+    text-align: center;
+    margin: -6px 0 12px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #475569;
+  }
+
+  /* Decision Engine */
+  .engine-box {
+    background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(45,212,191,0.02));
+    border: 1px solid rgba(45,212,191,0.25);
+    border-radius: 10px;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 32px;
+  }
+  .engine-box .engine-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #2dd4bf;
+    white-space: nowrap;
+  }
+  .verdicts {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+  }
+  .verdict-pill {
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .v-approved { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+  .v-escalated { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+  .v-denied { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+
+  /* ── Output layer ── */
+  .output-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .output-box {
+    border-radius: 10px;
+    padding: 14px 16px;
+    text-align: center;
+    border: 1px solid;
+  }
+  .output-box .name { font-size: 13px; font-weight: 600; }
+  .output-box .detail { font-size: 10px; }
+
+  .out-exec {
+    background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.03));
+    border-color: rgba(245,158,11,0.25);
+  }
+  .out-exec .name { color: #fbbf24; }
+
+  .out-audit {
+    background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(45,212,191,0.02));
+    border-color: rgba(45,212,191,0.2);
+  }
+  .out-audit .name { color: #2dd4bf; }
+
+  .out-explain {
+    background: linear-gradient(135deg, rgba(168,85,247,0.08), rgba(168,85,247,0.02));
+    border-color: rgba(168,85,247,0.2);
+  }
+  .out-explain .name { color: #c084fc; }
+
+  /* Azure services row */
+  .azure-section {
+    background: rgba(15,23,42,0.6);
+    border: 1px solid rgba(59,130,246,0.15);
+    border-radius: 14px;
+    padding: 20px 24px;
+    position: relative;
+  }
+  .azure-section::before {
+    content: 'AZURE SERVICES';
+    position: absolute;
+    top: -10px;
+    left: 24px;
+    background: #0a0f1a;
+    padding: 0 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #60a5fa;
+  }
+  .azure-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 12px;
+  }
+  .azure-svc {
+    background: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.12);
+    border-radius: 8px;
+    padding: 12px 8px;
+    text-align: center;
+  }
+  .azure-svc .svc-icon { font-size: 20px; margin-bottom: 4px; }
+  .azure-svc .name { font-size: 11px; font-weight: 600; color: #93c5fd; }
+  .azure-svc .detail { font-size: 9px; color: #64748b; font-family: 'JetBrains Mono', monospace; }
+
+  /* Integrations row */
+  .integrations-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .int-box {
+    border-radius: 10px;
+    padding: 14px 16px;
+    text-align: center;
+    border: 1px solid rgba(100,116,139,0.15);
+    background: rgba(30,41,59,0.3);
+  }
+  .int-box .name { font-size: 12px; font-weight: 600; color: #94a3b8; }
+  .int-box .detail { font-size: 10px; color: #64748b; }
+
+  /* Arrows */
+  .arrow-down {
+    text-align: center;
+    color: #334155;
+    font-size: 18px;
+    margin: 8px 0;
+    line-height: 1;
+  }
+  .arrow-down.teal { color: rgba(45,212,191,0.4); }
+  .arrow-down .arrow-label {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #475569;
+    display: block;
+    margin-top: 2px;
+  }
+
+  /* Connector lines inside core */
+  .inner-arrow {
+    text-align: center;
+    color: rgba(45,212,191,0.3);
+    font-size: 14px;
+    margin: 10px 0;
+  }
+
+  /* SRI formula */
+  .sri-formula {
+    text-align: center;
+    margin: 10px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #64748b;
+  }
+  .sri-formula .highlight { color: #2dd4bf; font-weight: 600; }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 11px;
+    color: #334155;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<div class="diagram">
+  <!-- Title -->
+  <div class="title-bar">
+    <h1><span class="accent">RuriSkry</span> — System Architecture</h1>
+    <div class="subtitle">AI Action Governance & Simulation Engine</div>
+  </div>
+
+  <!-- Operational Agents -->
+  <div class="row">
+    <div class="box ops-agent">
+      <div class="ops-icon">🔍</div>
+      <div class="label">Operational Agent</div>
+      <div class="name">Monitoring Agent</div>
+      <div class="detail">6-step proactive scan<br>VM / DB / container health</div>
+    </div>
+    <div class="box ops-agent">
+      <div class="ops-icon">💰</div>
+      <div class="label">Operational Agent</div>
+      <div class="name">Cost Agent</div>
+      <div class="detail">Waste detection<br>rightsizing / orphaned IPs</div>
+    </div>
+    <div class="box ops-agent">
+      <div class="ops-icon">🛡️</div>
+      <div class="label">Operational Agent</div>
+      <div class="name">Deploy Agent</div>
+      <div class="detail">7-domain security audit<br>NSG / storage / tagging</div>
+    </div>
+  </div>
+
+  <div class="arrow-down">▼ ▼ ▼
+    <span class="arrow-label">propose actions (ProposedAction)</span>
+  </div>
+
+  <!-- Entry Points -->
+  <div class="row">
+    <div class="box entry-box">
+      <div class="name">A2A HTTP + SSE</div>
+      <div class="detail">port 8000 / enterprise</div>
+    </div>
+    <div class="box entry-box">
+      <div class="name">MCP stdio</div>
+      <div class="detail">Claude Desktop / IDEs</div>
+    </div>
+    <div class="box entry-box">
+      <div class="name">Direct Python</div>
+      <div class="detail">demo.py / tests</div>
+    </div>
+  </div>
+
+  <div class="arrow-down teal">▼
+    <span class="arrow-label">all paths converge</span>
+  </div>
+
+  <!-- Core Section -->
+  <div class="core-section">
+    <!-- Pipeline -->
+    <div class="box pipeline-box">
+      <div class="name">RuriSkryPipeline.evaluate(action)</div>
+      <div class="detail" style="color: #5eead4;">Unified entry point — async orchestration of all governance agents</div>
+    </div>
+
+    <!-- Risk Triage -->
+    <div class="triage-box">
+      <div class="triage-label">⚡ Risk Triage</div>
+      <div class="triage-tiers">
+        <span><span class="tier-tag t1">T1</span> non-prod, isolated → deterministic (0 LLM)</span>
+        <span><span class="tier-tag t2">T2</span> prod, no network → single LLM</span>
+        <span><span class="tier-tag t3">T3</span> compliance / destructive → full pipeline</span>
+      </div>
+    </div>
+
+    <div class="inner-arrow">▼</div>
+
+    <!-- Parallel badge -->
+    <div class="parallel-badge">asyncio.gather() — 4 agents run concurrently</div>
+
+    <!-- 4 Governance Agents -->
+    <div class="gov-agents-row">
+      <div class="gov-agent gov-blast">
+        <div class="weight">0.30</div>
+        <div class="agent-icon">💥</div>
+        <div class="name">Blast Radius</div>
+        <div class="sri-dim">SRI:Infrastructure</div>
+        <div class="detail">Downstream dependency<br>impact analysis</div>
+      </div>
+      <div class="gov-agent gov-policy">
+        <div class="weight">0.25</div>
+        <div class="agent-icon">📋</div>
+        <div class="name">Policy Compliance</div>
+        <div class="sri-dim">SRI:Policy</div>
+        <div class="detail">Governance rules<br>violation detection</div>
+      </div>
+      <div class="gov-agent gov-hist">
+        <div class="weight">0.25</div>
+        <div class="agent-icon">📜</div>
+        <div class="name">Historical Pattern</div>
+        <div class="sri-dim">SRI:Historical</div>
+        <div class="detail">Past incident<br>similarity (BM25)</div>
+      </div>
+      <div class="gov-agent gov-fin">
+        <div class="weight">0.20</div>
+        <div class="agent-icon">📊</div>
+        <div class="name">Financial Impact</div>
+        <div class="sri-dim">SRI:Cost</div>
+        <div class="detail">Cost volatility<br>budget analysis</div>
+      </div>
+    </div>
+
+    <!-- SRI Formula -->
+    <div class="sri-formula">
+      <span class="highlight">SRI™</span> = (Infrastructure × 0.30) + (Policy × 0.25) + (Historical × 0.25) + (Cost × 0.20)
+    </div>
+
+    <div class="inner-arrow">▼</div>
+
+    <!-- Decision Engine -->
+    <div class="engine-box">
+      <div class="engine-title">Governance Decision Engine</div>
+      <div class="verdicts">
+        <span class="verdict-pill v-approved">✅ APPROVED  SRI ≤ 25</span>
+        <span class="verdict-pill v-escalated">⚠️ ESCALATED  SRI 26–60</span>
+        <span class="verdict-pill v-denied">❌ DENIED  SRI > 60 or CRITICAL</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-down teal">▼
+    <span class="arrow-label">GovernanceVerdict</span>
+  </div>
+
+  <!-- Output Layer -->
+  <div class="output-row">
+    <div class="output-box out-exec">
+      <div class="name">⚙️ Execution Gateway</div>
+      <div class="detail" style="color: #fbbf24;">HITL review → LLM-driven execution<br>Plan → Human approve → Execute → Verify<br>One-click rollback</div>
+    </div>
+    <div class="output-box out-audit">
+      <div class="name">📝 Decision Tracker</div>
+      <div class="detail" style="color: #5eead4;">Immutable audit trail<br>Cosmos DB / JSON persistence<br>Scan-run history</div>
+    </div>
+    <div class="output-box out-explain">
+      <div class="name">🔮 Explanation Engine</div>
+      <div class="detail" style="color: #c084fc;">LLM plain-English summary<br>Counterfactual analysis<br>"What would change this?"</div>
+    </div>
+  </div>
+
+  <div class="arrow-down">▼ ▼ ▼</div>
+
+  <!-- Azure Services -->
+  <div class="azure-section">
+    <div class="azure-grid">
+      <div class="azure-svc">
+        <div class="svc-icon">🧠</div>
+        <div class="name">Azure OpenAI</div>
+        <div class="detail">Foundry<br>gpt-5-mini</div>
+      </div>
+      <div class="azure-svc">
+        <div class="svc-icon">🗺️</div>
+        <div class="name">Resource Graph</div>
+        <div class="detail">KQL topology<br>live queries</div>
+      </div>
+      <div class="azure-svc">
+        <div class="svc-icon">🔎</div>
+        <div class="name">AI Search</div>
+        <div class="detail">BM25 incident<br>similarity</div>
+      </div>
+      <div class="azure-svc">
+        <div class="svc-icon">🗄️</div>
+        <div class="name">Cosmos DB</div>
+        <div class="detail">Audit trail<br>scan records</div>
+      </div>
+      <div class="azure-svc">
+        <div class="svc-icon">🔐</div>
+        <div class="name">Key Vault</div>
+        <div class="detail">Secrets<br>API keys</div>
+      </div>
+      <div class="azure-svc">
+        <div class="svc-icon">📡</div>
+        <div class="name">Monitor</div>
+        <div class="detail">Alert rules<br>→ webhook</div>
+      </div>
+      <div class="azure-svc">
+        <div class="svc-icon">🚀</div>
+        <div class="name">Container Apps</div>
+        <div class="detail">Backend<br>hosting</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Integrations -->
+  <div class="integrations-row">
+    <div class="int-box">
+      <div class="name">💬 Slack Notifications</div>
+      <div class="detail">DENIED / ESCALATED verdicts<br>Alert fired / resolved</div>
+    </div>
+    <div class="int-box">
+      <div class="name">🐙 GitHub + Terraform</div>
+      <div class="detail">Auto-generate IaC PRs<br>IaC-safe execution</div>
+    </div>
+    <div class="int-box">
+      <div class="name">🖥️ React Dashboard</div>
+      <div class="detail">7-page governance UI<br>SSE real-time streaming</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Microsoft AI Dev Days Hackathon 2026 &middot; Built with Microsoft Agent Framework + Azure OpenAI Foundry + A2A Protocol
+  </div>
+</div>
+
+</body>
+</html>
