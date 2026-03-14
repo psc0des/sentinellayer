@@ -687,23 +687,93 @@ class DeployAgent:
         # Expose tool-call notes for the dashboard live log.
         self.scan_notes: list[str] = scan_notes
 
+        # ── Azure Advisor safety net ─────────────────────────────────────
+        # Our hardcoded checks cover NSGs, storage, Key Vaults, and databases.
+        # But Azure has 200+ service types — we can't write Python for each one.
+        # Microsoft maintains security best-practice checks for ALL services
+        # via Azure Advisor. We call it deterministically after the LLM scan
+        # and auto-propose for every HIGH-impact Security recommendation the
+        # LLM missed. This gives us full-service coverage without maintaining
+        # per-service detection code.
+        pre_advisor_count = len(proposals_holder)
+        try:
+            advisor_recs = await list_advisor_recommendations_async(
+                scope=target_resource_group or None,
+                category="Security",
+            )
+            advisor_high = [
+                r for r in advisor_recs
+                if str(r.get("impact", "")).lower() == "high"
+            ]
+            for rec in advisor_high:
+                impacted = rec.get("impactedValue") or rec.get("impacted_resource") or ""
+                rec_id = rec.get("id", "")
+                short_desc = (
+                    rec.get("shortDescription", {}).get("problem", "")
+                    if isinstance(rec.get("shortDescription"), dict)
+                    else str(rec.get("shortDescription", ""))
+                ) or rec.get("description", "")
+
+                # Build a resource_id — Advisor gives impactedValue (resource name)
+                # and sometimes the full resource ID in the recommendation id.
+                resource_id = ""
+                if rec_id and "/providers/" in rec_id:
+                    # Extract the resource portion from the recommendation ARM ID
+                    idx = rec_id.find("/providers/Microsoft.Advisor")
+                    if idx > 0:
+                        resource_id = rec_id[:idx]
+                if not resource_id:
+                    resource_id = impacted or rec_id
+
+                if not resource_id or not short_desc:
+                    continue
+
+                # Skip if LLM or hardcoded checks already proposed for this resource
+                already = any(
+                    p.target.resource_id == resource_id
+                    or (impacted and impacted in (p.target.resource_id or ""))
+                    for p in proposals_holder
+                )
+                if already:
+                    continue
+
+                proposals_holder.append(ProposedAction(
+                    agent_id=_AGENT_ID,
+                    action_type=ActionType.UPDATE_CONFIG,
+                    target=ActionTarget(
+                        resource_id=resource_id,
+                        resource_type=rec.get("impactedField", "unknown"),
+                    ),
+                    reason=f"ADVISOR-HIGH: {short_desc}",
+                    urgency=Urgency.HIGH,
+                ))
+
+            advisor_added = len(proposals_holder) - pre_advisor_count
+            if advisor_high:
+                scan_notes.append(
+                    f"Azure Advisor: {len(advisor_high)} HIGH-impact Security recommendation(s) "
+                    f"({advisor_added} new, {len(advisor_high) - advisor_added} already covered)"
+                )
+        except Exception as exc:
+            logger.warning("DeployAgent: Advisor safety net failed: %s", exc)
+            scan_notes.append(f"Azure Advisor: unavailable ({exc})")
+
         # ── Post-scan integrity log ──────────────────────────────────────
-        # Count how many proposals came from deterministic auto-detection
-        # (tools auto-proposed) vs the LLM calling propose_action.
-        # This lets operators audit whether the LLM is doing its job.
+        # Count how many proposals came from each detection path.
+        # This lets operators audit whether the LLM is pulling its weight.
         auto_count = sum(
             1 for p in proposals_holder
-            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '"))
+            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '", "ADVISOR-HIGH:"))
         )
         llm_count = len(proposals_holder) - auto_count
         if proposals_holder:
             scan_notes.append(
-                f"LLM scan complete — {len(proposals_holder)} proposal(s): "
+                f"Scan complete — {len(proposals_holder)} proposal(s): "
                 f"{auto_count} deterministic, {llm_count} LLM-originated"
             )
         else:
             scan_notes.append(
-                "LLM scan complete — no actionable issues found in Azure environment."
+                "Scan complete — no actionable issues found in Azure environment."
             )
 
         return proposals_holder
