@@ -190,6 +190,12 @@ Two-phase execution with human review in between:
 
 This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (793 tests pass, no Azure/OpenAI required) and live mode.
 
+<p align="center">
+  <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
+</p>
+
+> Real execution in action: the LLM-generated plan shows each operation with target and reason, impact analysis warns affected users, rollback instructions are pre-computed, and the live execution terminal streams progress as Azure SDK calls are made — all from a single "Fix by Agent" click.
+
 ### One-Click Rollback
 
 After a fix is applied by the agent, an amber **↩ Rollback** button appears next to the Applied badge. Clicking it shows a confirm dialog with the exact inverse operation (`rollback_hint` from the stored execution plan), then calls `ExecutionAgent.rollback()` which inverts each step: `RESTART_SERVICE` → deallocate VM, `SCALE_UP/DOWN` → resize back to original SKU, `MODIFY_NSG` → restore rule. The `rolled_back` status and `rollback_log` are stored for the audit trail.
@@ -254,6 +260,13 @@ A 7-page React governance UI with real-time SSE streaming, custom design tokens,
 </p>
 
 > System configuration (mode, LLM timeout, feature flags), execution gateway status, and danger zone reset — gear icon in the sidebar.
+
+### Execution Status — LLM-Driven Remediation
+<p align="center">
+  <img src="docs/screenshots/execution-status.png" alt="Execution Status" width="100%">
+</p>
+
+> When a governance verdict is APPROVED, the LLM-driven Execution Agent generates a structured plan (operations, targets, reasons), computes impact and rollback instructions, then executes via Azure SDK — all streamed live in the execution terminal. Supports Terraform PR creation, direct agent fix, and one-click rollback.
 
 ### Slack Notifications
 <p align="center">
