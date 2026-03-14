@@ -741,10 +741,10 @@ dashboard/
     │   ├── ConnectedAgents.jsx   # Agent card grid (GlowCard): ⋮ menu, scan/log/results/history/details panels
     │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge)
     │   ├── AgentControls.jsx     # Scan trigger panel: per-agent buttons, RG filter, 2 s polling
-    │   ├── LiveLogPanel.jsx      # SSE slide-out log: 9 event type styles, auto-scroll
+    │   ├── LiveLogPanel.jsx      # SSE slide-out log: 9 event type styles, auto-scroll; rendered via createPortal(document.body) to escape parent CSS stacking contexts (backdropFilter on GlowCard)
     │   └── LiveActivityFeed.jsx  # Real-time verdict feed; rows open EvaluationDrilldown
     ├── index.css                 # Design token system (CSS :root vars) + all keyframes (breathe/urgentPulse/scanBeam/fadeInUp) + utility classes (.animate-breathe, .animate-urgent-pulse, .bg-dots, .metric-value, .shimmer)
-    └── App.jsx                   # Router shell: bg-dots dot-grid on content area, --font-ui/--bg-base tokens applied; routes include /admin
+    └── App.jsx                   # Router shell: two-phase load (phase 1: fetchMetrics+fetchAgents clears LoadingScreen fast; phase 2: fetchAll() non-blocking populates the rest); bg-dots dot-grid; routes include /admin
 data/
 ├── agents/                    # A2A agent registry (mock mode)
 ├── decisions/                 # Governance verdict audit trail (mock mode)
