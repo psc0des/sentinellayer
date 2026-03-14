@@ -144,6 +144,7 @@ The script handles everything in the correct order:
 | 3 | Docker build + push to ACR (skipped if image already exists) |
 | 4 | **Stage 2 full apply** — creates all remaining resources; Terraform resolves the SWA URL natively and passes it into `DASHBOARD_URL` automatically |
 | 4a | **Image swap** — `az containerapp update --image` replaces the MCR placeholder with the real ACR image (AcrPull role is guaranteed propagated by now) |
+| 4a-ii | **Sticky sessions** — `az containerapp ingress sticky-sessions set --affinity sticky` (required for SSE scan streaming; not Terraform-manageable since azurerm ~4.63.0) |
 | 4b | GitHub PAT prompt — stores in Key Vault if `use_github_pat = true` and secret is missing |
 | 5 | React dashboard build + deploy to Static Web Apps |
 | 6 | Backend health check |
@@ -409,6 +410,25 @@ az containerapp update \
   --name ruriskry-core-backend-<suffix> \
   --resource-group ruriskry-core-engine-rg \
   --image ruriskrycore<suffix>.azurecr.io/ruriskry-backend:latest
+```
+
+### 4a-ii. Enable sticky sessions
+
+`sticky_sessions_affinity` was removed from the `azurerm_container_app` schema in
+azurerm ~4.63.0 and can no longer be set via Terraform. Apply it via CLI — it
+persists across subsequent `terraform apply` runs because `ingress` is in
+`lifecycle { ignore_changes }` in `main.tf`. This step is idempotent.
+
+> **Why this matters:** SSE scan queues are stored in-memory per replica. Without
+> sticky sessions, a scan that starts on Replica A has its SSE stream routed to
+> Replica B/C on subsequent requests — which has no queue — causing "Scan log
+> unavailable" for every multi-minute scan.
+
+```bash
+az containerapp ingress sticky-sessions set \
+  --name ruriskry-core-backend-<suffix> \
+  --resource-group ruriskry-core-engine-rg \
+  --affinity sticky
 ```
 
 ### 5. Build and deploy the React dashboard
