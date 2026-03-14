@@ -2435,6 +2435,12 @@ async def get_config() -> dict:
 # ---------------------------------------------------------------------------
 
 
+@app.get("/")
+async def root() -> dict:
+    """Root route — satisfies Azure Container Apps default HTTP liveness probe."""
+    return {"status": "ok", "service": "ruriskry-backend"}
+
+
 @app.get("/health")
 async def health_check() -> dict:
     """Liveness probe for Container App and deploy scripts."""

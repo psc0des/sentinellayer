@@ -375,6 +375,42 @@ resource "azurerm_cosmosdb_sql_container" "governance_alerts" {
   }
 }
 
+resource "azurerm_cosmosdb_sql_container" "governance_scan_runs" {
+  name                = "governance-scan-runs"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
+
+  partition_key_paths   = ["/agent_type"]
+  partition_key_version = 2
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+  }
+}
+
+resource "azurerm_cosmosdb_sql_container" "governance_executions" {
+  name                = "governance-executions"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
+
+  partition_key_paths   = ["/resource_id"]
+  partition_key_version = 2
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+  }
+}
+
 # =============================================================================
 # 7. Key Vault secrets (service credentials)
 # =============================================================================
@@ -910,6 +946,8 @@ resource "azurerm_management_lock" "ruriskry_rg" {
     azurerm_cosmosdb_sql_container.governance_decisions,
     azurerm_cosmosdb_sql_container.governance_agents,
     azurerm_cosmosdb_sql_container.governance_alerts,
+    azurerm_cosmosdb_sql_container.governance_scan_runs,
+    azurerm_cosmosdb_sql_container.governance_executions,
     azurerm_ai_services.foundry,
     azurerm_search_service.ruriskry,
     azurerm_key_vault.ruriskry,

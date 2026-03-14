@@ -31,14 +31,24 @@ from pathlib import Path
 
 from src.config import settings
 from src.core.models import (
+    ActionType,
     ExecutionRecord,
     ExecutionStatus,
     GovernanceVerdict,
     ProposedAction,
     SRIVerdict,
 )
+from src.infrastructure.cosmos_client import CosmosExecutionClient
 
 logger = logging.getLogger(__name__)
+
+# Action types that are operational commands and cannot be expressed as
+# Terraform infrastructure-state changes.  Creating a Terraform PR for these
+# would produce a meaningless stub that could mislead reviewers.
+# These actions must use "Fix by Agent" (Azure SDK) or manual intervention.
+_NON_IAC_ACTION_TYPES: frozenset[ActionType] = frozenset({
+    ActionType.RESTART_SERVICE,
+})
 
 _DEFAULT_EXECUTIONS_DIR = (
     Path(__file__).parent.parent.parent / "data" / "executions"
@@ -91,9 +101,10 @@ class ExecutionGateway:
 
     def __init__(self, executions_dir: Path | None = None) -> None:
         self._dir = executions_dir or _DEFAULT_EXECUTIONS_DIR
-        # In-memory index for fast lookup; populated from disk on first use.
+        # In-memory index for fast lookup; populated from Cosmos/disk on first use.
         self._records: dict[str, ExecutionRecord] = {}
         self._loaded = False
+        self._cosmos = CosmosExecutionClient(executions_dir=self._dir)
 
     # ------------------------------------------------------------------
     # Public API
@@ -421,6 +432,18 @@ class ExecutionGateway:
                 "verdict snapshot is missing or corrupted"
             )
 
+        # Guard: reject non-IaC action types before touching GitHub
+        action = verdict.proposed_action
+        if action.action_type in _NON_IAC_ACTION_TYPES:
+            resource_id = action.target.resource_id
+            resource_name = _parse_arm_id(resource_id).get("name") or resource_id
+            raise ValueError(
+                f"'{action.action_type.value}' cannot be expressed as a Terraform change — "
+                f"Terraform manages desired infrastructure state, not operational power actions. "
+                f"Use 'Fix by Agent' to restart '{resource_name}' via the Azure SDK, "
+                f"or run manually: az vm start --name {resource_name} --resource-group <rg>"
+            )
+
         record.reviewed_by = reviewed_by
         record.updated_at = datetime.now(timezone.utc)
 
@@ -717,32 +740,25 @@ class ExecutionGateway:
     # ------------------------------------------------------------------
 
     def _ensure_loaded(self) -> None:
-        """Load all persisted records from disk on first access."""
+        """Load all persisted records from Cosmos DB (or local JSON in mock mode)."""
         if self._loaded:
             return
         self._loaded = True
-        if not self._dir.exists():
-            return
-        for path in self._dir.glob("*.json"):
+        for raw in self._cosmos.get_all():
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                rec = ExecutionRecord.model_validate(data)
+                rec = ExecutionRecord.model_validate(raw)
                 self._records[rec.execution_id] = rec
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "ExecutionGateway: could not load record %s — %s", path.name, exc
+                    "ExecutionGateway: could not deserialise record %s — %s",
+                    raw.get("execution_id", "?"), exc,
                 )
 
     def _save(self, record: ExecutionRecord) -> None:
-        """Persist one record to disk and update the in-memory index."""
+        """Persist one record to Cosmos DB (or local JSON) and update the in-memory index."""
         self._records[record.execution_id] = record
         try:
-            self._dir.mkdir(parents=True, exist_ok=True)
-            path = self._dir / f"{record.execution_id}.json"
-            path.write_text(
-                record.model_dump_json(indent=2),
-                encoding="utf-8",
-            )
+            self._cosmos.upsert(record.model_dump(mode="json"))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "ExecutionGateway: could not persist record %s — %s",

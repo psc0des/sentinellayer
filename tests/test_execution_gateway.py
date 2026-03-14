@@ -830,6 +830,28 @@ class TestCreatePRFromManual:
         with pytest.raises(ValueError, match="snapshot"):
             await gateway.create_pr_from_manual(record.execution_id, "alice")
 
+    @pytest.mark.asyncio
+    async def test_restart_service_raises_non_iac_error(self, gateway):
+        """create_pr_from_manual raises ValueError for RESTART_SERVICE — not IaC-expressible."""
+        from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+
+        verdict = _make_verdict(SRIVerdict.APPROVED)
+        verdict.proposed_action = ProposedAction(
+            agent_id="monitoring-agent",
+            action_type=ActionType.RESTART_SERVICE,
+            target=ActionTarget(
+                resource_id="vm-web-01",
+                resource_type="Microsoft.Compute/virtualMachines",
+            ),
+            reason="VM is deallocated — heartbeat alert",
+            urgency=Urgency.HIGH,
+        )
+        record = await gateway.process_verdict(verdict, {})
+        assert record.status == ExecutionStatus.manual_required
+
+        with pytest.raises(ValueError, match="restart_service.*cannot be expressed"):
+            await gateway.create_pr_from_manual(record.execution_id, "alice")
+
 
 class TestNsgPatchInPRGenerator:
     """Tests for _apply_nsg_fix_to_content and _find_and_patch_tf_file."""

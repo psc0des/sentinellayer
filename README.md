@@ -110,9 +110,11 @@ agent catches obvious risks; RuriSkry catches what the ops agent missed.
 Each operational agent has enterprise-grade system instructions:
 the **Monitoring Agent** runs a 6-step proactive scan covering VM power state, database health,
 container app health, observability gaps, and orphaned resources — and handles 5 distinct Azure
-Monitor alert types with evidence-specific investigation steps. The **Deploy Agent** audits 7
+Monitor alert types with evidence-specific investigation steps. The **Deploy Agent** audits 9
 security domains per scan: NSG rules, storage security, database/Key Vault config, VM security
-posture, activity log changes, and resource tagging. The **Cost Agent** flags deallocated VMs
+posture, activity log changes, resource tagging, Microsoft Defender for Cloud assessments, and
+Azure Policy compliance — using a three-layer detection architecture (hardcoded Python checks +
+Microsoft API safety nets + LLM reasoning) that covers all 200+ Azure service types. The **Cost Agent** flags deallocated VMs
 (disk cost persists when stopped), unattached disks, and orphaned public IPs in addition to
 traditional rightsizing proposals.
 
@@ -346,7 +348,7 @@ ruriskry/
 │   ├── operational_agents/     # The governed — propose actions
 │   │   ├── monitoring_agent.py      # 6-step enterprise scan + 5-type alert handling
 │   │   ├── cost_agent.py            # VM waste, unattached disks, orphaned public IPs
-│   │   └── deploy_agent.py          # 7-domain security audit: NSG, storage, DB/KV, VM posture, activity log, tagging
+│   │   └── deploy_agent.py          # 9-domain security audit + 3-layer detection (hardcoded + Advisor/Defender/Policy + LLM)
 │   ├── governance_agents/      # The governors — SRI™ dimension agents
 │   │   ├── blast_radius_agent.py    # SRI:Infrastructure
 │   │   ├── policy_agent.py          # SRI:Policy

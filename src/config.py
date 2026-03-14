@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     cosmos_container_decisions: str = "governance-decisions"
     cosmos_container_scan_runs: str = "governance-scan-runs"
     cosmos_container_alerts: str = "governance-alerts"
+    cosmos_container_executions: str = "governance-executions"
 
     # --- Azure Cosmos DB (Gremlin — Dependency Graph) ---
     cosmos_gremlin_endpoint: str = ""

@@ -186,3 +186,109 @@ class CosmosDecisionClient:
                     "CosmosDecisionClient(mock): skipping %s (%s)", path.name, exc
                 )
         return records
+
+
+_DEFAULT_EXECUTIONS_DIR = (
+    Path(__file__).parent.parent.parent / "data" / "executions"
+)
+
+
+class CosmosExecutionClient:
+    """Read/write execution gateway records from Cosmos DB or local JSON files.
+
+    Mirrors the CosmosDecisionClient pattern — local JSON in mock mode,
+    Cosmos DB ``governance-executions`` container in live mode.
+
+    Partition key: ``/resource_id``
+    Document ID:   ``execution_id``
+    """
+
+    def __init__(self, cfg=None, executions_dir: Path | None = None) -> None:
+        self._cfg = cfg or _default_settings
+        self._executions_dir: Path = executions_dir or _DEFAULT_EXECUTIONS_DIR
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = self._secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
+
+        self._is_mock: bool = (
+            self._cfg.use_local_mocks
+            or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
+        )
+
+        if self._is_mock:
+            logger.info(
+                "CosmosExecutionClient: LOCAL MOCK mode (JSON files at %s).",
+                self._executions_dir,
+            )
+            self._executions_dir.mkdir(parents=True, exist_ok=True)
+            self._container = None
+        else:
+            from azure.cosmos import CosmosClient  # type: ignore[import]
+
+            client = CosmosClient(
+                url=self._cfg.cosmos_endpoint,
+                credential=self._cosmos_key,
+            )
+            db = client.get_database_client(self._cfg.cosmos_database)
+            self._container = db.get_container_client(
+                self._cfg.cosmos_container_executions
+            )
+            logger.info(
+                "CosmosExecutionClient: connected to %s / %s",
+                self._cfg.cosmos_database,
+                self._cfg.cosmos_container_executions,
+            )
+
+    @property
+    def is_mock(self) -> bool:
+        return self._is_mock
+
+    def upsert(self, record: dict) -> None:
+        """Insert or update one execution record.
+
+        The record must have ``execution_id`` (used as ``id``) and
+        ``resource_id`` (used as partition key).
+        """
+        doc = {**record, "id": record["execution_id"]}
+        if self._is_mock:
+            path = self._executions_dir / f"{record['execution_id']}.json"
+            path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+            logger.debug("CosmosExecutionClient(mock): wrote %s", path.name)
+        else:
+            self._container.upsert_item(doc)
+            logger.debug("CosmosExecutionClient: upserted %s", record["execution_id"])
+
+    def get_all(self) -> list[dict]:
+        """Return all execution records (used to warm the in-memory index on startup)."""
+        if self._is_mock:
+            records: list[dict] = []
+            for path in self._executions_dir.glob("*.json"):
+                try:
+                    records.append(json.loads(path.read_text(encoding="utf-8")))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "CosmosExecutionClient(mock): skipping %s (%s)", path.name, exc
+                    )
+            return records
+
+        query = "SELECT * FROM c ORDER BY c._ts DESC"
+        return list(
+            self._container.query_items(query, enable_cross_partition_query=True)
+        )
+
+    def delete(self, execution_id: str, resource_id: str) -> None:
+        """Delete a single execution record by ID + partition key."""
+        if self._is_mock:
+            path = self._executions_dir / f"{execution_id}.json"
+            path.unlink(missing_ok=True)
+        else:
+            try:
+                self._container.delete_item(item=execution_id, partition_key=resource_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "CosmosExecutionClient: delete %s failed — %s", execution_id, exc
+                )

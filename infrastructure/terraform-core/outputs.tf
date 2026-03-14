@@ -93,6 +93,16 @@ output "cosmos_container_alerts" {
   value       = azurerm_cosmosdb_sql_container.governance_alerts.name
 }
 
+output "cosmos_container_scan_runs" {
+  description = "Cosmos DB container for scan run history"
+  value       = azurerm_cosmosdb_sql_container.governance_scan_runs.name
+}
+
+output "cosmos_container_executions" {
+  description = "Cosmos DB container for execution gateway records (HITL + agent-fix)"
+  value       = azurerm_cosmosdb_sql_container.governance_executions.name
+}
+
 # --- Log Analytics ---
 
 output "log_analytics_workspace_id" {

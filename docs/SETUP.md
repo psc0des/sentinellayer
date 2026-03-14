@@ -20,7 +20,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-5-mini` version `2025-08-07`, GlobalStandard, 200K TPM)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
 5. Azure AI Search
-6. Azure Cosmos DB (SQL API) — four containers: `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`, auto-created by `ScanRunTracker` if missing), `governance-alerts` (partition `/severity`, managed by `AlertTracker`). Managed Identity auth; no connection string stored in tfstate.
+6. Azure Cosmos DB (SQL API) — five containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`). Managed Identity auth; no connection string stored in tfstate.
 7. Azure Key Vault — purge protection enabled, 90-day soft-delete retention
 8. Azure Log Analytics
 9. Azure Container Registry (ACR) — admin disabled; Container App pulls via Managed Identity (`AcrPull` role)
@@ -30,6 +30,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 Security notes:
 - ACR `admin_enabled = false` — credentials never appear in tfstate or env vars
 - Foundry `local_authentication_enabled = false` — Managed Identity only; agents use `DefaultAzureCredential` so local dev (`az login`) still works unchanged. The Container App MI is granted the `Cognitive Services OpenAI User` role via `azurerm_role_assignment.foundry_openai_user` in Terraform — without this role, all agent scans fail with 401 PermissionDenied.
+- The Container App MI is granted `Reader` at subscription scope (`azurerm_role_assignment.subscription_reader`). This single role covers all three Microsoft API safety nets used by DeployAgent: Azure Advisor (`Microsoft.Advisor/recommendations/read`), Microsoft Defender for Cloud (`Microsoft.Security/assessments/read`), and Azure Policy (`Microsoft.PolicyInsights/policyStates/read`). No additional role assignments are needed for these APIs.
 - Cosmos DB and Key Vault accessed via Managed Identity (no API keys in tfstate)
 - Slack webhook stored as a Key Vault secret, injected via Container App secret mechanism
 - CORS enforced at the FastAPI application layer using `DASHBOARD_URL` env var
@@ -333,8 +334,9 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `COSMOS_ENDPOINT` | Live only | — | Cosmos DB endpoint |
 | `COSMOS_DATABASE` | Live only | `ruriskry` | Database name |
 | `COSMOS_CONTAINER_DECISIONS` | Live only | `governance-decisions` | Container for verdict audit trail |
-| `COSMOS_CONTAINER_SCAN_RUNS` | Live only | `governance-scan-runs` | Container for scan-run records (auto-created) |
-| `COSMOS_CONTAINER_ALERTS` | Live only | `governance-alerts` | Container for alert investigation records (auto-created) |
+| `COSMOS_CONTAINER_SCAN_RUNS` | Live only | `governance-scan-runs` | Container for scan-run records (Terraform-managed) |
+| `COSMOS_CONTAINER_ALERTS` | Live only | `governance-alerts` | Container for alert investigation records (Terraform-managed) |
+| `COSMOS_CONTAINER_EXECUTIONS` | Live only | `governance-executions` | Container for HITL execution records — survives deployments (Terraform-managed) |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
 | `SLACK_WEBHOOK_URL` | No | `""` | Slack Incoming Webhook URL. Empty = notifications disabled (zero-config default). |
 | `SLACK_NOTIFICATIONS_ENABLED` | No | `true` | Master on/off switch for Slack notifications. Has no effect if `SLACK_WEBHOOK_URL` is empty. |

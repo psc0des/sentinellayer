@@ -26,6 +26,8 @@ Microsoft Agent Framework tools (live mode)
 - ``query_activity_log(resource_group, timespan)`` — review recent changes
 - ``get_resource_health(resource_id)`` — Azure Platform availability signal
 - ``list_advisor_recommendations(scope, category)`` — Azure Advisor Security tips
+- ``list_defender_assessments(scope)`` — Defender for Cloud security assessments
+- ``list_policy_violations(scope)`` — Azure Policy non-compliant resources
 - ``propose_action(...)`` — submit a validated ProposedAction
 
 In mock mode (USE_LOCAL_MOCKS=true) the deterministic ``_scan_rules()``
@@ -276,6 +278,8 @@ class DeployAgent:
             query_activity_log_async,
             get_resource_health_async,
             list_advisor_recommendations_async,
+            list_defender_assessments_async,
+            list_policy_violations_async,
         )
 
         credential = DefaultAzureCredential()
@@ -582,6 +586,42 @@ class DeployAgent:
             return json.dumps(recs, default=str)
 
         @af.tool(
+            name="list_defender_assessments",
+            description=(
+                "List Microsoft Defender for Cloud security assessments (unhealthy findings). "
+                "Returns per-resource security assessments from Defender's continuous evaluation "
+                "against CIS, NIST, PCI-DSS, and Azure Security Benchmark. "
+                "Each result includes assessmentName, severity (High/Medium/Low), resourceId, "
+                "resourceName, description, and remediation guidance. "
+                "scope (optional): filter by resource group name."
+            ),
+        )
+        async def tool_list_defender_assessments(scope: str = "") -> str:
+            """Retrieve Defender for Cloud unhealthy assessments."""
+            assessments = await list_defender_assessments_async(
+                scope=scope or None,
+            )
+            return json.dumps(assessments, default=str)
+
+        @af.tool(
+            name="list_policy_violations",
+            description=(
+                "List Azure Policy non-compliant resources. "
+                "Returns resources that violate assigned compliance policies "
+                "(CIS, NIST, PCI-DSS, Azure Security Benchmark, custom policies). "
+                "Each result includes policyDefinitionName, resourceId, resourceName, "
+                "policyAssignmentName, and category. "
+                "scope (optional): filter by resource group name."
+            ),
+        )
+        async def tool_list_policy_violations(scope: str = "") -> str:
+            """Retrieve Azure Policy non-compliant resources."""
+            violations = await list_policy_violations_async(
+                scope=scope or None,
+            )
+            return json.dumps(violations, default=str)
+
+        @af.tool(
             name="propose_action",
             description=(
                 "Submit a security or configuration governance proposal. "
@@ -660,6 +700,8 @@ class DeployAgent:
                 tool_query_activity_log,
                 tool_get_resource_health,
                 tool_list_advisor_recommendations,
+                tool_list_defender_assessments,
+                tool_list_policy_violations,
                 tool_propose_action,
             ],
         )
@@ -672,7 +714,7 @@ class DeployAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(
             agent.run,
-            f"Conduct a full 7-domain security and configuration compliance audit {rg_scope}. "
+            f"Conduct a full 9-domain security and configuration compliance audit {rg_scope}. "
             "Follow ALL steps in your instructions: "
             "(1) Discover ALL resource types — NSGs, VMs, storage accounts, databases, Key Vaults, public IPs. "
             "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
@@ -681,6 +723,8 @@ class DeployAgent:
             "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
             "(6) Query activity logs for suspicious or failed changes in the last 48h. "
             "(7) Flag resources with zero tags. "
+            "(8) Call list_defender_assessments to get Defender for Cloud findings for full-service coverage. "
+            "(9) Call list_policy_violations to surface Azure Policy non-compliance (CIS, NIST, PCI-DSS). "
             "Propose an action for EVERY finding you discover.",
         )
 
@@ -758,12 +802,123 @@ class DeployAgent:
             logger.warning("DeployAgent: Advisor safety net failed: %s", exc)
             scan_notes.append(f"Azure Advisor: unavailable ({exc})")
 
+        # ── Microsoft Defender for Cloud safety net ──────────────────────
+        # Defender continuously evaluates ALL resource types against CIS,
+        # NIST, PCI-DSS, and Azure Security Benchmark.  We auto-propose
+        # for every HIGH-severity Unhealthy assessment that the LLM and
+        # Advisor didn't already catch.
+        pre_defender_count = len(proposals_holder)
+        try:
+            defender_assessments = await list_defender_assessments_async(
+                scope=target_resource_group or None,
+            )
+            defender_high = [
+                a for a in defender_assessments
+                if str(a.get("severity", "")).lower() == "high"
+            ]
+            for assessment in defender_high:
+                resource_id = assessment.get("resourceId", "")
+                resource_name = assessment.get("resourceName", "")
+                assessment_name = assessment.get("assessmentName", "")
+
+                if not resource_id or not assessment_name:
+                    continue
+
+                # Skip if already proposed by hardcoded, LLM, or Advisor paths
+                already = any(
+                    p.target.resource_id == resource_id
+                    or (resource_name and resource_name in (p.target.resource_id or ""))
+                    for p in proposals_holder
+                )
+                if already:
+                    continue
+
+                remediation = assessment.get("remediation", "")
+                reason_parts = [f"DEFENDER-HIGH: {assessment_name}"]
+                if remediation:
+                    reason_parts.append(f"Remediation: {remediation}")
+
+                proposals_holder.append(ProposedAction(
+                    agent_id=_AGENT_ID,
+                    action_type=ActionType.UPDATE_CONFIG,
+                    target=ActionTarget(
+                        resource_id=resource_id,
+                        resource_type="unknown",
+                    ),
+                    reason=". ".join(reason_parts),
+                    urgency=Urgency.HIGH,
+                ))
+
+            defender_added = len(proposals_holder) - pre_defender_count
+            if defender_high:
+                scan_notes.append(
+                    f"Defender for Cloud: {len(defender_high)} HIGH-severity assessment(s) "
+                    f"({defender_added} new, {len(defender_high) - defender_added} already covered)"
+                )
+        except Exception as exc:
+            logger.warning("DeployAgent: Defender safety net failed: %s", exc)
+            scan_notes.append(f"Defender for Cloud: unavailable ({exc})")
+
+        # ── Azure Policy compliance safety net ───────────────────────────
+        # Azure Policy evaluates every resource against assigned compliance
+        # frameworks (CIS, NIST 800-53, PCI-DSS, custom policies).  We
+        # auto-propose for non-compliant resources not already caught by
+        # the other detection layers.
+        pre_policy_count = len(proposals_holder)
+        try:
+            policy_violations = await list_policy_violations_async(
+                scope=target_resource_group or None,
+            )
+            for violation in policy_violations:
+                resource_id = violation.get("resourceId", "")
+                resource_name = violation.get("resourceName", "")
+                policy_name = violation.get("policyDefinitionName", "")
+
+                if not resource_id or not policy_name:
+                    continue
+
+                # Skip if already proposed by any other path
+                already = any(
+                    p.target.resource_id == resource_id
+                    or (resource_name and resource_name in (p.target.resource_id or ""))
+                    for p in proposals_holder
+                )
+                if already:
+                    continue
+
+                assignment = violation.get("policyAssignmentName", "")
+                reason = (
+                    f"POLICY-NONCOMPLIANT: {policy_name}"
+                    + (f" (assignment: {assignment})" if assignment else "")
+                )
+
+                proposals_holder.append(ProposedAction(
+                    agent_id=_AGENT_ID,
+                    action_type=ActionType.UPDATE_CONFIG,
+                    target=ActionTarget(
+                        resource_id=resource_id,
+                        resource_type="unknown",
+                    ),
+                    reason=reason,
+                    urgency=Urgency.MEDIUM,
+                ))
+
+            policy_added = len(proposals_holder) - pre_policy_count
+            if policy_violations:
+                scan_notes.append(
+                    f"Azure Policy: {len(policy_violations)} non-compliant resource(s) "
+                    f"({policy_added} new, {len(policy_violations) - policy_added} already covered)"
+                )
+        except Exception as exc:
+            logger.warning("DeployAgent: Policy compliance safety net failed: %s", exc)
+            scan_notes.append(f"Azure Policy: unavailable ({exc})")
+
         # ── Post-scan integrity log ──────────────────────────────────────
         # Count how many proposals came from each detection path.
         # This lets operators audit whether the LLM is pulling its weight.
         auto_count = sum(
             1 for p in proposals_holder
-            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '", "ADVISOR-HIGH:"))
+            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '", "ADVISOR-HIGH:", "DEFENDER-HIGH:", "POLICY-NONCOMPLIANT:"))
         )
         llm_count = len(proposals_holder) - auto_count
         if proposals_holder:

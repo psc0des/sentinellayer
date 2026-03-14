@@ -236,6 +236,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
     const [agentFixResult, setAgentFixResult] = useState(null)
     const [terminalLines, setTerminalLines] = useState([])
     const [createPrLoading, setCreatePrLoading] = useState(false)
+    const [createPrError, setCreatePrError] = useState(null)
     const [rollbackExecuting, setRollbackExecuting] = useState(false)
     const [rollbackResult, setRollbackResult] = useState(null)
 
@@ -314,11 +315,12 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
 
     async function handleCreatePR(executionId) {
         setCreatePrLoading(true)
+        setCreatePrError(null)
         try {
             const updated = await createPRFromManual(executionId)
             setExecutionStatus(updated)
         } catch (err) {
-            alert(`Create PR failed: ${err.message}`)
+            setCreatePrError(err.message)
         } finally {
             setCreatePrLoading(false)
         }
@@ -892,6 +894,11 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                                         ? 'This action was escalated for review. Choose how to remediate (your choice acts as approval):'
                                         : 'This verdict was approved. Choose how to remediate:'}
                                 </p>
+                                {createPrError && (
+                                    <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
+                                        ⚠ {createPrError}
+                                    </p>
+                                )}
 
                                 {/* Four action buttons */}
                                 <div className="flex flex-wrap gap-2">

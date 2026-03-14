@@ -133,6 +133,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/` | Root — returns `{"status":"ok","service":"ruriskry-backend"}`. Satisfies Azure Container Apps default HTTP liveness probe (hits `GET /` when no custom probe is configured). |
+| GET | `/health` | Liveness probe used by `deploy.sh` health check and explicit probe configs. Returns `{"status":"ok"}`. |
 | GET | `/api/evaluations` | List recent governance decisions (newest-first) |
 | GET | `/api/evaluations/{evaluation_id}` | Full record for one evaluation by UUID |
 | GET | `/api/metrics` | Aggregate stats: decision counts, SRI avg/min/max, top violations, triage tier distribution |
@@ -824,7 +826,10 @@ Create a Terraform PR from a `manual_required` execution record. Reuses the `Ter
 
 **Response:** Updated `ExecutionRecord` JSON. Status transitions to `pr_created` on success.
 
-Returns `404` if `execution_id` is unknown, `400` if status is not `manual_required` or snapshot is missing.
+Returns `404` if `execution_id` is unknown. Returns `400` in three cases:
+- Status is not `manual_required` or `awaiting_review`
+- Verdict snapshot is missing or corrupted
+- Action type cannot be expressed as a Terraform change (e.g. `restart_service` is an operational power action, not an infrastructure state change) — error message includes guidance to use "Fix by Agent" or run `az vm start` manually
 
 ---
 

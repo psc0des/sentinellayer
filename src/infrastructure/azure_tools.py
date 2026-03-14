@@ -432,12 +432,12 @@ def query_activity_log(resource_group: str, timespan: str = "P7D") -> list[dict]
                 return rows
             return []
         except Exception as exc:
-            raise RuntimeError(
-                f"azure_tools.query_activity_log failed for resource group {resource_group!r} "
-                f"(timespan: {timespan}). "
-                f"Error: {exc}. "
-                "Run 'az login' and ensure LOG_ANALYTICS_WORKSPACE_ID is set."
-            ) from exc
+            logger.warning(
+                "query_activity_log: Log Analytics query failed for resource group %r "
+                "(timespan: %s). Agent will proceed without activity log context. Error: %s",
+                resource_group, timespan, exc,
+            )
+            return []
 
     return _mock_activity_log(resource_group)
 
@@ -812,12 +812,12 @@ async def query_activity_log_async(
             return rows
         return []
     except Exception as exc:
-        raise RuntimeError(
-            f"azure_tools.query_activity_log_async failed for resource group {resource_group!r} "
-            f"(timespan: {timespan}). "
-            f"Error: {exc}. "
-            "Run 'az login' and ensure LOG_ANALYTICS_WORKSPACE_ID is set."
-        ) from exc
+        logger.warning(
+            "query_activity_log_async: Log Analytics query failed for resource group %r "
+            "(timespan: %s). Agent will proceed without activity log context. Error: %s",
+            resource_group, timespan, exc,
+        )
+        return []
 
 
 async def list_nsg_rules_async(nsg_resource_id: str) -> list[dict]:
@@ -999,5 +999,194 @@ async def list_advisor_recommendations_async(
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "list_advisor_recommendations_async: Advisor API call failed: %s", exc
+        )
+        return []
+
+
+# ---------------------------------------------------------------------------
+# 8. list_defender_assessments_async
+# ---------------------------------------------------------------------------
+
+
+async def list_defender_assessments_async(
+    scope: str | None = None,
+) -> list[dict]:
+    """Return Microsoft Defender for Cloud security assessments.
+
+    Defender for Cloud continuously evaluates resources against security
+    benchmarks (CIS, NIST, PCI-DSS, Azure Security Benchmark).  Each
+    assessment is a per-resource finding with a status (Healthy/Unhealthy/
+    NotApplicable) and a severity.
+
+    This covers ALL Azure resource types — not just the ones we have
+    hardcoded Python checks for.  It is a deterministic safety net:
+    Microsoft's own security engine evaluates every resource, and we
+    surface anything it marks as Unhealthy.
+
+    Args:
+        scope: Optional resource group name to filter to.  If None, returns
+               assessments across the entire subscription.
+
+    Returns:
+        List of assessment dicts, each with:
+          - assessmentName: display name of the security check
+          - status: "Healthy" | "Unhealthy" | "NotApplicable"
+          - severity: "High" | "Medium" | "Low"
+          - resourceId: ARM ID of the affected resource
+          - resourceName: short name of the affected resource
+          - description: what the check evaluates
+          - remediation: how to fix it
+    """
+    if _use_mocks():
+        return [
+            {
+                "assessmentName": "Management ports should be closed on your virtual machines",
+                "status": "Unhealthy",
+                "severity": "High",
+                "resourceId": "/subscriptions/mock/resourceGroups/mock-rg/providers/Microsoft.Compute/virtualMachines/vm-web-demo-01",
+                "resourceName": "vm-web-demo-01",
+                "description": "Management ports are exposed to the internet, making the resource vulnerable to brute-force attacks.",
+                "remediation": "Restrict management port access using Network Security Groups or Azure Firewall.",
+            }
+        ]
+
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.mgmt.security.aio import SecurityCenter
+        from src.config import settings
+
+        sub_id = settings.azure_subscription_id
+        scope_filter = scope.lower() if scope else None
+
+        async with DefaultAzureCredential() as cred:
+            async with SecurityCenter(cred, sub_id, asc_location="centralus") as client:
+                assessments: list[dict] = []
+                # List assessments at subscription scope
+                resource_scope = f"/subscriptions/{sub_id}"
+                async for item in client.assessments.list(scope=resource_scope):
+                    status = item.status
+                    if not status:
+                        continue
+                    status_code = (status.code or "").capitalize()
+                    if status_code != "Unhealthy":
+                        continue
+
+                    resource_details = item.resource_details
+                    resource_id = (resource_details.id if resource_details and hasattr(resource_details, 'id') else "") or (item.id or "")
+                    # Extract resource ID from assessment ARM ID:
+                    # /subscriptions/.../resourceGroups/.../providers/.../Microsoft.Security/assessments/<id>
+                    if "/Microsoft.Security/assessments/" in resource_id:
+                        resource_id = resource_id.split("/Microsoft.Security/assessments/")[0]
+
+                    if scope_filter and scope_filter not in resource_id.lower():
+                        continue
+
+                    resource_name = resource_id.split("/")[-1] if resource_id else ""
+                    display_name = item.display_name or ""
+                    severity = (status.severity or "Medium").capitalize() if hasattr(status, 'severity') else "Medium"
+                    description = ""
+                    remediation_desc = ""
+                    if item.metadata:
+                        description = item.metadata.description or ""
+                        if item.metadata.remediation_description:
+                            remediation_desc = item.metadata.remediation_description
+
+                    assessments.append({
+                        "assessmentName": display_name,
+                        "status": status_code,
+                        "severity": severity,
+                        "resourceId": resource_id,
+                        "resourceName": resource_name,
+                        "description": description,
+                        "remediation": remediation_desc,
+                    })
+                return assessments
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "list_defender_assessments_async: Defender for Cloud API call failed: %s", exc
+        )
+        return []
+
+
+# ---------------------------------------------------------------------------
+# 9. list_policy_violations_async
+# ---------------------------------------------------------------------------
+
+
+async def list_policy_violations_async(
+    scope: str | None = None,
+) -> list[dict]:
+    """Return Azure Policy non-compliant resources.
+
+    Azure Policy evaluates resources against compliance frameworks
+    (CIS, NIST 800-53, PCI-DSS, Azure Security Benchmark) and built-in
+    or custom policy definitions.  Non-compliant resources represent
+    configuration drift from organizational or regulatory standards.
+
+    This is a deterministic safety net — Microsoft's policy engine
+    evaluates every resource against every assigned policy, and we
+    surface anything marked non-compliant.
+
+    Args:
+        scope: Optional resource group name to filter to.  If None,
+               returns violations across the entire subscription.
+
+    Returns:
+        List of violation dicts, each with:
+          - policyDefinitionName: name of the policy that was violated
+          - complianceState: "NonCompliant" | "Compliant" | etc.
+          - resourceId: ARM ID of the non-compliant resource
+          - resourceName: short name of the resource
+          - policyAssignmentName: which assignment triggered the evaluation
+          - category: policy category (e.g. "Security", "Monitoring")
+    """
+    if _use_mocks():
+        return [
+            {
+                "policyDefinitionName": "Secure transfer to storage accounts should be enabled",
+                "complianceState": "NonCompliant",
+                "resourceId": "/subscriptions/mock/resourceGroups/mock-rg/providers/Microsoft.Storage/storageAccounts/sademostore01",
+                "resourceName": "sademostore01",
+                "policyAssignmentName": "Azure Security Benchmark",
+                "category": "Security",
+            }
+        ]
+
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.mgmt.policyinsights.aio import PolicyInsightsClient
+        from src.config import settings
+
+        sub_id = settings.azure_subscription_id
+        scope_filter = scope.lower() if scope else None
+
+        async with DefaultAzureCredential() as cred:
+            async with PolicyInsightsClient(cred) as client:
+                violations: list[dict] = []
+                query_scope = f"/subscriptions/{sub_id}"
+                # List policy states filtered to non-compliant only
+                async for state in client.policy_states.list_query_results_for_subscription(
+                    policy_states_resource="latest",
+                    subscription_id=sub_id,
+                    filter="complianceState eq 'NonCompliant'",
+                    top=200,
+                ):
+                    resource_id = state.resource_id or ""
+                    if scope_filter and scope_filter not in resource_id.lower():
+                        continue
+
+                    resource_name = resource_id.split("/")[-1] if resource_id else ""
+                    violations.append({
+                        "policyDefinitionName": state.policy_definition_name or "",
+                        "complianceState": state.compliance_state or "NonCompliant",
+                        "resourceId": resource_id,
+                        "resourceName": resource_name,
+                        "policyAssignmentName": state.policy_assignment_name or "",
+                        "category": (state.policy_definition_group_names or ["General"])[0] if state.policy_definition_group_names else "General",
+                    })
+                return violations
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "list_policy_violations_async: Azure Policy API call failed: %s", exc
         )
         return []

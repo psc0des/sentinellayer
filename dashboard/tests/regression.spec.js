@@ -184,10 +184,10 @@ test.describe('Agents page', () => {
             || page.locator('[class*="menu-button"], button:has-text("⋮")').first()
         await menuButton.click()
 
-        // Menu should show these options
-        await expect(page.getByText(/last run results/i)).toBeVisible()
-        await expect(page.getByText(/history/i)).toBeVisible()
-        await expect(page.getByText(/agent details/i)).toBeVisible()
+        // Menu should show these options (use exact button names from the menu)
+        await expect(page.getByRole('button', { name: /last run results/i })).toBeVisible()
+        await expect(page.getByRole('button', { name: 'History', exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: /agent details/i })).toBeVisible()
     })
 
     test('last run shows "no issues found" for clean agent (BUG-02 regression)', async ({ page }) => {
@@ -202,7 +202,7 @@ test.describe('Agents page', () => {
             await page.locator('button:has-text("⋮")').last().click()
         }
 
-        await page.getByText(/last run results/i).click()
+        await page.getByRole('button', { name: /last run results/i }).click()
 
         // BUG-02 FIX: old broken message "run a scan first" must NOT appear.
         // Accept either outcome depending on current scan state:

@@ -96,3 +96,27 @@ CLAUDE.md
 
 # Learning notes (personal)
 learning/
+
+# Internal planning / rearchitecture working docs (not for contributors)
+Adding-HITL-Agent-Fix-Plan.md
+Adding-Terraform-Feature.md
+ag_opus_issues_detailed.md
+async-migration.md
+Current-Architecture-vs-MCP-Planning.md
+execution-rearch.md
+new-ui.md
+ProposedActionV2-ImplementationPlan.md
+rearchitecture.md
+
+# Old UI mockup screenshots
+decisions_mockup.png
+overview_mockup.png
+
+# Generated HTML (PNG + excalidraw source are tracked instead)
+docs/architecture-diagram.html
+
+# Environment-specific test reports (hardcoded live URLs — not portable)
+docs/LIVE_TEST_REPORT.md
+
+# Unimplemented stub — replaced by FastAPI + Container Apps
+functions/

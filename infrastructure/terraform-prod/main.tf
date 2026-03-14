@@ -697,3 +697,29 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "web01_heartbeat" {
     azurerm_monitor_data_collection_rule_association.web01
   ]
 }
+
+# =============================================================================
+# Azure Activity Log → Log Analytics Diagnostic Setting
+#
+# Streams subscription-level activity logs (Administrative, Security, Policy,
+# ServiceHealth, etc.) to the prod Log Analytics workspace so that
+# query_activity_log() can query the AzureActivity KQL table.
+#
+# Without this, query_activity_log() always returns [] in live mode because the
+# AzureActivity table simply doesn't exist in the workspace.
+# =============================================================================
+
+resource "azurerm_monitor_diagnostic_setting" "activity_logs" {
+  name                       = "activity-logs-to-law-${var.suffix}"
+  target_resource_id         = "/subscriptions/${var.subscription_id}"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.prod.id
+
+  enabled_log { category = "Administrative" }
+  enabled_log { category = "Security" }
+  enabled_log { category = "ServiceHealth" }
+  enabled_log { category = "Alert" }
+  enabled_log { category = "Recommendation" }
+  enabled_log { category = "Policy" }
+  enabled_log { category = "Autoscale" }
+  enabled_log { category = "ResourceHealth" }
+}

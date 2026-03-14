@@ -37,18 +37,21 @@ src/
 │   ├── operational_a2a_clients.py  # Operational agent A2A client wrappers
 │   └── agent_registry.py        # Tracks connected A2A agents with stats
 ├── infrastructure/              # Azure service clients (live + mock fallback)
-│   ├── azure_tools.py           # 5 sync + 7 async (*_async) investigation tools
+│   ├── azure_tools.py           # 5 sync + 9 async (*_async) investigation tools
 │   │                            #   query_resource_graph(_async), query_metrics(_async),
 │   │                            #   get_resource_details(_async) [injects powerState for VMs via Compute instance view],
 │   │                            #   query_activity_log(_async), list_nsg_rules(_async),
 │   │                            #   get_resource_health_async (Resource Health API — Available/Unavailable/Degraded),
-│   │                            #   list_advisor_recommendations_async (Azure Advisor — Cost/Security/HA/Perf)
-│   │                            #   — all 7 async tools registered in all 3 ops agents
+│   │                            #   list_advisor_recommendations_async (Azure Advisor — Cost/Security/HA/Perf),
+│   │                            #   list_defender_assessments_async (Defender for Cloud — CIS/NIST/PCI-DSS),
+│   │                            #   list_policy_violations_async (Azure Policy — compliance frameworks)
+│   │                            #   — 9 async tools; DeployAgent uses all 9, Cost/Monitoring use 7
 │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff (Phase 12)
 │   ├── resource_graph.py        # Azure Resource Graph — live: KQL + _azure_enrich_topology()
 │   │                            #   (tags + NSG topology + cost_lookup); mock: seed_resources.json
 │   ├── cost_lookup.py           # Azure Retail Prices REST API — sync + async; _extract_monthly_cost() shared helper
-│   ├── cosmos_client.py         # Cosmos DB decisions (mock: data/decisions/*.json)
+│   ├── cosmos_client.py         # Cosmos DB clients: CosmosDecisionClient (mock: data/decisions/*.json),
+│   │                            #   CosmosExecutionClient (mock: data/executions/*.json)
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
 │   ├── openai_client.py         # Azure OpenAI / gpt-5-mini (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
@@ -193,7 +196,7 @@ Execution Gateway (Layer 3 — IaC-safe execution) [Phase 21 — COMPLETE]
 **Current state (Phase 20 complete + two audit rounds):** All `@af.tool` callbacks in every agent
 are `async def` — including `historical_agent` (fixed in audit round 2; live mode wraps Azure AI
 Search call in `asyncio.to_thread()`) and `policy_agent` (pure computation; fixed for architecture
-contract compliance). Ops agents use 5 async azure_tools (`*_async`). Governance agents use
+contract compliance). Ops agents use async azure_tools (`*_async`) — DeployAgent uses 9, Cost/Monitoring use 7. Governance agents use
 `_evaluate_rules_async()` and `_find_resource_async()`. The topology enrichment method uses
 `asyncio.gather()` to run 4 KQL queries + 1 HTTP call concurrently. `asyncio.gather(4 governance
 agents)` is now truly parallel — no blocking. `BlastRadiusAgent` and `FinancialImpactAgent` expose
@@ -365,7 +368,10 @@ APPROVED verdicts route to IaC-safe Terraform PRs (via GitHub API) instead of di
 SDK calls, preventing IaC state drift. ESCALATED verdicts get dashboard HITL buttons (Approve
 / Dismiss). IaC detection reads `managed_by=terraform` tag: **in live mode** via
 `ResourceGraphClient.get_resource_async()`, with `seed_resources.json` fallback in mock mode
-or on network failure. `ExecutionRecord` is JSON-durable (`data/executions/`).
+or on network failure. **Non-IaC action guard**: `create_pr_from_manual` checks
+`_NON_IAC_ACTION_TYPES` before touching GitHub — `restart_service` (and any future operational
+power actions) raise `ValueError` with a clear message directing the user to "Fix by Agent" or
+`az vm start`, since Terraform manages desired state, not operational commands. `ExecutionRecord` is Cosmos-durable via `CosmosExecutionClient` (`governance-executions` container, partition `/resource_id`; mock: `data/executions/*.json`) — survives Container App revision deployments.
 
 Key files: `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`,
 `tests/test_execution_gateway.py`. Endpoints: `GET /api/execution/pending-reviews`,
