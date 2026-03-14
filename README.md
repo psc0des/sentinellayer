@@ -17,7 +17,13 @@ Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fu
 
 ## The Problem
 
-AI agents are increasingly managing cloud infrastructure autonomously — scaling clusters, restarting services, deleting idle resources, modifying network rules. But capability without accountability is dangerous:
+In every enterprise I've worked in over 8 years as a Cloud Engineer and SRE, one principle has been non-negotiable: **no production change ships without a four-eyes review**. Every infrastructure change goes through a **CAB — a Change Advisory Board**. Someone senior reviews the blast radius, checks for policy violations, looks at historical incidents, and signs off. That's the standard.
+
+But when AI agents start managing infrastructure — **who reviews them?**
+
+Sure, there are guardrails — token limits, permission scopes, hardcoded rules. But guardrails only say what an agent **can't** do. Nobody's simulating what happens **if** it does. Nobody's scoring the blast radius before the action runs.
+
+And the consequences are real:
 
 - A **cost optimization agent** deletes a disaster recovery VM to save $800/month — not knowing it just compromised a compliance requirement
 - An **SRE agent** restarts a payment service — unaware that identical restarts caused cascade failures three times before
@@ -25,9 +31,9 @@ AI agents are increasingly managing cloud infrastructure autonomously — scalin
 
 Today's tooling offers two options: **block actions with static rules** or **monitor after execution**. Nobody simulates outcomes before allowing an agent to act.
 
-## The Solution
+## The Solution — A CAB for AI
 
-RuriSkry is the missing governance layer. Before any agent action executes, it runs through four specialized simulation agents that produce a branded **Skry Risk Index (SRI™)**:
+RuriSkry is the **Change Advisory Board for AI agents**. Just like a human CAB reviews production changes across risk, compliance, precedent, and cost — RuriSkry does the same for every AI agent action, automatically. Before any action executes, it runs through four specialized governance agents that produce a branded **Skry Risk Index (SRI™)**:
 
 ```
 ┌─────────────────────────────────────────────────────┐
