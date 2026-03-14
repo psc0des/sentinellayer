@@ -17,7 +17,7 @@
     justify-content: center;
     align-items: flex-start;
     min-height: 100vh;
-    padding: 40px;
+    padding: 40px 40px 30px;
   }
 
   .diagram {
@@ -28,10 +28,10 @@
   /* Title */
   .title-bar {
     text-align: center;
-    margin-bottom: 36px;
+    margin-bottom: 32px;
   }
   .title-bar h1 {
-    font-size: 28px;
+    font-size: 30px;
     font-weight: 700;
     color: #f1f5f9;
     letter-spacing: -0.5px;
@@ -44,12 +44,43 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
+  /* Main layout: side labels + content */
+  .layer {
+    display: flex;
+    align-items: stretch;
+    margin-bottom: 0;
+    position: relative;
+  }
+  .layer-label {
+    width: 44px;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .layer-label-text {
+    transform: rotate(-90deg);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2.5px;
+    white-space: nowrap;
+    color: #475569;
+  }
+  .layer-label-text.blue { color: #60a5fa; }
+  .layer-label-text.teal { color: #2dd4bf; }
+  .layer-label-text.amber { color: #f59e0b; }
+  .layer-label-text.purple { color: #a78bfa; }
+  .layer-content {
+    flex: 1;
+  }
+
   /* Row layout */
   .row {
     display: flex;
     justify-content: center;
     gap: 20px;
-    margin-bottom: 16px;
     position: relative;
   }
 
@@ -62,11 +93,11 @@
     border: 1px solid rgba(255,255,255,0.06);
   }
   .box .label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1.2px;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     opacity: 0.7;
   }
   .box .name {
@@ -80,38 +111,58 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
-  /* Section labels */
-  .section-label {
-    position: absolute;
-    left: -8px;
-    top: 50%;
-    transform: translateY(-50%) rotate(-90deg);
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: #475569;
-    white-space: nowrap;
-  }
-
-  /* ── Operational Agents (top) ── */
+  /* ── Operational Agents ── */
   .ops-agent {
     background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(59,130,246,0.04));
     border-color: rgba(59,130,246,0.25);
-    width: 200px;
+    width: 220px;
   }
   .ops-agent .label { color: #60a5fa; }
   .ops-agent .name { color: #93c5fd; }
-  .ops-icon {
-    font-size: 22px;
-    margin-bottom: 6px;
+  .ops-icon { font-size: 24px; margin-bottom: 4px; }
+
+  /* Step description between layers */
+  .step-connector {
+    text-align: center;
+    padding: 10px 0;
+    position: relative;
+  }
+  .step-connector .step-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+  .step-connector .arrow-line {
+    width: 2px;
+    height: 28px;
+    margin: 0 auto;
+  }
+  .step-connector .step-text {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 16px;
+    border-radius: 20px;
+    display: inline-block;
+  }
+  .step-connector .step-detail {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #64748b;
+    margin-top: 2px;
+  }
+
+  /* SVG arrow */
+  .svg-arrow {
+    display: block;
+    margin: 0 auto;
   }
 
   /* ── Entry Points ── */
   .entry-box {
     background: rgba(30,41,59,0.5);
     border-color: rgba(100,116,139,0.2);
-    width: 180px;
+    width: 200px;
     padding: 12px 16px;
   }
   .entry-box .name { font-size: 13px; color: #94a3b8; }
@@ -122,8 +173,7 @@
     background: linear-gradient(135deg, rgba(13,17,30,0.95), rgba(15,23,42,0.95));
     border: 1.5px solid rgba(45,212,191,0.2);
     border-radius: 16px;
-    padding: 28px 32px;
-    margin-bottom: 16px;
+    padding: 24px 28px;
     position: relative;
     box-shadow: 0 0 60px rgba(45,212,191,0.04);
   }
@@ -131,7 +181,7 @@
     content: 'RURISKRY GOVERNANCE CORE';
     position: absolute;
     top: -11px;
-    left: 32px;
+    left: 28px;
     background: #0d1120;
     padding: 0 12px;
     font-size: 11px;
@@ -145,21 +195,21 @@
     background: linear-gradient(135deg, rgba(45,212,191,0.1), rgba(45,212,191,0.03));
     border-color: rgba(45,212,191,0.3);
     width: 100%;
-    padding: 14px 20px;
-    margin-bottom: 20px;
+    padding: 12px 20px;
+    margin-bottom: 16px;
   }
-  .pipeline-box .name { color: #2dd4bf; font-size: 16px; }
+  .pipeline-box .name { color: #2dd4bf; font-size: 15px; }
 
   /* Triage box */
   .triage-box {
     background: rgba(30,41,59,0.4);
     border: 1px dashed rgba(148,163,184,0.2);
     border-radius: 10px;
-    padding: 12px 20px;
-    margin-bottom: 20px;
+    padding: 10px 20px;
+    margin-bottom: 14px;
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 20px;
   }
   .triage-box .triage-label {
     font-size: 12px;
@@ -169,7 +219,7 @@
   }
   .triage-tiers {
     display: flex;
-    gap: 16px;
+    gap: 14px;
     font-size: 11px;
     font-family: 'JetBrains Mono', monospace;
     color: #94a3b8;
@@ -191,12 +241,12 @@
   .gov-agents-row {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
-    margin-bottom: 20px;
+    gap: 12px;
+    margin-bottom: 14px;
   }
   .gov-agent {
     border-radius: 10px;
-    padding: 16px 14px;
+    padding: 14px 12px;
     text-align: center;
     border: 1px solid;
     position: relative;
@@ -209,7 +259,7 @@
     font-family: 'JetBrains Mono', monospace;
     opacity: 0.6;
   }
-  .gov-agent .agent-icon { font-size: 24px; margin-bottom: 6px; }
+  .gov-agent .agent-icon { font-size: 22px; margin-bottom: 4px; }
   .gov-agent .name { font-size: 13px; font-weight: 600; }
   .gov-agent .sri-dim {
     font-size: 10px;
@@ -244,7 +294,7 @@
   /* Parallel badge */
   .parallel-badge {
     text-align: center;
-    margin: -6px 0 12px;
+    margin: -2px 0 10px;
     font-size: 10px;
     font-family: 'JetBrains Mono', monospace;
     color: #475569;
@@ -255,10 +305,10 @@
     background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(45,212,191,0.02));
     border: 1px solid rgba(45,212,191,0.25);
     border-radius: 10px;
-    padding: 16px 24px;
+    padding: 14px 24px;
     display: flex;
     align-items: center;
-    gap: 32px;
+    gap: 24px;
   }
   .engine-box .engine-title {
     font-size: 14px;
@@ -268,7 +318,7 @@
   }
   .verdicts {
     display: flex;
-    gap: 16px;
+    gap: 14px;
     font-size: 12px;
   }
   .verdict-pill {
@@ -281,16 +331,29 @@
   .v-escalated { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
   .v-denied { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
 
+  /* Inner step */
+  .inner-step {
+    text-align: center;
+    padding: 6px 0;
+  }
+  .inner-step svg { display: block; margin: 0 auto; }
+  .inner-step .inner-label {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #2dd4bf;
+    opacity: 0.5;
+    margin-top: 2px;
+  }
+
   /* ── Output layer ── */
-  .output-row {
+  .output-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: 14px;
   }
   .output-box {
     border-radius: 10px;
-    padding: 14px 16px;
+    padding: 14px 14px;
     text-align: center;
     border: 1px solid;
   }
@@ -315,101 +378,164 @@
   }
   .out-explain .name { color: #c084fc; }
 
-  /* Azure services row */
+  /* Azure + integrations bottom section */
+  .bottom-section {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 16px;
+    margin-top: 0;
+  }
+
   .azure-section {
     background: rgba(15,23,42,0.6);
     border: 1px solid rgba(59,130,246,0.15);
     border-radius: 14px;
-    padding: 20px 24px;
+    padding: 20px 20px;
     position: relative;
   }
   .azure-section::before {
-    content: 'AZURE SERVICES';
+    content: 'AZURE SERVICES (Microsoft Foundry Platform)';
     position: absolute;
     top: -10px;
-    left: 24px;
+    left: 20px;
     background: #0a0f1a;
     padding: 0 10px;
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 2px;
+    letter-spacing: 1.5px;
     color: #60a5fa;
   }
   .azure-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
   }
   .azure-svc {
     background: rgba(59,130,246,0.06);
     border: 1px solid rgba(59,130,246,0.12);
     border-radius: 8px;
-    padding: 12px 8px;
+    padding: 10px 6px;
     text-align: center;
   }
-  .azure-svc .svc-icon { font-size: 20px; margin-bottom: 4px; }
+  .azure-svc .svc-icon { font-size: 18px; margin-bottom: 3px; }
   .azure-svc .name { font-size: 11px; font-weight: 600; color: #93c5fd; }
   .azure-svc .detail { font-size: 9px; color: #64748b; font-family: 'JetBrains Mono', monospace; }
 
-  /* Integrations row */
-  .integrations-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px;
-    margin-top: 16px;
+  /* Integrations column */
+  .integrations-section {
+    background: rgba(15,23,42,0.4);
+    border: 1px solid rgba(100,116,139,0.12);
+    border-radius: 14px;
+    padding: 20px 16px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .integrations-section::before {
+    content: 'INTEGRATIONS';
+    position: absolute;
+    top: -10px;
+    left: 16px;
+    background: #0a0f1a;
+    padding: 0 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #94a3b8;
   }
   .int-box {
-    border-radius: 10px;
-    padding: 14px 16px;
-    text-align: center;
-    border: 1px solid rgba(100,116,139,0.15);
+    border-radius: 8px;
+    padding: 10px 12px;
+    border: 1px solid rgba(100,116,139,0.12);
     background: rgba(30,41,59,0.3);
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
-  .int-box .name { font-size: 12px; font-weight: 600; color: #94a3b8; }
-  .int-box .detail { font-size: 10px; color: #64748b; }
+  .int-box .int-icon { font-size: 18px; }
+  .int-box .int-info { text-align: left; }
+  .int-box .name { font-size: 12px; font-weight: 600; color: #cbd5e1; }
+  .int-box .detail { font-size: 9px; color: #64748b; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
 
-  /* Arrows */
-  .arrow-down {
-    text-align: center;
-    color: #334155;
-    font-size: 18px;
-    margin: 8px 0;
-    line-height: 1;
-  }
-  .arrow-down.teal { color: rgba(45,212,191,0.4); }
-  .arrow-down .arrow-label {
+  /* Left side annotation */
+  .side-note {
+    position: absolute;
+    right: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(30,41,59,0.6);
+    border: 1px solid rgba(100,116,139,0.15);
+    border-radius: 8px;
+    padding: 8px 12px;
     font-size: 10px;
-    font-family: 'JetBrains Mono', monospace;
-    color: #475569;
-    display: block;
-    margin-top: 2px;
+    color: #94a3b8;
+    max-width: 160px;
+    line-height: 1.4;
   }
 
-  /* Connector lines inside core */
-  .inner-arrow {
-    text-align: center;
-    color: rgba(45,212,191,0.3);
-    font-size: 14px;
-    margin: 10px 0;
-  }
-
-  /* SRI formula */
-  .sri-formula {
-    text-align: center;
-    margin: 10px 0;
+  /* Data flow annotation */
+  .data-flow {
+    position: absolute;
+    font-size: 9px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    color: #64748b;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
   }
-  .sri-formula .highlight { color: #2dd4bf; font-weight: 600; }
 
   /* Footer */
   .footer {
     text-align: center;
-    margin-top: 24px;
+    margin-top: 20px;
     font-size: 11px;
     color: #334155;
     font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Two-layer callout */
+  .two-layer-callout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 0 0 10px;
+    padding: 6px 16px;
+    background: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.15);
+    border-radius: 8px;
+  }
+  .two-layer-callout .callout-icon { font-size: 14px; }
+  .two-layer-callout .callout-text {
+    font-size: 11px;
+    color: #93c5fd;
+    font-weight: 500;
+  }
+  .two-layer-callout .callout-detail {
+    font-size: 10px;
+    color: #64748b;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Azure connection note */
+  .azure-conn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin: 6px 0;
+  }
+  .azure-conn .conn-line {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(59,130,246,0.3), transparent);
+  }
+  .azure-conn .conn-text {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #60a5fa;
+    white-space: nowrap;
+    opacity: 0.6;
   }
 </style>
 </head>
@@ -419,209 +545,316 @@
   <!-- Title -->
   <div class="title-bar">
     <h1><span class="accent">RuriSkry</span> — System Architecture</h1>
-    <div class="subtitle">AI Action Governance & Simulation Engine</div>
+    <div class="subtitle">AI Action Governance & Simulation Engine &middot; Two-Layer Intelligence</div>
   </div>
 
-  <!-- Operational Agents -->
-  <div class="row">
-    <div class="box ops-agent">
-      <div class="ops-icon">🔍</div>
-      <div class="label">Operational Agent</div>
-      <div class="name">Monitoring Agent</div>
-      <div class="detail">6-step proactive scan<br>VM / DB / container health</div>
-    </div>
-    <div class="box ops-agent">
-      <div class="ops-icon">💰</div>
-      <div class="label">Operational Agent</div>
-      <div class="name">Cost Agent</div>
-      <div class="detail">Waste detection<br>rightsizing / orphaned IPs</div>
-    </div>
-    <div class="box ops-agent">
-      <div class="ops-icon">🛡️</div>
-      <div class="label">Operational Agent</div>
-      <div class="name">Deploy Agent</div>
-      <div class="detail">7-domain security audit<br>NSG / storage / tagging</div>
+  <!-- LAYER 1: Operational Agents -->
+  <div class="layer" style="margin-bottom: 4px;">
+    <div class="layer-label"><span class="layer-label-text blue">LAYER 1 &mdash; PROPOSE</span></div>
+    <div class="layer-content">
+      <!-- Two-layer callout -->
+      <div class="two-layer-callout">
+        <span class="callout-icon">🔄</span>
+        <span class="callout-text">Two-Layer Intelligence:</span>
+        <span class="callout-detail">Ops agents query real Azure data via gpt-5-mini, then RuriSkry provides an independent second opinion</span>
+      </div>
+      <div class="row">
+        <div class="box ops-agent">
+          <div class="ops-icon">🔍</div>
+          <div class="label">Operational Agent</div>
+          <div class="name">Monitoring Agent</div>
+          <div class="detail">6-step proactive scan<br>VM / DB / container health</div>
+        </div>
+        <div class="box ops-agent">
+          <div class="ops-icon">💰</div>
+          <div class="label">Operational Agent</div>
+          <div class="name">Cost Agent</div>
+          <div class="detail">Waste detection<br>rightsizing / orphaned IPs</div>
+        </div>
+        <div class="box ops-agent">
+          <div class="ops-icon">🛡️</div>
+          <div class="label">Operational Agent</div>
+          <div class="name">Deploy Agent</div>
+          <div class="detail">7-domain security audit<br>NSG / storage / tagging</div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="arrow-down">▼ ▼ ▼
-    <span class="arrow-label">propose actions (ProposedAction)</span>
+  <!-- Arrow: propose -->
+  <div class="step-connector" style="padding-left: 44px;">
+    <svg class="svg-arrow" width="400" height="36" viewBox="0 0 400 36">
+      <defs>
+        <marker id="arr1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#60a5fa" opacity="0.6"/></marker>
+      </defs>
+      <line x1="80" y1="4" x2="80" y2="30" stroke="#60a5fa" stroke-width="1.5" opacity="0.4" marker-end="url(#arr1)"/>
+      <line x1="200" y1="4" x2="200" y2="30" stroke="#60a5fa" stroke-width="1.5" opacity="0.4" marker-end="url(#arr1)"/>
+      <line x1="320" y1="4" x2="320" y2="30" stroke="#60a5fa" stroke-width="1.5" opacity="0.4" marker-end="url(#arr1)"/>
+      <text x="200" y="20" text-anchor="middle" fill="#60a5fa" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.7">ProposedAction (what to do + why)</text>
+    </svg>
   </div>
 
   <!-- Entry Points -->
-  <div class="row">
-    <div class="box entry-box">
-      <div class="name">A2A HTTP + SSE</div>
-      <div class="detail">port 8000 / enterprise</div>
-    </div>
-    <div class="box entry-box">
-      <div class="name">MCP stdio</div>
-      <div class="detail">Claude Desktop / IDEs</div>
-    </div>
-    <div class="box entry-box">
-      <div class="name">Direct Python</div>
-      <div class="detail">demo.py / tests</div>
-    </div>
-  </div>
-
-  <div class="arrow-down teal">▼
-    <span class="arrow-label">all paths converge</span>
-  </div>
-
-  <!-- Core Section -->
-  <div class="core-section">
-    <!-- Pipeline -->
-    <div class="box pipeline-box">
-      <div class="name">RuriSkryPipeline.evaluate(action)</div>
-      <div class="detail" style="color: #5eead4;">Unified entry point — async orchestration of all governance agents</div>
-    </div>
-
-    <!-- Risk Triage -->
-    <div class="triage-box">
-      <div class="triage-label">⚡ Risk Triage</div>
-      <div class="triage-tiers">
-        <span><span class="tier-tag t1">T1</span> non-prod, isolated → deterministic (0 LLM)</span>
-        <span><span class="tier-tag t2">T2</span> prod, no network → single LLM</span>
-        <span><span class="tier-tag t3">T3</span> compliance / destructive → full pipeline</span>
-      </div>
-    </div>
-
-    <div class="inner-arrow">▼</div>
-
-    <!-- Parallel badge -->
-    <div class="parallel-badge">asyncio.gather() — 4 agents run concurrently</div>
-
-    <!-- 4 Governance Agents -->
-    <div class="gov-agents-row">
-      <div class="gov-agent gov-blast">
-        <div class="weight">0.30</div>
-        <div class="agent-icon">💥</div>
-        <div class="name">Blast Radius</div>
-        <div class="sri-dim">SRI:Infrastructure</div>
-        <div class="detail">Downstream dependency<br>impact analysis</div>
-      </div>
-      <div class="gov-agent gov-policy">
-        <div class="weight">0.25</div>
-        <div class="agent-icon">📋</div>
-        <div class="name">Policy Compliance</div>
-        <div class="sri-dim">SRI:Policy</div>
-        <div class="detail">Governance rules<br>violation detection</div>
-      </div>
-      <div class="gov-agent gov-hist">
-        <div class="weight">0.25</div>
-        <div class="agent-icon">📜</div>
-        <div class="name">Historical Pattern</div>
-        <div class="sri-dim">SRI:Historical</div>
-        <div class="detail">Past incident<br>similarity (BM25)</div>
-      </div>
-      <div class="gov-agent gov-fin">
-        <div class="weight">0.20</div>
-        <div class="agent-icon">📊</div>
-        <div class="name">Financial Impact</div>
-        <div class="sri-dim">SRI:Cost</div>
-        <div class="detail">Cost volatility<br>budget analysis</div>
-      </div>
-    </div>
-
-    <!-- SRI Formula -->
-    <div class="sri-formula">
-      <span class="highlight">SRI™</span> = (Infrastructure × 0.30) + (Policy × 0.25) + (Historical × 0.25) + (Cost × 0.20)
-    </div>
-
-    <div class="inner-arrow">▼</div>
-
-    <!-- Decision Engine -->
-    <div class="engine-box">
-      <div class="engine-title">Governance Decision Engine</div>
-      <div class="verdicts">
-        <span class="verdict-pill v-approved">✅ APPROVED  SRI ≤ 25</span>
-        <span class="verdict-pill v-escalated">⚠️ ESCALATED  SRI 26–60</span>
-        <span class="verdict-pill v-denied">❌ DENIED  SRI > 60 or CRITICAL</span>
+  <div class="layer" style="margin-bottom: 4px;">
+    <div class="layer-label"><span class="layer-label-text" style="color: #64748b;">INGEST</span></div>
+    <div class="layer-content">
+      <div class="row">
+        <div class="box entry-box">
+          <div class="name">🌐 A2A HTTP + SSE</div>
+          <div class="detail">Agent-to-Agent protocol<br>enterprise microservices</div>
+        </div>
+        <div class="box entry-box">
+          <div class="name">🔌 MCP stdio</div>
+          <div class="detail">Claude Desktop<br>IDE integrations</div>
+        </div>
+        <div class="box entry-box">
+          <div class="name">🐍 Direct Python</div>
+          <div class="detail">Pipeline API<br>tests / demos</div>
+        </div>
       </div>
     </div>
   </div>
 
-  <div class="arrow-down teal">▼
-    <span class="arrow-label">GovernanceVerdict</span>
+  <!-- Arrow: converge -->
+  <div class="step-connector" style="padding-left: 44px;">
+    <svg class="svg-arrow" width="400" height="32" viewBox="0 0 400 32">
+      <defs>
+        <marker id="arr2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2dd4bf" opacity="0.6"/></marker>
+      </defs>
+      <line x1="80" y1="4" x2="200" y2="26" stroke="#2dd4bf" stroke-width="1.5" opacity="0.3" marker-end="url(#arr2)"/>
+      <line x1="200" y1="4" x2="200" y2="26" stroke="#2dd4bf" stroke-width="1.5" opacity="0.4" marker-end="url(#arr2)"/>
+      <line x1="320" y1="4" x2="200" y2="26" stroke="#2dd4bf" stroke-width="1.5" opacity="0.3" marker-end="url(#arr2)"/>
+      <text x="310" y="14" text-anchor="start" fill="#2dd4bf" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.6">all paths converge</text>
+    </svg>
   </div>
 
-  <!-- Output Layer -->
-  <div class="output-row">
-    <div class="output-box out-exec">
-      <div class="name">⚙️ Execution Gateway</div>
-      <div class="detail" style="color: #fbbf24;">HITL review → LLM-driven execution<br>Plan → Human approve → Execute → Verify<br>One-click rollback</div>
-    </div>
-    <div class="output-box out-audit">
-      <div class="name">📝 Decision Tracker</div>
-      <div class="detail" style="color: #5eead4;">Immutable audit trail<br>Cosmos DB / JSON persistence<br>Scan-run history</div>
-    </div>
-    <div class="output-box out-explain">
-      <div class="name">🔮 Explanation Engine</div>
-      <div class="detail" style="color: #c084fc;">LLM plain-English summary<br>Counterfactual analysis<br>"What would change this?"</div>
+  <!-- LAYER 2: Core -->
+  <div class="layer" style="margin-bottom: 4px;">
+    <div class="layer-label"><span class="layer-label-text teal">LAYER 2 &mdash; GOVERN</span></div>
+    <div class="layer-content">
+      <div class="core-section">
+        <!-- Pipeline -->
+        <div class="box pipeline-box">
+          <div class="name">RuriSkryPipeline.evaluate(action)</div>
+          <div class="detail" style="color: #5eead4;">Unified entry point &mdash; intercepts every action before it touches infrastructure</div>
+        </div>
+
+        <!-- Risk Triage -->
+        <div class="triage-box">
+          <div class="triage-label">⚡ Risk Triage</div>
+          <div class="triage-tiers">
+            <span><span class="tier-tag t1">T1</span> non-prod, isolated &rarr; deterministic (0 LLM calls)</span>
+            <span><span class="tier-tag t2">T2</span> prod, no network &rarr; single LLM call</span>
+            <span><span class="tier-tag t3">T3</span> compliance / destructive &rarr; full pipeline</span>
+          </div>
+        </div>
+
+        <div class="inner-step">
+          <svg width="200" height="16" viewBox="0 0 200 16">
+            <defs><marker id="arr3" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#2dd4bf" opacity="0.5"/></marker></defs>
+            <line x1="100" y1="0" x2="100" y2="14" stroke="#2dd4bf" stroke-width="1.5" opacity="0.3" marker-end="url(#arr3)"/>
+          </svg>
+        </div>
+
+        <!-- Parallel badge -->
+        <div class="parallel-badge">asyncio.gather() &mdash; 4 governance agents score the action concurrently</div>
+
+        <!-- 4 Governance Agents -->
+        <div class="gov-agents-row">
+          <div class="gov-agent gov-blast">
+            <div class="weight">w: 0.30</div>
+            <div class="agent-icon">💥</div>
+            <div class="name">Blast Radius</div>
+            <div class="sri-dim">SRI:Infrastructure</div>
+            <div class="detail">How many downstream<br>resources are affected?</div>
+          </div>
+          <div class="gov-agent gov-policy">
+            <div class="weight">w: 0.25</div>
+            <div class="agent-icon">📋</div>
+            <div class="name">Policy Compliance</div>
+            <div class="sri-dim">SRI:Policy</div>
+            <div class="detail">Does this violate any<br>governance policies?</div>
+          </div>
+          <div class="gov-agent gov-hist">
+            <div class="weight">w: 0.25</div>
+            <div class="agent-icon">📜</div>
+            <div class="name">Historical Pattern</div>
+            <div class="sri-dim">SRI:Historical</div>
+            <div class="detail">Has a similar action<br>caused issues before?</div>
+          </div>
+          <div class="gov-agent gov-fin">
+            <div class="weight">w: 0.20</div>
+            <div class="agent-icon">📊</div>
+            <div class="name">Financial Impact</div>
+            <div class="sri-dim">SRI:Cost</div>
+            <div class="detail">What's the cost change<br>and budget impact?</div>
+          </div>
+        </div>
+
+        <!-- SRI Formula -->
+        <div style="text-align: center; margin: 6px 0; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #64748b;">
+          <span style="color: #2dd4bf; font-weight: 600;">Skry Risk Index (SRI&trade;)</span> = weighted composite of 4 dimensions &rarr; 0&ndash;100 risk score
+        </div>
+
+        <div class="inner-step">
+          <svg width="200" height="16" viewBox="0 0 200 16">
+            <defs><marker id="arr4" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><path d="M0,0 L6,2.5 L0,5" fill="#2dd4bf" opacity="0.5"/></marker></defs>
+            <line x1="100" y1="0" x2="100" y2="14" stroke="#2dd4bf" stroke-width="1.5" opacity="0.3" marker-end="url(#arr4)"/>
+          </svg>
+        </div>
+
+        <!-- Decision Engine -->
+        <div class="engine-box">
+          <div class="engine-title">Governance Decision Engine</div>
+          <div class="verdicts">
+            <span class="verdict-pill v-approved">&#x2705; APPROVED &nbsp;SRI &le; 25</span>
+            <span class="verdict-pill v-escalated">&#x26A0;&#xFE0F; ESCALATED &nbsp;SRI 26&ndash;60</span>
+            <span class="verdict-pill v-denied">&#x274C; DENIED &nbsp;SRI &gt; 60 or CRITICAL</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="arrow-down">▼ ▼ ▼</div>
+  <!-- Arrow: verdict output -->
+  <div class="step-connector" style="padding-left: 44px;">
+    <svg class="svg-arrow" width="600" height="32" viewBox="0 0 600 32">
+      <defs>
+        <marker id="arr5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#f59e0b" opacity="0.6"/></marker>
+        <marker id="arr6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#2dd4bf" opacity="0.6"/></marker>
+        <marker id="arr7" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#a78bfa" opacity="0.6"/></marker>
+      </defs>
+      <line x1="120" y1="4" x2="120" y2="26" stroke="#f59e0b" stroke-width="1.5" opacity="0.4" marker-end="url(#arr5)"/>
+      <line x1="300" y1="4" x2="300" y2="26" stroke="#2dd4bf" stroke-width="1.5" opacity="0.4" marker-end="url(#arr6)"/>
+      <line x1="480" y1="4" x2="480" y2="26" stroke="#a78bfa" stroke-width="1.5" opacity="0.4" marker-end="url(#arr7)"/>
+      <text x="300" y="16" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.6">GovernanceVerdict + SRI breakdown</text>
+    </svg>
+  </div>
 
-  <!-- Azure Services -->
-  <div class="azure-section">
-    <div class="azure-grid">
-      <div class="azure-svc">
-        <div class="svc-icon">🧠</div>
-        <div class="name">Azure OpenAI</div>
-        <div class="detail">Foundry<br>gpt-5-mini</div>
-      </div>
-      <div class="azure-svc">
-        <div class="svc-icon">🗺️</div>
-        <div class="name">Resource Graph</div>
-        <div class="detail">KQL topology<br>live queries</div>
-      </div>
-      <div class="azure-svc">
-        <div class="svc-icon">🔎</div>
-        <div class="name">AI Search</div>
-        <div class="detail">BM25 incident<br>similarity</div>
-      </div>
-      <div class="azure-svc">
-        <div class="svc-icon">🗄️</div>
-        <div class="name">Cosmos DB</div>
-        <div class="detail">Audit trail<br>scan records</div>
-      </div>
-      <div class="azure-svc">
-        <div class="svc-icon">🔐</div>
-        <div class="name">Key Vault</div>
-        <div class="detail">Secrets<br>API keys</div>
-      </div>
-      <div class="azure-svc">
-        <div class="svc-icon">📡</div>
-        <div class="name">Monitor</div>
-        <div class="detail">Alert rules<br>→ webhook</div>
-      </div>
-      <div class="azure-svc">
-        <div class="svc-icon">🚀</div>
-        <div class="name">Container Apps</div>
-        <div class="detail">Backend<br>hosting</div>
+  <!-- Output layer -->
+  <div class="layer" style="margin-bottom: 8px;">
+    <div class="layer-label"><span class="layer-label-text amber">ACT</span></div>
+    <div class="layer-content">
+      <div class="output-grid">
+        <div class="output-box out-exec">
+          <div class="name">⚙️ Execution Gateway</div>
+          <div class="detail" style="color: #fbbf24;">
+            APPROVED &rarr; LLM plans fix &rarr; human reviews<br>
+            &rarr; LLM executes &rarr; auto-verify &rarr; rollback<br>
+            ESCALATED &rarr; dashboard HITL buttons<br>
+            DENIED &rarr; blocked + Slack alert
+          </div>
+        </div>
+        <div class="output-box out-audit">
+          <div class="name">📝 Decision Tracker</div>
+          <div class="detail" style="color: #5eead4;">
+            Every verdict persisted<br>
+            Cosmos DB (prod) / JSON (dev)<br>
+            Immutable audit trail<br>
+            Scan-run history
+          </div>
+        </div>
+        <div class="output-box out-explain">
+          <div class="name">🔮 Explanation Engine</div>
+          <div class="detail" style="color: #c084fc;">
+            Click any verdict &rarr; 6-section drilldown<br>
+            LLM plain-English summary<br>
+            Counterfactual: &ldquo;what would change<br>
+            this outcome?&rdquo; with score transitions
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Integrations -->
-  <div class="integrations-row">
-    <div class="int-box">
-      <div class="name">💬 Slack Notifications</div>
-      <div class="detail">DENIED / ESCALATED verdicts<br>Alert fired / resolved</div>
-    </div>
-    <div class="int-box">
-      <div class="name">🐙 GitHub + Terraform</div>
-      <div class="detail">Auto-generate IaC PRs<br>IaC-safe execution</div>
-    </div>
-    <div class="int-box">
-      <div class="name">🖥️ React Dashboard</div>
-      <div class="detail">7-page governance UI<br>SSE real-time streaming</div>
+  <!-- Azure connection note -->
+  <div class="azure-conn" style="padding-left: 44px;">
+    <div class="conn-line"></div>
+    <div class="conn-text">&#8593;&#8595; both layers query Azure services in real-time via async SDK</div>
+    <div class="conn-line"></div>
+  </div>
+
+  <!-- Bottom: Azure + Integrations side-by-side -->
+  <div class="layer" style="margin-top: 6px;">
+    <div class="layer-label"><span class="layer-label-text purple">PLATFORM</span></div>
+    <div class="layer-content">
+      <div class="bottom-section">
+        <!-- Azure Services -->
+        <div class="azure-section">
+          <div class="azure-grid">
+            <div class="azure-svc">
+              <div class="svc-icon">🧠</div>
+              <div class="name">Azure OpenAI</div>
+              <div class="detail">Foundry / gpt-5-mini<br>7 agent loops</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">🗺️</div>
+              <div class="name">Resource Graph</div>
+              <div class="detail">KQL topology<br>live dep. analysis</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">🔎</div>
+              <div class="name">AI Search</div>
+              <div class="detail">BM25 incident<br>similarity lookup</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">🗄️</div>
+              <div class="name">Cosmos DB</div>
+              <div class="detail">Audit trail<br>scan records</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">🔐</div>
+              <div class="name">Key Vault</div>
+              <div class="detail">Secrets<br>managed identity</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">📡</div>
+              <div class="name">Monitor</div>
+              <div class="detail">Alert rules<br>&rarr; webhook trigger</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">🚀</div>
+              <div class="name">Container Apps</div>
+              <div class="detail">Backend hosting<br>sticky sessions</div>
+            </div>
+            <div class="azure-svc">
+              <div class="svc-icon">🌐</div>
+              <div class="name">Static Web Apps</div>
+              <div class="detail">Dashboard<br>React frontend</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Integrations -->
+        <div class="integrations-section">
+          <div class="int-box">
+            <div class="int-icon">💬</div>
+            <div class="int-info">
+              <div class="name">Slack Notifications</div>
+              <div class="detail">DENIED/ESCALATED verdicts + alert events</div>
+            </div>
+          </div>
+          <div class="int-box">
+            <div class="int-icon">🐙</div>
+            <div class="int-info">
+              <div class="name">GitHub + Terraform</div>
+              <div class="detail">Auto-generate IaC PRs, IaC-safe execution</div>
+            </div>
+          </div>
+          <div class="int-box">
+            <div class="int-icon">🖥️</div>
+            <div class="int-info">
+              <div class="name">React Dashboard (7 pages)</div>
+              <div class="detail">SSE real-time streaming + HITL controls</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="footer">
-    Microsoft AI Dev Days Hackathon 2026 &middot; Built with Microsoft Agent Framework + Azure OpenAI Foundry + A2A Protocol
+    Microsoft AI Dev Days Hackathon 2026 &middot; Built with Microsoft Agent Framework + Azure OpenAI Foundry + A2A Protocol &middot; 792+ tests
   </div>
 </div>
 

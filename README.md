@@ -213,31 +213,38 @@ A 7-page React governance UI with real-time SSE streaming, custom design tokens,
 
 ### Overview — Ops Nerve Center
 <p align="center">
-  <img src="dashboard/screenshots/visual-scan-overview.png" alt="Overview Dashboard" width="100%">
+  <img src="docs/screenshots/visual-scan-overview.png" alt="Overview Dashboard" width="100%">
 </p>
 
 > NumberTicker count-up metrics, SRI trend chart, alert activity, execution metrics, pending HITL reviews, and recent scan runs — all auto-refreshing.
 
 ### Live Scan Streaming
 <p align="center">
-  <img src="dashboard/screenshots/visual-scan-scans.png" alt="Live Scan Streaming" width="100%">
+  <img src="docs/screenshots/visual-scan-scans.png" alt="Live Scan Streaming" width="100%">
 </p>
 
 > Trigger scans for any operational agent and watch proposals stream in via Server-Sent Events. Each proposal gets a real-time governance verdict with SRI breakdown.
 
 ### Governance Decisions
 <p align="center">
-  <img src="dashboard/screenshots/visual-scan-decisions.png" alt="Governance Decisions" width="100%">
+  <img src="docs/screenshots/visual-scan-decisions.png" alt="Governance Decisions" width="100%">
 </p>
 
 > Full decision history with VerdictBadges (APPROVED / ESCALATED / DENIED). Click any row to open the 6-section drilldown with counterfactual analysis.
 
 ### Azure Monitor Alerts
 <p align="center">
-  <img src="dashboard/screenshots/visual-scan-alerts.png" alt="Alerts Dashboard" width="100%">
+  <img src="docs/screenshots/visual-scan-alerts.png" alt="Alerts Dashboard" width="100%">
 </p>
 
 > Azure Monitor alerts flow in via webhook, trigger async investigation by the Monitoring Agent, and produce governance verdicts — all visible in real-time.
+
+### Slack Notifications
+<p align="center">
+  <img src="docs/screenshots/slack-alerts.png" alt="Slack Alert Notifications" width="100%">
+</p>
+
+> DENIED and ESCALATED verdicts, Azure Monitor alerts (fired + investigated), and resolution summaries are pushed to Slack in real-time via Block Kit messages with "View in Dashboard" deep links.
 
 ---
 

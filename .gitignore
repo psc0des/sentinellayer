@@ -23,8 +23,9 @@ dashboard/.env.production
 dashboard/test-results/
 dashboard/playwright-report/
 
-# Dev screenshots
-screenshots/
+# Dev screenshots (but not docs/screenshots/ which is committed for README)
+/screenshots/
+!docs/screenshots/
 
 # IDE
 .vscode/
