@@ -415,6 +415,33 @@ class DeployAgent:
                         len(critical_rules), nsg_name,
                     )
 
+            # Auto-propose for missing deny-all (MEDIUM but important)
+            if not has_deny_all and inbound_allow:
+                already_deny = any(
+                    p.target.resource_id == nsg_resource_id
+                    and p.action_type == ActionType.MODIFY_NSG
+                    for p in proposals_holder
+                )
+                if not already_deny:
+                    proposals_holder.append(ProposedAction(
+                        agent_id=_AGENT_ID,
+                        action_type=ActionType.MODIFY_NSG,
+                        target=ActionTarget(
+                            resource_id=nsg_resource_id,
+                            resource_type="Microsoft.Network/networkSecurityGroups",
+                        ),
+                        reason=(
+                            f"NSG '{nsg_name}' has {len(inbound_allow)} inbound Allow rule(s) "
+                            "but no explicit deny-all inbound rule. Relies on Azure's implicit "
+                            "deny only — not auditable. Add a priority-4096 deny-all rule."
+                        ),
+                        urgency=Urgency.MEDIUM,
+                        nsg_change_direction="restrict",
+                    ))
+                    logger.info(
+                        "DeployAgent: auto-proposed deny-all fix on %s", nsg_name,
+                    )
+
             return json.dumps(rules, default=str)
 
         @af.tool(
@@ -430,6 +457,76 @@ class DeployAgent:
         async def tool_get_resource_details(resource_id: str) -> str:
             """Check resource tags and configuration."""
             details = await get_resource_details_async(resource_id)
+
+            # ── Deterministic security detection ─────────────────────────────
+            # The LLM interprets this JSON and should call propose_action, but
+            # LLM non-determinism means it can skip findings on any run.
+            # Binary security checks are too important to leave to LLM discretion.
+            # Auto-propose for HIGH/CRITICAL findings; the LLM adds context.
+            # tool_propose_action deduplicates, so LLM calling it too is safe.
+            props = details.get("properties", {})
+            res_type = (details.get("type") or "").lower()
+            res_name = (details.get("name") or resource_id.split("/")[-1])
+            res_rg = ""
+            if "/" in resource_id:
+                parts = resource_id.split("/")
+                if len(parts) > 4 and parts[3].lower() == "resourcegroups":
+                    res_rg = parts[4]
+
+            def _auto_propose(reason: str, urgency: Urgency = Urgency.HIGH) -> None:
+                """Auto-propose update_config if not already proposed for this resource."""
+                if any(
+                    p.target.resource_id == resource_id
+                    and p.action_type == ActionType.UPDATE_CONFIG
+                    for p in proposals_holder
+                ):
+                    return
+                proposals_holder.append(ProposedAction(
+                    agent_id=_AGENT_ID,
+                    action_type=ActionType.UPDATE_CONFIG,
+                    target=ActionTarget(
+                        resource_id=resource_id,
+                        resource_type=details.get("type", "unknown"),
+                        resource_group=res_rg or None,
+                    ),
+                    reason=reason,
+                    urgency=urgency,
+                ))
+                logger.info("DeployAgent: auto-proposed %s on %s", urgency.value, res_name)
+
+            # Storage account security checks
+            if "storageaccounts" in res_type:
+                if props.get("allowBlobPublicAccess") is True:
+                    _auto_propose(
+                        f"HIGH: Storage account '{res_name}' has allowBlobPublicAccess=true. "
+                        "Any container can be made publicly accessible, risking data exposure. "
+                        "Disable public blob access immediately."
+                    )
+                if props.get("supportsHttpsTrafficOnly") is False:
+                    _auto_propose(
+                        f"HIGH: Storage account '{res_name}' allows HTTP (unencrypted) traffic. "
+                        "Data is transmitted in plaintext. Enforce HTTPS-only."
+                    )
+
+            # Key Vault security checks
+            if "vaults" in res_type and "keyvault" in res_type:
+                if props.get("enableSoftDelete") is False:
+                    _auto_propose(
+                        f"HIGH: Key Vault '{res_name}' has soft-delete disabled. "
+                        "Accidental deletion of keys/secrets is permanent and unrecoverable. "
+                        "Enable soft-delete immediately."
+                    )
+
+            # Database security checks (Cosmos DB, SQL)
+            if any(t in res_type for t in ("databaseaccounts", "sql/servers")):
+                if str(props.get("publicNetworkAccess", "")).lower() == "enabled":
+                    _auto_propose(
+                        f"MEDIUM: Database '{res_name}' has publicNetworkAccess=Enabled. "
+                        "The database is reachable from the public internet. "
+                        "Restrict to private endpoints or VNet rules.",
+                        urgency=Urgency.MEDIUM,
+                    )
+
             return json.dumps(details, default=str)
 
         @af.tool(
@@ -590,9 +687,25 @@ class DeployAgent:
         # Expose tool-call notes for the dashboard live log.
         self.scan_notes: list[str] = scan_notes
 
-        # Empty proposals means GPT found no security gaps — a valid outcome.
-        # Falling back to seed-data rules would produce false positives in any
-        # real environment that does not match the demo seed_resources.json.
+        # ── Post-scan integrity log ──────────────────────────────────────
+        # Count how many proposals came from deterministic auto-detection
+        # (tools auto-proposed) vs the LLM calling propose_action.
+        # This lets operators audit whether the LLM is doing its job.
+        auto_count = sum(
+            1 for p in proposals_holder
+            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '"))
+        )
+        llm_count = len(proposals_holder) - auto_count
+        if proposals_holder:
+            scan_notes.append(
+                f"LLM scan complete — {len(proposals_holder)} proposal(s): "
+                f"{auto_count} deterministic, {llm_count} LLM-originated"
+            )
+        else:
+            scan_notes.append(
+                "LLM scan complete — no actionable issues found in Azure environment."
+            )
+
         return proposals_holder
 
     # ------------------------------------------------------------------
