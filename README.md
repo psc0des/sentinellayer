@@ -9,7 +9,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (Monitoring bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 792+ automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 793 automated tests.
 
 ---
 
@@ -188,7 +188,7 @@ Two-phase execution with human review in between:
 2. **Human reviews** — dashboard shows the plan as a steps table before any write operation
 3. **Execute phase** — LLM calls Azure SDK write tools exactly as planned (`start_vm`, `resize_vm`, `delete_nsg_rule`, etc.); fails safe if any step fails
 
-This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (792 tests pass, no Azure/OpenAI required) and live mode.
+This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (793 tests pass, no Azure/OpenAI required) and live mode.
 
 ### One-Click Rollback
 
@@ -220,12 +220,12 @@ A 7-page React governance UI with real-time SSE streaming, custom design tokens,
 
 > NumberTicker count-up metrics, SRI trend chart, alert activity, execution metrics, pending HITL reviews, and recent scan runs — all auto-refreshing.
 
-### Live Scan Streaming
+### Agents — Enterprise Scan Management
 <p align="center">
-  <img src="docs/screenshots/visual-scan-scans.png" alt="Live Scan Streaming" width="100%">
+  <img src="docs/screenshots/visual-scan-agents.png" alt="Agents Page" width="100%">
 </p>
 
-> Trigger scans for any operational agent and watch proposals stream in via Server-Sent Events. Each proposal gets a real-time governance verdict with SRI breakdown.
+> Single-system agents page: agent cards with inline scan/stop/live log buttons, Cosmos-backed scan history table with filters, and a dual-mode log viewer (live SSE for running scans, structured evaluation display for completed scans). All scan state managed by a single `useScanManager` hook.
 
 ### Governance Decisions
 <p align="center">
@@ -234,12 +234,26 @@ A 7-page React governance UI with real-time SSE streaming, custom design tokens,
 
 > Full decision history with VerdictBadges (APPROVED / ESCALATED / DENIED). Click any row to open the 6-section drilldown with counterfactual analysis.
 
+### Audit Log
+<p align="center">
+  <img src="docs/screenshots/visual-scan-auditlog.png" alt="Audit Log" width="100%">
+</p>
+
+> Scan-level audit log: every scan run recorded with agent, timestamps, proposal/verdict counts, status, and duration.
+
 ### Azure Monitor Alerts
 <p align="center">
   <img src="docs/screenshots/visual-scan-alerts.png" alt="Alerts Dashboard" width="100%">
 </p>
 
 > Azure Monitor alerts flow in via webhook, trigger async investigation by the Monitoring Agent, and produce governance verdicts — all visible in real-time.
+
+### Admin Panel
+<p align="center">
+  <img src="docs/screenshots/visual-scan-admin.png" alt="Admin Panel" width="100%">
+</p>
+
+> System configuration (mode, LLM timeout, feature flags), execution gateway status, and danger zone reset — gear icon in the sidebar.
 
 ### Slack Notifications
 <p align="center">
@@ -329,7 +343,7 @@ python demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 792 passed, 0 failed
+# Expected: 793 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 ```
@@ -432,7 +446,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 792-test suite.
+drilldowns, and a comprehensive 793-test suite.
 
 ---
 

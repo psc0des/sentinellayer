@@ -1,232 +1,87 @@
 /**
- * Agents.jsx — unified "Agents & Scans" page.
+ * Agents.jsx — enterprise-grade agents page.
  *
- * Combines the former Agents page (connected agent cards) with the former
- * Scans page (scan controls + scan history), giving operators a single
- * place to:
- *   - See which agents are connected and their lifetime stats
- *   - Trigger individual or batch scans (with optional resource group scope)
- *   - Access per-agent actions from the card 3-dot menu:
- *       Start Scan / Stop Scan / Last Run Results / History / View Live Log / Details
- *   - Review the full scan history table with status, duration, and verdicts
+ * Single-system architecture replacing the dual ConnectedAgents + AgentControls
+ * approach. All scan state flows through useScanManager. Supports live SSE logs,
+ * stop controls, historical log viewing, and refresh-resilient state.
  *
- * The /scans route redirects here (see App.jsx).
+ * Layout:
+ *   useScanManager()     — single source of truth for all scan state
+ *   <AgentCardGrid />    — agent cards with inline scan/stop/log controls
+ *   <ScanHistoryTable /> — Cosmos-backed history with "View Log"
+ *   <ScanLogViewer />    — portal overlay (live or historical mode)
  */
 
-import React, { useEffect, useState } from 'react'
-import { useOutletContext, useNavigate } from 'react-router-dom'
-import ConnectedAgents from '../components/ConnectedAgents'
-import AgentControls from '../components/AgentControls'
-import { fetchAgentLastRun } from '../api'
-import { CheckCircle, RefreshCw, ChevronRight, AlertTriangle } from 'lucide-react'
-import TableSkeleton from '../components/magicui/TableSkeleton'
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function formatTime(iso) {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    })
-  } catch { return iso }
-}
-
-function scanDuration(started, completed) {
-  if (!started || !completed) return null
-  const s = Math.round((new Date(completed) - new Date(started)) / 1000)
-  if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m ${s % 60}s`
-}
-
-const AGENT_NAMES  = ['cost-optimization-agent', 'monitoring-agent', 'deploy-agent']
-const AGENT_LABELS = {
-  'cost-optimization-agent': 'Cost',
-  'monitoring-agent':        'Monitoring',
-  'deploy-agent':            'Deploy',
-}
-const AGENT_TYPE_LABELS = {
-  'deploy':            'Deploy',
-  'monitoring':        'Monitoring',
-  'cost':              'Cost',
-  'cost-optimization': 'Cost',
-}
-const AGENT_TYPE_TO_ID = {
-  'monitoring':        'monitoring-agent',
-  'cost':              'cost-optimization-agent',
-  'cost-optimization': 'cost-optimization-agent',
-  'deploy':            'deploy-agent',
-}
-
-// ── Component ──────────────────────────────────────────────────────────────
+import React from 'react'
+import { useOutletContext } from 'react-router-dom'
+import useScanManager from '../hooks/useScanManager'
+import AgentCardGrid from '../components/AgentCardGrid'
+import ScanHistoryTable from '../components/ScanHistoryTable'
+import ScanLogViewer from '../components/ScanLogViewer'
 
 export default function Agents() {
   const { agents, fetchAll } = useOutletContext()
-  const navigate = useNavigate()
 
-  const [recentScans,  setRecentScans]  = useState([])
-  const [scansLoading, setScansLoading] = useState(true)
-
-  function loadScans() {
-    setScansLoading(true)
-    Promise.all(AGENT_NAMES.map(name => fetchAgentLastRun(name).catch(() => null)))
-      .then(results => {
-        setRecentScans(
-          results
-            .filter(r => r && r.status !== 'no_data')
-            .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''))
-        )
-        setScansLoading(false)
-      })
-  }
-
-  useEffect(() => { loadScans() }, [])
+  const {
+    scanState,
+    logViewer,
+    resourceGroup,
+    setResourceGroup,
+    anyScanning,
+    allScanning,
+    startScan,
+    startAllScans,
+    stopScan,
+    openLiveLog,
+    openHistoricalLog,
+    closeLogs,
+  } = useScanManager({ onScanComplete: fetchAll })
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
 
-      {/* ── Page header ── */}
+      {/* Page header */}
       <div>
         <h1 className="text-xl font-bold text-white">Agents</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Connected agents — trigger scans, view last run results, and review run history
+          Connected agents — trigger scans, view live logs, and review run history
         </p>
       </div>
 
-      {/* ── Agent cards ─────────────────────────────────────────────────────
-          Each card has a ⋮ menu with:
-            Start Scan | Stop Scan | Last Run Results | History | View Live Log | Agent Details
-          All per-agent actions are accessible directly from the card.
-      ── */}
-      <ConnectedAgents agents={agents} />
-
-      {/* ── Scan controls ────────────────────────────────────────────────────
-          Resource group scope input (optional) + per-agent scan buttons + Run All.
-          Use this for targeted scans or to kick off all three agents at once.
-      ── */}
-      <AgentControls
-        onScanComplete={() => { fetchAll(); loadScans() }}
-        onViewVerdicts={() => navigate('/decisions')}
+      {/* Agent cards with inline controls */}
+      <AgentCardGrid
+        agents={agents}
+        scanState={scanState}
+        anyScanning={anyScanning}
+        allScanning={allScanning}
+        onStartScan={startScan}
+        onStartAll={startAllScans}
+        onStopScan={stopScan}
+        onOpenLiveLog={openLiveLog}
+        onOpenHistoricalLog={openHistoricalLog}
+        resourceGroup={resourceGroup}
+        onResourceGroupChange={setResourceGroup}
       />
 
-      {/* ── Scan history ── */}
-      <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-slate-300">Scan history</h2>
-          <button
-            onClick={loadScans}
-            className="text-slate-500 hover:text-slate-300 transition-colors"
-            title="Refresh scan history"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+      {/* Cosmos-backed scan history */}
+      <ScanHistoryTable onViewLog={openHistoricalLog} />
 
-        {scansLoading ? (
-          <table className="w-full">
-            <TableSkeleton rows={3} cols={9} />
-          </table>
-        ) : recentScans.length === 0 ? (
-          <div className="text-center py-8 text-slate-500 text-sm">
-            No scan history yet. Trigger a scan above to populate this table.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-800">
-                  <th className="text-left pb-2.5 pr-4 text-xs font-semibold text-slate-500">Scan ID</th>
-                  <th className="text-left pb-2.5 pr-4 text-xs font-semibold text-slate-500">Agent</th>
-                  <th className="text-left pb-2.5 pr-4 text-xs font-semibold text-slate-500">Started</th>
-                  <th className="text-left pb-2.5 pr-4 text-xs font-semibold text-slate-500">Completed</th>
-                  <th className="text-left pb-2.5 pr-4 text-xs font-semibold text-slate-500">Duration</th>
-                  <th className="text-right pb-2.5 pr-4 text-xs font-semibold text-slate-500">Proposals</th>
-                  <th className="text-right pb-2.5 pr-4 text-xs font-semibold text-slate-500">Verdicts</th>
-                  <th className="text-left pb-2.5 pr-4 text-xs font-semibold text-slate-500">Status</th>
-                  <th className="pb-2.5 w-8" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {recentScans.map((scan, i) => {
-                  const verdictCount = scan.evaluations_count ?? 0
-                  const isClean = scan.status === 'complete' && verdictCount === 0
-                  return (
-                    <tr key={i} className="hover:bg-slate-800/40 transition-colors group">
-                      <td className="py-3 pr-4 font-mono text-xs text-slate-500">
-                        {scan.scan_id ? `${scan.scan_id.slice(0, 8)}…` : '—'}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <span className="text-blue-400 font-mono text-xs">
-                          {AGENT_TYPE_LABELS[scan.agent_type] ?? AGENT_LABELS[scan.source] ?? scan.agent_type ?? scan.source}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 text-xs text-slate-400">{formatTime(scan.started_at)}</td>
-                      <td className="py-3 pr-4 text-xs text-slate-400">{formatTime(scan.completed_at)}</td>
-                      <td className="py-3 pr-4 text-xs text-slate-400 tabular-nums">
-                        {scanDuration(scan.started_at, scan.completed_at) ?? '—'}
-                      </td>
-                      <td className="py-3 pr-4 text-right text-xs text-slate-400 tabular-nums">
-                        {scan.proposals_count ?? 0}
-                      </td>
-                      <td className="py-3 pr-4 text-right">
-                        {verdictCount > 0 ? (
-                          <button
-                            onClick={() => {
-                              const agentId = AGENT_TYPE_TO_ID[scan.agent_type]
-                              navigate(agentId ? `/decisions?agent=${agentId}` : '/decisions')
-                            }}
-                            className="text-xs font-medium text-yellow-400 tabular-nums hover:text-yellow-300 underline decoration-dotted"
-                          >
-                            {verdictCount} verdict{verdictCount !== 1 ? 's' : ''}
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-600">0</span>
-                        )}
-                      </td>
-                      <td className="py-3 pr-4">
-                        {scan.status === 'error' ? (
-                          <span className="text-xs text-red-400 flex items-center gap-1" title={scan.scan_error ?? 'Agent framework error'}>
-                            <AlertTriangle className="w-3 h-3" /> Error
-                          </span>
-                        ) : isClean ? (
-                          <span className="text-xs text-green-400 flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3" /> Clean
-                          </span>
-                        ) : scan.status === 'complete' ? (
-                          <span className="text-xs text-blue-400 flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3" /> Complete
-                          </span>
-                        ) : scan.status === 'running' ? (
-                          <span className="text-xs text-yellow-400 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                            Running
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-500">{scan.status ?? '—'}</span>
-                        )}
-                      </td>
-                      <td className="py-3">
-                        {verdictCount > 0 && (
-                          <button
-                            onClick={() => {
-                              const agentId = AGENT_TYPE_TO_ID[scan.agent_type]
-                              navigate(agentId ? `/decisions?agent=${agentId}` : '/decisions')
-                            }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-slate-300"
-                          >
-                            <ChevronRight className="w-4 h-4" />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {/* Log viewer overlay (live or historical) */}
+      <ScanLogViewer
+        scanId={logViewer.scanId}
+        agentType={logViewer.agentType}
+        scanEntries={logViewer.scanEntries}
+        mode={logViewer.mode}
+        isOpen={logViewer.open}
+        onClose={closeLogs}
+        startedAt={
+          logViewer.mode === 'live' && logViewer.agentType !== 'all'
+            ? scanState[logViewer.agentType]?.startedAt
+            : logViewer.mode === 'live'
+              ? scanState.cost?.startedAt ?? scanState.monitoring?.startedAt ?? scanState.deploy?.startedAt
+              : null
+        }
+      />
 
     </div>
   )

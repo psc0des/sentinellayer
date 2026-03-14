@@ -722,8 +722,7 @@ dashboard/
 └── src/
     ├── pages/
     │   ├── Overview.jsx          # Landing: NumberTicker metrics, gradient SRI AreaChart, AlertsCard (rose glow if firing), ExecutionMetricsCard, pending reviews, scan history
-    │   ├── Scans.jsx             # Scan trigger panel + scan history table
-    │   ├── Agents.jsx            # ConnectedAgents wrapper page
+    │   ├── Agents.jsx            # Enterprise agents page — useScanManager + AgentCardGrid + ScanHistoryTable + ScanLogViewer (single-system architecture)
     │   ├── Decisions.jsx         # DecisionTable + EvaluationDrilldown (breadcrumb nav)
     │   ├── Alerts.jsx             # Azure Monitor alert investigations — table + severity/status filters + drilldown panel;
     │   │                          #   AlertFindingActions: per-finding action buttons (📝 Terraform PR, 🤖 Fix by Agent,
@@ -738,11 +737,16 @@ dashboard/
     │   │   └── TableSkeleton.jsx # Shimmer placeholder rows for tables while data loads
     │   ├── Sidebar.jsx           # Left nav: teal breathe logo, animated active indicator, amber urgency pulse on Decisions, red alert count badge, Settings gear + Admin link at bottom
     │   ├── DecisionTable.jsx     # Sortable/filterable/paginated verdict table + CSV/JSON export
-    │   ├── ConnectedAgents.jsx   # Agent card grid (GlowCard): ⋮ menu, scan/log/results/history/details panels
+    │   ├── AgentCardGrid.jsx     # Agent cards with inline scan/stop/live log/last run buttons (replaces ConnectedAgents + AgentControls)
+    │   ├── ScanHistoryTable.jsx  # Cosmos-backed scan history table with agent/status filters + "View Log" action
+    │   ├── ScanLogViewer.jsx     # Dual-mode log viewer: live SSE (running scans) + historical structured display (completed scans)
+    │   ├── ConnectedAgents.jsx   # [Legacy] Agent card grid — retained, no longer imported by Agents.jsx
     │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge)
-    │   ├── AgentControls.jsx     # Scan trigger panel: per-agent buttons, RG filter, 2 s polling
-    │   ├── LiveLogPanel.jsx      # SSE slide-out log: 9 event type styles, auto-scroll; rendered via createPortal(document.body) to escape parent CSS stacking contexts (backdropFilter on GlowCard)
+    │   ├── AgentControls.jsx     # [Legacy] Scan trigger panel — retained, no longer imported by Agents.jsx
+    │   ├── LiveLogPanel.jsx      # [Legacy] SSE slide-out log — retained, no longer imported by Agents.jsx
     │   └── LiveActivityFeed.jsx  # Real-time verdict feed; rows open EvaluationDrilldown
+    ├── hooks/
+    │   └── useScanManager.js    # Custom hook: single source of truth for all scan state (start/stop/poll/restore-on-refresh)
     ├── index.css                 # Design token system (CSS :root vars) + all keyframes (breathe/urgentPulse/scanBeam/fadeInUp) + utility classes (.animate-breathe, .animate-urgent-pulse, .bg-dots, .metric-value, .shimmer)
     └── App.jsx                   # Router shell: two-phase load (phase 1: fetchMetrics+fetchAgents clears LoadingScreen fast; phase 2: fetchAll() non-blocking populates the rest); bg-dots dot-grid; routes include /admin
 data/
