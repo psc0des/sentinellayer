@@ -528,7 +528,13 @@ resource "azurerm_container_app" "backend" {
   # propagated.  This eliminates the race condition that caused "unable to pull
   # image using Managed identity" on first deploy.
   lifecycle {
-    ignore_changes = [template[0].container[0].image]
+    ignore_changes = [
+      template[0].container[0].image,
+      # ingress: sticky_sessions_affinity is set via CLI (not Terraform-manageable
+      # since azurerm ~4.63.0 removed the attribute). Ignoring prevents Terraform
+      # from clearing or drifting the CLI-applied sticky sessions configuration.
+      ingress,
+    ]
   }
 
   # SystemAssigned — used for Key Vault access (secrets, API keys at runtime).
@@ -693,11 +699,13 @@ resource "azurerm_container_app" "backend" {
     target_port      = 8000
     transport        = "auto"
 
-    # Sticky sessions: pin each client to the same replica for the duration
-    # of the session. Required because SSE queues and scan/alert state are
-    # in-memory per-replica. Without this, the SSE stream for a scan started
-    # on Replica A would be routed to Replica B (no queue → immediate error).
-    sticky_sessions_affinity = "sticky"
+    # NOTE: sticky_sessions_affinity was removed from the azurerm provider in
+    # ~4.63.0 and is no longer configurable via Terraform. Sticky sessions are
+    # set once via CLI after first deploy and persist in Azure:
+    #   az containerapp ingress sticky-sessions set \
+    #     --name <app> --resource-group <rg> --affinity sticky
+    # ingress is listed in lifecycle.ignore_changes below so Terraform does not
+    # drift-correct this setting on subsequent applies.
 
     # SEC-06: CORS is enforced at the application layer in dashboard_api.py
     # (FastAPI CORSMiddleware). The AzureRM Container App resource does not

@@ -208,9 +208,13 @@ test.describe('Agents page', () => {
 
         await page.getByText(/last run results/i).click()
 
-        // BUG-02 FIX: Should say "scan completed" NOT "no results found. run a scan"
-        await expect(page.getByText(/scan completed/i)).toBeVisible({ timeout: 10_000 })
-        // The old broken message should NOT appear
+        // BUG-02 FIX: old broken message "run a scan first" must NOT appear.
+        // Accept either outcome depending on current scan state:
+        //   - Clean scan (0 proposals): "Scan completed — no issues found"
+        //   - Scan with proposals:      "Done · N verdict(s)"
+        await expect(
+            page.getByText(/scan completed|verdict\(s\)/i).first()
+        ).toBeVisible({ timeout: 10_000 })
         await expect(page.getByText(/run a scan first/i)).not.toBeVisible()
     })
 })
@@ -343,10 +347,13 @@ test.describe('Audit Log page', () => {
 })
 
 // ─── API HEALTH ──────────────────────────────────────────────────────────────
+// PLAYWRIGHT_BACKEND_URL overrides localhost when testing against live/staging.
+// Set it to the Container App URL when running with PLAYWRIGHT_BASE_URL.
+const BACKEND = process.env.PLAYWRIGHT_BACKEND_URL || 'http://localhost:8000'
 
 test.describe('API integration', () => {
     test('metrics endpoint returns valid data', async ({ request }) => {
-        const response = await request.get('http://localhost:8000/api/metrics')
+        const response = await request.get(`${BACKEND}/api/metrics`)
         expect(response.ok()).toBeTruthy()
         const data = await response.json()
         expect(data).toHaveProperty('total_evaluations')
@@ -359,19 +366,19 @@ test.describe('API integration', () => {
     })
 
     test('evaluations endpoint supports limit param', async ({ request }) => {
-        const response = await request.get('http://localhost:8000/api/evaluations?limit=5')
+        const response = await request.get(`${BACKEND}/api/evaluations?limit=5`)
         expect(response.ok()).toBeTruthy()
         const data = await response.json()
         expect(data.evaluations.length).toBeLessThanOrEqual(5)
     })
 
     test('evaluations endpoint rejects limit > max (422)', async ({ request }) => {
-        const response = await request.get('http://localhost:8000/api/evaluations?limit=9999')
+        const response = await request.get(`${BACKEND}/api/evaluations?limit=9999`)
         expect(response.status()).toBe(422)
     })
 
     test('agents endpoint returns 3 agents', async ({ request }) => {
-        const response = await request.get('http://localhost:8000/api/agents')
+        const response = await request.get(`${BACKEND}/api/agents`)
         expect(response.ok()).toBeTruthy()
         const data = await response.json()
         // API returns { count, agents: [...] }
