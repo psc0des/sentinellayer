@@ -1374,12 +1374,15 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
 def _normalize_azure_alert_payload(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalise an Azure Monitor webhook payload to our flat internal format.
 
-    Handles three shapes:
+    Handles four shapes:
     1. Already-flat format  (resource_id / metric keys at top level) — pass-through.
     2. Common Alert Schema  (data.essentials + data.alertContext)
        — used by scheduled-query (Log Alert) rules when use_common_alert_schema=true.
     3. Non-common Log Alert schema  (schemaId = Microsoft.Insights/scheduledQueryRules)
        — used when use_common_alert_schema=false (our default).
+    4. Classic Metric Alert schema  (data.context + data.status)
+       — used by azurerm_monitor_metric_alert rules (CPU, memory, etc).
+       Payload has data.context.resourceId, data.context.condition.allOf[].metricName, etc.
 
     Returns a dict with keys:  resource_id, metric, value, threshold, severity,
                                 resource_group, fired_at, alert_rule_name.
@@ -1388,6 +1391,40 @@ def _normalize_azure_alert_payload(raw: dict[str, Any]) -> dict[str, Any]:
     # Already flat — no Azure Monitor envelope
     if "resource_id" in raw or "metric" in raw:
         return raw
+
+    # ── Shape 4: Classic Metric Alert (data.context) ─────────────────────────
+    # azurerm_monitor_metric_alert sends data.context instead of data.essentials.
+    # Detect by presence of data.context.resourceId or data.context.condition.
+    metric_ctx = raw.get("data", {}).get("context", {})
+    if metric_ctx.get("resourceId") or metric_ctx.get("condition"):
+        condition = metric_ctx.get("condition", {})
+        all_of = condition.get("allOf", [{}])
+        first = all_of[0] if all_of else {}
+        resource_id = metric_ctx.get("resourceId", "")
+        resource_group = metric_ctx.get("resourceGroupName", "")
+        metric = first.get("metricName", metric_ctx.get("name", ""))
+        value = first.get("metricValue")
+        threshold = first.get("threshold")
+        sev_raw = str(metric_ctx.get("severity", ""))
+        severity = sev_raw.replace("Sev", "").replace("sev", "") if sev_raw else ""
+        logger.info(
+            "alert-normalizer: classic metric alert schema — resource=%s metric=%s",
+            resource_id.split("/")[-1] if "/" in resource_id else resource_id,
+            metric,
+        )
+        return {
+            "resource_id": resource_id,
+            "resource_name": resource_id.split("/")[-1] if "/" in resource_id else resource_id,
+            "metric": metric,
+            "value": value,
+            "threshold": threshold,
+            "severity": severity,
+            "resource_group": resource_group,
+            "fired_at": metric_ctx.get("timestamp", ""),
+            "alert_rule_name": metric_ctx.get("name", ""),
+            "description": metric_ctx.get("description", ""),
+            "_raw_azure_payload": raw,
+        }
 
     essentials = raw.get("data", {}).get("essentials", {})
     ctx = raw.get("data", {}).get("alertContext", {})
