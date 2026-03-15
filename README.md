@@ -91,7 +91,7 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 | Incident Search | Azure AI Search (BM25) | Historical incident similarity |
 | Audit DB | Azure Cosmos DB (SQL API) | Governance decisions + agent registry + scan-run records |
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
-| Dashboard | React + Vite + FastAPI | 7-page governance UI with SSE real-time streaming, custom design system, animated components |
+| Dashboard | React + Vite + FastAPI | 6-page governance UI with SSE real-time streaming, custom design system, animated components |
 | Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts + Azure Monitor alerts |
 | Azure Monitor → RuriSkry | `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | CPU/heartbeat/custom alerts POST to `/api/alert-trigger` → async investigation via `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
@@ -122,7 +122,7 @@ Monitor alert types with evidence-specific investigation steps. The **Deploy Age
 security domains per scan: NSG rules, storage security, database/Key Vault config, VM security
 posture, activity log changes, resource tagging, Microsoft Defender for Cloud assessments, and
 Azure Policy compliance — using a three-layer detection architecture (hardcoded Python checks +
-Microsoft API safety nets + LLM reasoning) that covers all 200+ Azure service types. The **Cost Agent** flags deallocated VMs
+Microsoft API safety nets + LLM reasoning) that covers any Azure resource type via Resource Graph. The **Cost Agent** flags deallocated VMs
 (disk cost persists when stopped), unattached disks, and orphaned public IPs in addition to
 traditional rightsizing proposals.
 
@@ -225,7 +225,7 @@ on 429s; operational agents return `[]` (no false positives from stale seed data
 
 ## Dashboard
 
-A 7-page React governance UI with real-time SSE streaming, custom design tokens, and animated components.
+A 6-page React governance UI with real-time SSE streaming, custom design tokens, and animated components.
 
 ### Overview — Ops Nerve Center
 <p align="center">
