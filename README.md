@@ -385,16 +385,22 @@ ruriskry/
 │   │   ├── cost_agent.py            # VM waste, unattached disks, orphaned public IPs
 │   │   └── deploy_agent.py          # 9-domain security audit + 3-layer detection (hardcoded + Advisor/Defender/Policy + LLM)
 │   ├── governance_agents/      # The governors — SRI™ dimension agents
+│   │   ├── _llm_governance.py       # Shared guardrail logic — clamp, parse, annotate (±30 pt enforcement)
 │   │   ├── blast_radius_agent.py    # SRI:Infrastructure
 │   │   ├── policy_agent.py          # SRI:Policy
 │   │   ├── historical_agent.py      # SRI:Historical
 │   │   └── financial_agent.py       # SRI:Cost
 │   ├── core/                   # Decision engine & tracking
-│   │   ├── models.py               # Pydantic data models (read first)
+│   │   ├── models.py                # Pydantic data models (read first)
 │   │   ├── pipeline.py              # asyncio.gather() orchestration
 │   │   ├── governance_engine.py     # SRI™ scoring + verdicts
+│   │   ├── risk_triage.py           # Tier 1/2 classification — fast-path vs full governance
 │   │   ├── decision_tracker.py      # Cosmos DB audit trail (verdicts)
 │   │   ├── scan_run_tracker.py      # Cosmos DB / JSON scan-run store
+│   │   ├── alert_tracker.py         # Azure Monitor alert lifecycle tracking
+│   │   ├── execution_gateway.py     # Routes APPROVED → HITL / Terraform PR / execution
+│   │   ├── execution_agent.py       # LLM-driven execution planning, verify, rollback
+│   │   ├── terraform_pr_generator.py # GitHub PR generation for IaC-managed resources
 │   │   ├── explanation_engine.py    # Counterfactual analysis + LLM summary
 │   │   └── interception.py          # Action interception façade
 │   ├── a2a/                    # A2A Protocol layer
@@ -402,34 +408,40 @@ ruriskry/
 │   │   ├── operational_a2a_clients.py  # A2A client wrappers
 │   │   └── agent_registry.py        # Connected agent tracking
 │   ├── mcp_server/             # RuriSkry as MCP provider
-│   │   └── server.py
+│   │   └── server.py                # FastMCP — 3 tools: evaluate, query history, risk profile
 │   ├── infrastructure/         # Azure service clients (mock fallback)
 │   │   ├── azure_tools.py           # 5 sync + 5 async (*_async) tools: Resource Graph, metrics, NSG, activity log
 │   │   ├── resource_graph.py        # Live: KQL topology enrichment (tags + NSG join + cost)
 │   │   ├── cost_lookup.py           # Azure Retail Prices API — SKU→monthly cost (no auth)
 │   │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff for LLM calls
-│   │   ├── cosmos_client.py         # Cosmos DB decisions client
+│   │   ├── cosmos_client.py         # Cosmos DB decisions + executions client
 │   │   ├── search_client.py         # Azure AI Search client
 │   │   ├── openai_client.py         # Azure OpenAI / gpt-5-mini client
 │   │   └── secrets.py               # Key Vault secret resolver
 │   ├── notifications/          # Outbound alerting
 │   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 35+ REST endpoints: scans, alerts, SSE, explanation, HITL, config
+│       └── dashboard_api.py         # 37 REST endpoints: scans, alerts, SSE, explanation, HITL, config
 ├── dashboard/                  # React + Vite governance dashboard
-├── data/                       # Seed data for demo
+├── data/                       # Seed data + local persistence (mock fallback)
 │   ├── agents/                      # A2A agent registry (mock)
+│   ├── alerts/                      # Alert records (local fallback)
 │   ├── decisions/                   # Audit trail (mock)
 │   ├── scans/                       # Scan-run records (mock — ScanRunTracker)
 │   ├── seed_incidents.json
 │   ├── seed_resources.json
-│   └── policies.json
+│   └── policies.json                # Governance policy rules (JSON — edit to add rules)
 ├── demo.py                     # Direct pipeline demo (3 scenarios)
 ├── demo_a2a.py                 # A2A protocol demo
 ├── demo_live.py                # Two-layer intelligence demo
 ├── tests/
 ├── docs/
-│   └── slack-setup.md               # Slack webhook setup guide for contributors
+│   ├── ARCHITECTURE.md              # System design, agent descriptions, data flow
+│   ├── SETUP.md                     # Setup instructions, environment variables
+│   ├── API.md                       # API endpoint reference
+│   ├── SERVICES.md                  # Azure service dependency map
+│   ├── slack-setup.md               # Slack webhook setup guide for contributors
+│   └── alert-wiring.md              # Azure Monitor → RuriSkry wiring guide
 └── scripts/
     ├── deploy.sh                    # One-command full deploy (Terraform + Docker + dashboard)
     ├── setup_env.sh                 # Generate .env from Terraform outputs (for local dev)
