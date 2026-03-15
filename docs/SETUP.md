@@ -39,64 +39,81 @@ Security notes:
 Runtime secrets are read from Key Vault by default via `DefaultAzureCredential`.
 In Azure, use Managed Identity. Locally, `az login` is used by the same credential chain.
 
-## Quick Setup
+## Path A — Cloud Deployment (Azure)
+
+Deploy the full stack to Azure in one command. No local Python or Node.js runtime needed.
 
 ```bash
 # 1. Clone
-git clone https://github.com/<your-username>/ruriskry.git
+git clone https://github.com/psc0codes/ruriskry.git
 cd ruriskry
 
-# 2. Python environment
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# 3. Deploy Azure infrastructure + backend + dashboard (one command)
+# 2. Configure Terraform
 cp infrastructure/terraform-core/terraform.tfvars.example \
    infrastructure/terraform-core/terraform.tfvars
-# Edit terraform.tfvars: set subscription_id and suffix at minimum
-# (see infrastructure/terraform-core/deploy.md for remote state setup — one-time)
+# Edit terraform.tfvars — set subscription_id and suffix at minimum
+# See infrastructure/terraform-core/deploy.md for remote state setup (one-time)
+
+# 3. Deploy everything — Terraform + Docker build + ACR push + Container App + Static Web App
 bash scripts/deploy.sh
 # If Stage 2 fails, resume without re-waiting or rebuilding:
 #   bash scripts/deploy.sh --stage2
+```
 
-# 4. Generate .env from Terraform outputs (Key Vault + Managed Identity mode)
+After `deploy.sh` completes, the app is live. Terraform injects all environment variables
+into the Container App automatically — no `.env` file is needed for cloud deployment.
+
+**Outputs:**
+- Backend URL: `terraform -chdir=infrastructure/terraform-core output backend_url`
+- Dashboard URL: `terraform -chdir=infrastructure/terraform-core output dashboard_url`
+
+---
+
+## Path B — Local Development
+
+Run the backend and dashboard locally against your Azure infrastructure (or in mock mode without Azure).
+
+```bash
+# 1. Clone and install
+git clone https://github.com/psc0codes/ruriskry.git
+cd ruriskry
+python -m venv .venv
+source .venv/bin/activate       # Linux/Mac
+# .venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+
+# 2. Run tests — no Azure credentials needed (mock mode)
+pytest tests/ -v
+# Expected: 793 passed, 0 failed
+
+# 3a. Mock mode (no Azure needed) — set in .env
+echo "USE_LOCAL_MOCKS=true" > .env
+
+# 3b. Live mode — pull Azure endpoints from Terraform outputs into .env
+#     Requires: deploy.sh already run (Azure infra provisioned)
 bash scripts/setup_env.sh
-
-# Optional local fallback (writes plaintext keys into .env)
+# Optional: write plaintext API keys into .env for offline use
 # bash scripts/setup_env.sh --include-keys
 
-# Optional CI/non-interactive mode (no prompts)
-# bash scripts/setup_env.sh --no-prompt
+# 4. Start the backend
+uvicorn src.api.dashboard_api:app --reload
+# → http://localhost:8000
 
-# 5. (Optional) Seed demo incidents — for local/mock dev only.
-#    In production, historical context builds up organically via DecisionTracker.
-# python scripts/seed_data.py
+# 5. Start the React dashboard (separate terminal)
+cd dashboard && npm install && npm run dev
+# → http://localhost:5173
 
-# 6. Run tests (pytest-asyncio required — installs via requirements.txt)
-pytest tests/ -v
-# Expected: 777 passed, 0 failed
-
-# 7a. Start RuriSkry — MCP stdio server (for Claude Desktop)
+# 6. Optional: run as MCP server (for Claude Desktop)
 python -m src.mcp_server.server
 
-# 7b. Start RuriSkry — A2A HTTP server (for agent-to-agent protocol)
+# 7. Optional: run as A2A server (agent-to-agent protocol)
 uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000
 
-# 7c. Start RuriSkry — Dashboard REST API
-uvicorn src.api.dashboard_api:app --reload
-
-# 7d. Start React dashboard (separate terminal)
-cd dashboard && npm install && npm run dev
-# → opens at http://localhost:5173 (or 5174 if port is busy)
-# Fonts (DM Sans + JetBrains Mono) load from Google Fonts — internet connection required.
-# Offline: dashboard renders with system-ui / monospace fallbacks.
-
-# 8. Run demos
-python demo.py        # direct Python pipeline demo (3 scenarios)
-python demo_a2a.py    # A2A protocol demo — starts server + 3 agent clients
-python demo_live.py                           # two-layer intelligence demo — starts A2A server + scans whole subscription
-python demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific resource group
+# 8. Optional: demo scripts
+python demo.py        # direct Python pipeline — 3 governance scenarios
+python demo_a2a.py    # A2A protocol demo — server + 3 agent clients
+python demo_live.py   # live Azure scan (requires USE_LOCAL_MOCKS=false + Azure creds)
+python demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 ```
 
 ## Optional: Deploy Mini Production Environment
@@ -328,7 +345,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `USE_LOCAL_MOCKS` | No | `true` | `true` = JSON files; `false` = live Azure |
 | `USE_LIVE_TOPOLOGY` | No | `false` | `true` = governance agents query Azure Resource Graph for real dependency topology and SKU cost (Phase 19). Only effective when `USE_LOCAL_MOCKS=false` and `AZURE_SUBSCRIPTION_ID` is set. |
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
-| `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-41` | Model deployment name |
+| `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-5-mini` | Model deployment name |
 | `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |
 | `AZURE_SEARCH_INDEX` | Live only | `incident-history` | Search index name |
 | `COSMOS_ENDPOINT` | Live only | — | Cosmos DB endpoint |
