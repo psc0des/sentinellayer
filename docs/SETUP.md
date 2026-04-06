@@ -229,6 +229,79 @@ See `infrastructure/terraform-demo/README.md` for full detail including cost est
 
 ---
 
+## Optional: Scanning Multiple Subscriptions
+
+By default RuriSkry scans one subscription (`target_subscription_id` or `subscription_id`).
+For organisations with many subscriptions, three approaches are available:
+
+### Option 1 — Azure Management Group *(recommended for enterprise)*
+
+Assign RuriSkry's Managed Identity a role at the **management group** level once.
+Azure Resource Graph can then query all subscriptions under that group in a single call —
+no per-subscription config changes ever needed.
+
+**Steps:**
+1. In `terraform-core/terraform.tfvars`, set `target_subscription_id` to any one subscription
+   initially (required for Terraform to create the role assignments).
+2. After `terraform apply`, promote the role assignments to management group scope:
+   ```bash
+   PRINCIPAL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_principal_id)
+   MG_ID="mg-your-root"   # your management group ID
+
+   az role assignment create --role "Reader"                    --assignee $PRINCIPAL --scope /providers/Microsoft.Management/managementGroups/$MG_ID
+   az role assignment create --role "Network Contributor"       --assignee $PRINCIPAL --scope /providers/Microsoft.Management/managementGroups/$MG_ID
+   az role assignment create --role "Virtual Machine Contributor" --assignee $PRINCIPAL --scope /providers/Microsoft.Management/managementGroups/$MG_ID
+   ```
+3. Update `AZURE_SUBSCRIPTION_ID` in the Container App to a comma-separated list,
+   or switch to `AZURE_MANAGEMENT_GROUP_ID` once multi-sub support is added to the codebase
+   (see note below).
+
+> **Current code limitation:** `resource_graph.py` scopes queries to a single
+> `subscriptions=[settings.azure_subscription_id]`. To scan a management group, change that
+> to `management_groups=["mg-your-root"]` and add `azure_management_group_id` to `config.py`.
+> The RBAC and architecture are already correct — only this one query scope needs updating.
+
+---
+
+### Option 2 — Multiple `target_subscription_id` values *(up to ~20 subs)*
+
+For a small number of additional subscriptions, grant the role assignments manually on each:
+
+```bash
+PRINCIPAL=$(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_principal_id)
+
+for SUB_ID in "aaaa-..." "bbbb-..." "cccc-..."; do
+  az role assignment create --role "Reader"                    --assignee $PRINCIPAL --scope /subscriptions/$SUB_ID
+  az role assignment create --role "Network Contributor"       --assignee $PRINCIPAL --scope /subscriptions/$SUB_ID
+  az role assignment create --role "Virtual Machine Contributor" --assignee $PRINCIPAL --scope /subscriptions/$SUB_ID
+done
+```
+
+Then set `AZURE_SUBSCRIPTION_ID` to a comma-separated list of subscription IDs in the
+Container App environment variables (multi-sub query support requires the code change noted above).
+
+---
+
+### Option 3 — Azure Lighthouse *(cross-tenant)*
+
+If the subscriptions belong to **different tenants** (e.g. a managed service provider
+governing customer environments), use Azure Lighthouse to project those subscriptions
+into your tenant. RuriSkry's Managed Identity then sees them as if they were in your
+own tenant — no code changes needed, just Lighthouse onboarding per customer.
+
+---
+
+### Which option to choose
+
+| Scenario | Recommendation |
+|---|---|
+| 1–2 subscriptions | `target_subscription_id` in tfvars — automatic via Terraform |
+| 3–20 subscriptions, same tenant | Manual role assignments loop (Option 2) |
+| 20+ subscriptions, same tenant | Management group scope (Option 1) |
+| Cross-tenant / MSP | Azure Lighthouse (Option 3) |
+
+---
+
 ## Optional: Wire Azure Monitor Alerts (real-time governance)
 
 RuriSkry agents run periodic scans, but you can also wire Azure Monitor alerts
