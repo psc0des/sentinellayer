@@ -93,7 +93,23 @@ az storage account blob-service-properties update --account-name ruriskrytfstate
 >
 > If you deleted and recreated the container, just recreate the container (`az storage container create`) — the account stays.
 
-### Step 3 — Configure tfvars
+### Step 3 — Create backend.hcl
+
+The Terraform backend config contains your storage account name and must not be committed.
+Create it locally (it is already in `.gitignore`):
+
+```bash
+cat > infrastructure/terraform-core/backend.hcl <<EOF
+resource_group_name  = "ruriskry-tfstate-rg"
+storage_account_name = "ruriskrytfstate<suffix>"
+container_name       = "tfstate"
+key                  = "terraform-core.tfstate"
+EOF
+```
+
+Replace `<suffix>` with the same suffix you used in Step 2.
+
+### Step 4 — Configure tfvars
 
 ```bash
 cp infrastructure/terraform-core/terraform.tfvars.example \

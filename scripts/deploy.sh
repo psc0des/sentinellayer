@@ -103,10 +103,20 @@ ok "All prerequisites satisfied"
 step "Initialising Terraform"
 
 cd "$TF_DIR"
-if [[ "$UPGRADE_PROVIDERS" == true ]]; then
-  terraform init -upgrade
+
+# backend.hcl holds the storage account name (not committed — see deploy.md Step 3)
+BACKEND_CONFIG=""
+if [[ -f "backend.hcl" ]]; then
+  BACKEND_CONFIG="-backend-config=backend.hcl"
 else
-  terraform init
+  warn "backend.hcl not found in $TF_DIR — Terraform will prompt for backend config."
+  warn "See infrastructure/terraform-core/deploy.md Step 3 to create it."
+fi
+
+if [[ "$UPGRADE_PROVIDERS" == true ]]; then
+  terraform init -upgrade $BACKEND_CONFIG
+else
+  terraform init $BACKEND_CONFIG
 fi
 ok "Terraform initialised"
 
