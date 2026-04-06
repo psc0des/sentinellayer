@@ -85,13 +85,17 @@ suffix          = "<suffix>"   # same as Step 2 — used in all Azure resource n
 ```
 
 **Cross-subscription scanning (optional):** if you want RuriSkry to scan a *different* subscription
-than the one it deploys into, also set:
+than the one it deploys into (hub-spoke model), also set:
 ```hcl
 target_subscription_id = "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
 ```
-Terraform automatically creates all required RBAC role assignments on that subscription —
+Terraform automatically creates Reader + Network Contributor + VM Contributor on that subscription —
 no manual `az role assignment create` commands needed. Leave it commented out if both
 RuriSkry and your resources are in the same subscription.
+
+> **Permission required for cross-subscription:** the identity running `terraform apply`
+> (your `az login` account) must have **Owner** or **User Access Administrator** on
+> `target_subscription_id`. Without it, Terraform will fail when creating the RBAC assignments.
 
 ### Step 5 — Deploy everything
 
@@ -173,14 +177,31 @@ python demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 `infrastructure/terraform-prod/` creates 5 real Azure resources that RuriSkry governs
 in live demos — turning mock IDs into actual Azure resource IDs on the dashboard.
 
+> **Deploy terraform-core first** (Path A above). You need the backend URL from
+> `terraform -chdir=infrastructure/terraform-core output -raw backend_url`
+> to fill in `alert_webhook_url` below.
+
 ```bash
 cd infrastructure/terraform-prod
 cp terraform.tfvars.example terraform.tfvars
-# Fill in: subscription_id, suffix (e.g. "abc1234"), vm_admin_password, alert_email
-# Optional: alert_webhook_url = "http://<your-host>/api/alert-trigger"
-#   → wires Azure Monitor CPU/heartbeat alerts to POST directly into RuriSkry
-#   → leave empty to disable (alerts will email only)
-terraform init
+
+# Fill in terraform.tfvars — required fields:
+#   subscription_id   = "<prod-sub-id>"       # can be a different sub from terraform-core
+#   suffix            = "<same-suffix>"        # same short suffix you used for terraform-core
+#   vm_admin_password = "<strong-password>"
+#   alert_email       = "<your-email>"
+#   alert_webhook_url = "<backend_url>/api/alert-trigger"
+#     → wires Azure Monitor alerts directly into RuriSkry; leave empty to disable
+
+# Create backend.hcl (not committed — uses the same tfstate storage account as terraform-core)
+cat > backend.hcl <<EOF
+resource_group_name  = "ruriskry-tfstate-rg"
+storage_account_name = "ruriskrytfstate<suffix>"
+container_name       = "tfstate"
+key                  = "terraform-prod.tfstate"
+EOF
+
+terraform init -backend-config=backend.hcl
 terraform apply
 
 # After apply — paste real IDs into data/seed_resources.json:
