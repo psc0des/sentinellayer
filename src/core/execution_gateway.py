@@ -634,18 +634,24 @@ class ExecutionGateway:
                 f"Cannot rollback {execution_id!r}: status is '{record.status.value}' "
                 f"(must be 'applied')"
             )
-        plan = record.execution_plan
-        if not plan:
-            raise ValueError(
-                f"Cannot rollback {execution_id!r}: no execution_plan stored on record"
-            )
-
         snapshot = record.verdict_snapshot
         if not snapshot or "proposed_action" not in snapshot:
             raise ValueError(
                 f"Cannot rollback {execution_id!r}: verdict snapshot is missing"
             )
         action = ProposedAction.model_validate(snapshot["proposed_action"])
+
+        plan = record.execution_plan
+        if not plan:
+            # Plan was not pre-generated (e.g. execute ran without preview, or
+            # the Cosmos record was loaded on a fresh replica that missed the
+            # silent save failure).  Generate now so rollback_hint is available.
+            logger.info(
+                "ExecutionGateway: %s — no stored plan for rollback, generating now",
+                execution_id[:8],
+            )
+            plan = await self.generate_agent_fix_plan(execution_id)
+            record = self._records[execution_id]
 
         from src.core.execution_agent import ExecutionAgent  # noqa: PLC0415
         agent = ExecutionAgent(cfg=settings)

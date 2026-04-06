@@ -74,7 +74,7 @@ def _make_verdict(decision: SRIVerdict, resource_id: str = "vm-web-01") -> Gover
 
 _TERRAFORM_TAGS = {
     "managed_by": "terraform",
-    "iac_repo": "psc0des/ruriskry",
+    "iac_repo": "your-org/ruriskry",
     "iac_path": "infrastructure/terraform-prod",
 }
 
@@ -89,7 +89,7 @@ class TestIaCDetection:
         managed, tool, repo, path = gateway._detect_iac_management(_TERRAFORM_TAGS)
         assert managed is True
         assert tool == "terraform"
-        assert repo == "psc0des/ruriskry"
+        assert repo == "your-org/ruriskry"
         assert path == "infrastructure/terraform-prod"
 
     def test_bicep_tag_detected(self, gateway):
@@ -233,7 +233,7 @@ class TestApprovalFlow:
             pr_called.append(True)
             record.status = ExecutionStatus.pr_created
             record.pr_number = 99
-            record.pr_url = "https://github.com/psc0des/ruriskry/pull/99"
+            record.pr_url = "https://github.com/your-org/ruriskry/pull/99"
             return record
 
         gateway._create_terraform_pr = fake_pr
@@ -407,7 +407,7 @@ class TestTerraformPRGenerator:
 
         with patch("src.core.terraform_pr_generator.settings") as mock_settings:
             mock_settings.github_token = ""
-            mock_settings.iac_github_repo = "psc0des/ruriskry"
+            mock_settings.iac_github_repo = "your-org/ruriskry"
             mock_settings.iac_terraform_path = "infrastructure/terraform-prod"
             mock_settings.dashboard_url = "http://localhost:5173"
 
@@ -422,7 +422,7 @@ class TestTerraformPRGenerator:
                 status=ExecutionStatus.pending,
                 iac_managed=True,
                 iac_tool="terraform",
-                iac_repo="psc0des/ruriskry",
+                iac_repo="your-org/ruriskry",
                 iac_path="infrastructure/terraform-prod",
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
@@ -505,7 +505,7 @@ class TestTerraformPRGenerator:
             status=ExecutionStatus.pending,
             iac_managed=True,
             iac_tool="terraform",
-            iac_repo="psc0des/ruriskry",
+            iac_repo="your-org/ruriskry",
             iac_path="infrastructure/terraform-prod",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -523,7 +523,7 @@ class TestTerraformPRGenerator:
 
         with patch("src.core.terraform_pr_generator.settings") as mock_settings:
             mock_settings.github_token = ""
-            mock_settings.iac_github_repo = "psc0des/ruriskry"
+            mock_settings.iac_github_repo = "your-org/ruriskry"
             mock_settings.iac_terraform_path = "infrastructure/terraform-prod"
             mock_settings.dashboard_url = "http://localhost:5173"
             gen = TerraformPRGenerator()
@@ -536,7 +536,7 @@ class TestTerraformPRGenerator:
             status=ExecutionStatus.pending,
             iac_managed=True,
             iac_tool="terraform",
-            iac_repo="psc0des/ruriskry",
+            iac_repo="your-org/ruriskry",
             iac_path="infrastructure/terraform-prod",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -545,7 +545,7 @@ class TestTerraformPRGenerator:
         body = gen._build_pr_body(verdict, record)
         assert "APPROVED" in body
         assert "monitoring-agent" in body
-        assert "psc0des/ruriskry" in body
+        assert "your-org/ruriskry" in body
         assert "Reviewer Checklist" in body
         assert "http://localhost:5173" in body
 

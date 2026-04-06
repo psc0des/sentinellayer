@@ -184,6 +184,18 @@ export async function fetchExecutionStatus(actionId) {
 }
 
 /**
+ * Fetch a single execution record by its execution_id.
+ * Used to sync component state with the real backend record after a redeployment.
+ * @param {string} executionId
+ * @returns {Promise<object>} ExecutionRecord
+ */
+export async function fetchExecutionRecord(executionId) {
+  const res = await fetch(`${BASE}/execution/${encodeURIComponent(executionId)}/record`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch execution record`)
+  return res.json()
+}
+
+/**
  * Human approves an escalated verdict for execution.
  * @param {string} executionId - UUID of the ExecutionRecord
  * @param {string} reviewedBy - name/email of the approver
@@ -321,6 +333,28 @@ export async function fetchActiveAlertCount() {
 }
 
 /**
+ * Fetch the full record for one alert (used for live-log polling).
+ * @param {string} alertId
+ * @returns {object} full alert record
+ */
+export async function fetchAlertStatus(alertId) {
+  const res = await fetch(`${BASE}/alerts/${alertId}/status`)
+  if (!res.ok) throw new Error(`API error ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Manually trigger investigation for a pending alert.
+ * @param {string} alertId - UUID of the pending alert
+ * @returns {{ status: string, alert_id: string }}
+ */
+export async function investigateAlert(alertId) {
+  const res = await fetch(`${BASE}/alerts/${alertId}/investigate`, { method: 'POST' })
+  if (!res.ok) throw new Error(`API error ${res.status}: ${(await res.json().catch(() => ({}))).detail ?? 'failed to investigate alert'}`)
+  return res.json()
+}
+
+/**
  * Open an SSE stream for real-time alert investigation progress.
  * Returns an EventSource — caller must attach onmessage and call .close() when done.
  * @param {string} alertId - UUID returned by trigger_alert
@@ -361,6 +395,9 @@ export async function fetchConfig() {
  */
 export async function rollbackAgentFix(executionId) {
   const res = await fetch(`${BASE}/execution/${executionId}/rollback`, { method: 'POST' })
-  if (!res.ok) throw new Error(`API error ${res.status}: rollback failed`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(`API error ${res.status}: ${body.detail ?? 'rollback failed'}`)
+  }
   return res.json()
 }

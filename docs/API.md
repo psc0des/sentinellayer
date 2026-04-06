@@ -144,9 +144,10 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/agents/{agent_name}/last-run` | Most recent completed scan for one agent |
 | GET | `/api/notification-status` | Slack webhook configuration status |
 | POST | `/api/test-notification` | Send a test notification to the configured Slack webhook |
-| POST | `/api/alert-trigger` | Webhook — trigger async alert investigation from Azure Monitor |
+| POST | `/api/alert-trigger` | Webhook — receive Azure Monitor alert, create pending record (no auto-investigation) |
+| POST | `/api/alerts/{alert_id}/investigate` | Manually trigger investigation for a pending alert |
 | GET | `/api/alerts` | List all alert records newest-first |
-| GET | `/api/alerts/active-count` | Count of currently firing/investigating alerts |
+| GET | `/api/alerts/active-count` | Count of currently pending/investigating alerts |
 | GET | `/api/alerts/{alert_id}/status` | Full detail for one alert |
 | GET | `/api/alerts/{alert_id}/stream` | SSE stream of real-time investigation progress |
 | POST | `/api/scan/cost` | Start a background cost agent scan |
@@ -160,12 +161,13 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/evaluations/{evaluation_id}/explanation` | Full decision explanation with counterfactual analysis |
 | GET | `/api/execution/pending-reviews` | List ESCALATED verdicts awaiting human review |
 | GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict |
+| GET | `/api/execution/{execution_id}/record` | Full execution record by execution_id — used to sync frontend state after redeployment |
 | POST | `/api/execution/{execution_id}/approve` | Human approves an escalated verdict |
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
 | POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record |
 | GET | `/api/execution/{execution_id}/agent-fix-preview` | Generate LLM-driven execution plan (steps, summary, impact, rollback, backward-compat `commands`) |
 | POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
-| POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back` on success, keeps `applied` on failure; always stores `rollback_log` |
+| POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back` on success, keeps `applied` on failure; stores `rollback_log` (may be empty if LLM timed out); dashboard shows failure banner even with empty log |
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
 | GET | `/api/config` | Safe system configuration — mode, timeouts, feature flags (no secrets) |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
@@ -288,10 +290,12 @@ Returns **404** if the agent is not registered.
 ### `POST /api/alert-trigger`
 
 Webhook endpoint for Azure Monitor Action Groups. When an alert fires, Azure POSTs
-the alert payload here. RuriSkry creates an alert record (status `firing`), launches
-the investigation in the background, and returns immediately so the webhook does not
-time out. Duplicate alerts for the same `resource_id + metric` while one is still
-`firing` or `investigating` return the existing `alert_id` with `"duplicate": true`.
+the alert payload here. RuriSkry creates an alert record with status `pending` and
+returns immediately — **no investigation is started automatically**. A user must
+manually trigger investigation via `POST /api/alerts/{alert_id}/investigate`.
+
+Duplicate alerts for the same `resource_id + metric` while one is still
+`pending` or `investigating` return the existing `alert_id` with `"duplicate": true`.
 
 **Request body — three accepted formats:**
 
@@ -326,13 +330,31 @@ All fields are optional. The endpoint automatically normalises both formats via 
 
 **Response:**
 ```json
-{ "status": "firing", "alert_id": "a1b2c3d4-..." }
+{ "status": "pending", "alert_id": "a1b2c3d4-..." }
 ```
 
-The background investigation runs: `MonitoringAgent.scan(alert_payload)` → governance
-pipeline → `ExecutionGateway.process_verdict()` → verdicts recorded with `execution_id` +
+The alert sits in `pending` status until a user clicks **Investigate** in the dashboard
+(or calls `POST /api/alerts/{alert_id}/investigate` directly). At that point the
+investigation runs: `MonitoringAgent.scan(alert_payload)` → governance pipeline →
+`ExecutionGateway.process_verdict()` → verdicts recorded with `execution_id` +
 `execution_status` per finding. Subscribe to `GET /api/alerts/{alert_id}/stream` for
 real-time SSE updates, or poll `GET /api/alerts/{alert_id}/status`.
+
+---
+
+### `POST /api/alerts/{alert_id}/investigate`
+
+Manually trigger investigation for a `pending` alert. Validates that the alert exists
+and is in `pending` status, then launches `MonitoringAgent` in the background and
+returns immediately.
+
+**Returns 404** if the alert does not exist.
+**Returns 409** if the alert is not in `pending` status (already investigating or resolved).
+
+**Response:**
+```json
+{ "status": "investigating", "alert_id": "a1b2c3d4-..." }
+```
 
 ---
 
@@ -392,7 +414,7 @@ Merges in-memory (active) and durable (historical) records. Cosmos internal fiel
 
 ### `GET /api/alerts/active-count`
 
-Quick count of non-resolved alerts (status `firing` or `investigating`).
+Quick count of unresolved alerts (status `pending` or `investigating`).
 Used by the sidebar badge to show a live count without fetching all alert data.
 
 **Response:**
@@ -406,7 +428,7 @@ Used by the sidebar badge to show a live count without fetching all alert data.
 
 Return the full alert record for one alert. Returns 404 if not found.
 
-**Response:** Same shape as one element of the `alerts` array in `GET /api/alerts`.
+**Response:** Same shape as one element of the `alerts` array in `GET /api/alerts`, plus the `investigation_log` field — a list of lightweight event snapshots appended as the investigation progresses. Used by `AlertPanel` to show a live terminal-style log without competing with the SSE stream consumer. Each entry has `event`, `timestamp`, `message`, and optional `decision`, `sri_composite`, `count`, `execution_status`.
 
 ---
 
@@ -735,9 +757,9 @@ Get the execution status for a governance verdict.
       "status": "pr_created",
       "iac_managed": true,
       "iac_tool": "terraform",
-      "iac_repo": "psc0des/ruriskry",
+      "iac_repo": "your-org/ruriskry",
       "iac_path": "infrastructure/terraform-prod",
-      "pr_url": "https://github.com/psc0des/ruriskry/pull/42",
+      "pr_url": "https://github.com/your-org/ruriskry/pull/42",
       "pr_number": 42,
       "reviewed_by": "",
       "created_at": "2026-03-05T12:00:00+00:00",
@@ -759,6 +781,18 @@ Returns the following if the verdict has no execution record:
 `gateway_enabled` reflects the current `EXECUTION_GATEWAY_ENABLED` setting.
 When `true` and `no_execution`, the verdict predates gateway enablement — run a new scan
 to generate an execution record. When `false`, the gateway is disabled globally.
+
+---
+
+### `GET /api/execution/{execution_id}/record`
+
+Return the full `ExecutionRecord` for a given `execution_id`. Used by `AlertFindingActions`
+on mount to sync its local status state with the real Cosmos-backed record — prevents stale
+React state from showing the Rollback button when the backend record is actually
+`manual_required`.
+
+Returns 404 if not found. Same shape as one element of the `reviews` array in
+`GET /api/execution/pending-reviews`.
 
 ---
 

@@ -306,7 +306,7 @@ variable "use_github_pat" {
 }
 
 variable "iac_github_repo" {
-  description = "GitHub repo that owns the IaC, e.g. 'psc0des/ruriskry-iac-test'."
+  description = "GitHub repo that owns the IaC, e.g. 'your-org/your-iac-repo'."
   type        = string
   default     = ""
 }

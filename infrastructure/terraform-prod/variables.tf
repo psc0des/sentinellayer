@@ -100,7 +100,7 @@ variable "allowed_source_cidr_override" {
 variable "iac_github_repo" {
   description = "GitHub repo that owns this Terraform config (owner/repo). Written as iac_repo tag on all resources. Used by RuriSkry ExecutionGateway to create PRs."
   type        = string
-  default     = "psc0des/ruriskry"
+  default     = "your-org/ruriskry"
 }
 
 variable "iac_terraform_path" {

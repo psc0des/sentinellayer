@@ -527,10 +527,10 @@ class TestScanAPIEndpoints:
     # ------------------------------------------------------------------
 
     def test_alert_trigger_accepts_webhook(self, api_client):
-        """POST /api/alert-trigger returns immediately with firing status.
+        """POST /api/alert-trigger creates a pending alert record without auto-investigation.
 
-        The endpoint is now async — it creates an alert record and launches
-        the investigation in the background.  Returns alert_id + status.
+        The endpoint creates an alert record and returns immediately.
+        Investigation must be triggered manually via POST /api/alerts/{id}/investigate.
         """
         alert_payload = {
             "resource_id": (
@@ -547,7 +547,7 @@ class TestScanAPIEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "firing", "Alert should start in firing status"
+        assert data["status"] == "pending", "Alert should start in pending status (no auto-investigation)"
         assert "alert_id" in data, "Response must include alert_id"
 
     def test_alerts_list_endpoint(self, api_client):

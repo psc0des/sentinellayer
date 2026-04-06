@@ -58,8 +58,10 @@ src/
 ├── notifications/               # Outbound alerting
 │   └── slack_notifier.py        # send_verdict_notification/send_alert_notification/send_alert_resolved_notification — Block Kit; shared AsyncClient singleton, rate limiter, smart retry
 ├── api/
-│   └── dashboard_api.py         # FastAPI REST endpoints — 33 total (Phase 10 agents,
-│                                #   Phase 12 alert-trigger + _normalize_azure_alert_payload(),
+│   └── dashboard_api.py         # FastAPI REST endpoints — 38 total (Phase 10 agents,
+│                                #   Phase 12 alert-trigger (creates pending record, no auto-investigation)
+│                                #          + _normalize_azure_alert_payload(),
+│                                #          + POST /api/alerts/{id}/investigate (manual trigger),
 │                                #   Phase 13 scan triggers,
 │                                #   Phase 16: SSE stream, cancel, last-run + durable store,
 │                                #   Phase 17: notification-status + test-notification,
@@ -290,6 +292,9 @@ maps each `ActionType` to its inverse — `RESTART_SERVICE`→`deallocate_vm`,
 `SCALE_UP`/`SCALE_DOWN`→`resize_vm` back to `current_sku`, `MODIFY_NSG`→`create_nsg_rule`
 restored, `DELETE_RESOURCE`→cannot auto-rollback. Live path: `_rollback_with_framework()` LLM
 reads `rollback_hint` from stored plan + current state, calls Azure SDK write tools in reverse.
+On LLM/framework exception, `rollback()` returns `{"success": False, ...}` — it does **not**
+fall back to `_rollback_mock()` (mock returns `success=True`, which would falsely mark the
+record `rolled_back` while Azure never ran).
 `ExecutionGateway.rollback_agent_fix()` validates `status == applied`, calls `agent.rollback()`,
 sets `status → rolled_back` **only when rollback succeeds**; on failure keeps `status = applied`
 (fix is still in place) and appends failure detail to `rollback_log` + `notes`. Stores `rollback_log`.
@@ -299,12 +304,71 @@ Dashboard: amber `↩ Rollback` button appears next to `Applied` badge in both
 `EvaluationDrilldown.jsx` and `Alerts.jsx`. Confirm dialog shows `rollback_hint` from stored plan.
 `rolled_back` status badge (amber) added to both `EXEC_STATUS_CONFIG` maps. `ExecutionLogView`
 accepts `label` prop to show "Rollback Steps" separately from execution log.
-On rollback failure, a rose-colored "Rollback attempted but failed" banner + failed steps log
-is shown; the Rollback button remains so the user can retry.
+On rollback failure, a rose-colored "Rollback attempted but failed" banner is shown — including
+when `rollback_log` is empty (API error or LLM timeout); message includes the error string if
+available. The Rollback button remains so the user can retry.
 **AgentTerminal live progress**: `handleAgentFixExecute()` fires a `setInterval` while the API
 call is pending (2s cadence), appending progress lines so the terminal appears active during the
 LLM+SDK wait (30–60s). Interval cleared before real step-by-step animation starts.
 **Tests: 779 passed.**
+
+**Phase 31 — Manual Alert Investigation + Live Log + Rollback Fixes (COMPLETE)**
+
+**Manual-only investigation:** `POST /api/alert-trigger` no longer auto-investigates. Alerts
+land in `status="pending"`. New `POST /api/alerts/{alert_id}/investigate` endpoint (validates
+`pending` status, returns 409 otherwise) launches `MonitoringAgent` via `BackgroundTasks`.
+`active-count` endpoint counts `pending`+`investigating`. Frontend: filter option renamed
+`"pending"` (was `"firing"`); `statusLabel/Icon/Color` includes `pending` case (Clock icon,
+slate). "🔍 Investigate" button rendered per pending row in the table AND inside `AlertPanel`
+drilldown when `localAlert.status === 'pending'`.
+
+**Live investigation log in `AlertPanel`:** Alert records gain an `investigation_log: []` field.
+`_emit_alert_event()` appends a lightweight snapshot of each SSE event (event type, timestamp,
+message, plus optional decision/sri/count/execution_status) to this field — no SSE queue
+competition since the panel polls REST instead of subscribing to SSE. `AlertPanel` holds
+`localAlert` local state (synced from parent, updated by polling and button click). When
+`localAlert.status === 'investigating'`, a recursive `setTimeout(poll, 1500)` fetches
+`GET /api/alerts/{id}/status`, updates `localAlert`, and calls `fetchAll()` on completion.
+`logLines` maps `investigation_log` entries through `eventToLogLine()` → `AgentTerminal`.
+A "Live" pulse badge appears while polling. `fetchAlertStatus(alertId)` added to `api.js`.
+
+**Rollback silent-failure bug (backend):** `ExecutionAgent.rollback()` was catching LLM/framework
+exceptions and falling back to `_rollback_mock()`, which returns `success=True` for all action
+types. This marked the record `rolled_back` in Cosmos while Azure never ran `vm deallocate`. Fixed
+to return `{"success": False, "steps_completed": [], "summary": "Rollback failed — LLM agent
+error: <exc>"}` on exception — matching the `execute()` pattern. Mock is now only used when
+`_use_framework=False` (test/mock mode).
+
+**Rollback empty-log UI gap (frontend):** Failure panel in `Alerts.jsx` and
+`EvaluationDrilldown.jsx` was gated on `rollback_log.length > 0` — silently swallowed API
+errors (catch block sets `rollback_log=[]`) and "LLM called no tools" outcomes. Fixed: panel
+shows whenever `rollbackResult` is set and status is still `applied`, with contextual message
+(steps if present, else error string from `.notes`, else generic retry prompt).
+
+**Rollback credential bug:** All four rollback write tools (`start_vm`, `deallocate_vm`,
+`resize_vm`, `create_nsg_rule`) in `_rollback_with_framework` were using
+`async with DefaultAzureCredential() as cred:` — the sync `DefaultAzureCredential` (imported
+at the top of the method for the token provider) does not implement `__aenter__`/`__aexit__`
+so `async with` throws immediately. Execute-phase tools correctly import
+`from azure.identity.aio import DefaultAzureCredential as AioCredential` locally in each tool
+function and use `async with AioCredential()`. Rollback tools now match this pattern.
+
+**Rollback missing plan fallback:** `rollback_agent_fix` raised `ValueError` → HTTP 400 when
+`execution_plan` was `None` on the record (caused by Cosmos save failure between execute and
+rollback, or a fresh replica loading a stale Cosmos record). Now generates the plan on-the-fly
+via `generate_agent_fix_plan()` if missing, matching the `execute_agent_fix` pattern.
+
+**AlertFindingActions status sync:** Component initialized `execStatus` from the alert
+record's `execution_status` field, which is set at investigation time (`manual_required`) and
+never updated as execution progresses. After a redeployment, stale React state showed `applied`
+while the Cosmos record was `manual_required` — Rollback button appeared and fired a 400.
+Fix: on mount, `AlertFindingActions` calls `fetchExecutionRecord(execId)` via new
+`GET /api/execution/{id}/record` endpoint and syncs `execStatus`, `agentFixResult`, and
+`prUrl` with the real Cosmos-backed state. Failure is silent (keeps prop value).
+
+**api.js error clarity:** `rollbackAgentFix` always threw `"API error 400: rollback failed"`
+regardless of backend detail. Now reads `body.detail` so the real reason is surfaced in the UI.
+**Tests: 793 passed, 0 failed.**
 
 **Phase 30 post-release fixes (COMPLETE)**
 
@@ -493,7 +557,8 @@ until human dismisses them ("flag until fixed" governance pattern).
 
 - `src/notifications/slack_notifier.py` (NEW) — async fire-and-forget Block Kit messages via Slack Incoming Webhook.
   Three notification functions: `send_verdict_notification` (DENIED/ESCALATED verdicts → `pipeline.py`),
-  `send_alert_notification` (alert received), `send_alert_resolved_notification` (investigation complete).
+  `send_alert_notification` (investigation started — fired from `_run_alert_investigation` when user manually triggers),
+  `send_alert_resolved_notification` (investigation complete).
   Enterprise hardened: shared `httpx.AsyncClient` singleton (TLS reuse), rate limiter (≥1.1 s between sends),
   smart retry (4xx=no retry, 429=Retry-After header, 5xx=exponential backoff). Never raises.
 - `src/config.py` — settings: `slack_webhook_url`, `slack_notifications_enabled`, `slack_timeout`, `dashboard_url`.

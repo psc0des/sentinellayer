@@ -93,7 +93,7 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 | Secret Management | Azure Key Vault + `DefaultAzureCredential` | Runtime secret resolution |
 | Dashboard | React + Vite + FastAPI | 6-page governance UI with SSE real-time streaming, custom design system, animated components |
 | Slack Notifications | Slack Incoming Webhook (Block Kit attachments) | Real-time alerts for DENIED/ESCALATED verdicts + Azure Monitor alerts |
-| Azure Monitor → RuriSkry | `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | CPU/heartbeat/custom alerts POST to `/api/alert-trigger` → async investigation via `MonitoringAgent` → governance verdict → Alerts tab |
+| Azure Monitor → RuriSkry | `azurerm_monitor_action_group.ruriskry` (`terraform-core`) | CPU/heartbeat/custom alerts POST to `/api/alert-trigger` → `pending` record created → user clicks **Investigate** → `MonitoringAgent` → governance verdict → Alerts tab |
 | Decision Explanation Engine | `DecisionExplainer` — LLM summary + counterfactual analysis | Click any verdict row → 6-section drilldown with "what would change this?" analysis |
 
 ---
@@ -260,7 +260,7 @@ A 6-page React governance UI with real-time SSE streaming, custom design tokens,
   <img src="docs/screenshots/visual-scan-alerts.png" alt="Alerts Dashboard" width="100%">
 </p>
 
-> Azure Monitor alerts flow in via webhook, trigger async investigation by the Monitoring Agent, and produce governance verdicts — all visible in real-time.
+> Azure Monitor alerts flow in via webhook and land in a **Pending** queue. Click **Investigate** in the table row or inside the alert drilldown panel to manually trigger the Monitoring Agent. While investigating, the panel shows a **live terminal-style investigation log** (real-time event stream via polling) — reasoning steps, discoveries, verdicts, and execution status — all without needing the SSE stream. Governance verdicts and action buttons appear once investigation completes.
 
 ### Admin Panel
 <p align="center">
@@ -302,7 +302,7 @@ Detailed infra runbook: [`infrastructure/terraform-core/deploy.md`](infrastructu
 
 ```bash
 # Clone the repository
-git clone https://github.com/psc0des/ruriskry.git
+git clone https://github.com/your-org/ruriskry.git
 cd ruriskry
 
 # Create virtual environment

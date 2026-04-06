@@ -38,12 +38,16 @@ terraform {
   #   az storage container create -n tfstate --account-name ruriskrytfstate<suffix>
   # Then migrate local state:
   #   terraform init -migrate-state
-  backend "azurerm" {
-    resource_group_name  = "ruriskry-tfstate-rg"
-    storage_account_name = "ruriskrytfstatepsc0des"
-    container_name       = "tfstate"
-    key                  = "terraform-core.tfstate"
-  }
+  # Backend values cannot use Terraform variables — set them in backend.hcl
+  # (see docs/SETUP.md → Cloud Deployment → Terraform State Bootstrap).
+  # Example:
+  #   terraform init -backend-config=backend.hcl
+  # backend.hcl (DO NOT commit — it's in .gitignore):
+  #   resource_group_name  = "ruriskry-tfstate-rg"
+  #   storage_account_name = "ruriskrytfstate<your-suffix>"
+  #   container_name       = "tfstate"
+  #   key                  = "terraform-core.tfstate"
+  backend "azurerm" {}  # configured via -backend-config=backend.hcl at init time
 }
 
 provider "azurerm" {

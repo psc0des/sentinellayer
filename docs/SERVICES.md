@@ -143,7 +143,7 @@ All variables read by `src/config.py` from `.env` or Azure Container App environ
 | `SLACK_TIMEOUT` | `10` | `config.py` | Per-request timeout (seconds) |
 | `DASHBOARD_URL` | `http://localhost:5173` | Terraform (Container App env) | CORS origin + Slack notification links |
 | `GITHUB_TOKEN` | `""` | KV secret `github-pat` | Required for Terraform PR generation |
-| `IAC_GITHUB_REPO` | `""` | `.env` / tfvars | e.g. `psc0des/ruriskry-iac-test` |
+| `IAC_GITHUB_REPO` | `""` | `.env` / tfvars | e.g. `your-org/your-iac-repo` |
 | `IAC_TERRAFORM_PATH` | `infrastructure/terraform-prod` | `config.py` | Path within IaC repo |
 | `EXECUTION_GATEWAY_ENABLED` | `false` | `.env` / tfvars | `true` to enable PR creation |
 | `USE_LOCAL_MOCKS` | `true` | `.env` | `false` for live Azure mode |

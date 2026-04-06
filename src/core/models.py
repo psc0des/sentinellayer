@@ -297,7 +297,7 @@ class ExecutionRecord(BaseModel):
     status: ExecutionStatus
     iac_managed: bool = False        # True if resource has managed_by tag
     iac_tool: str = ""               # "terraform" | "bicep" | "" (unknown)
-    iac_repo: str = ""               # e.g. "psc0des/ruriskry"
+    iac_repo: str = ""               # e.g. "your-org/ruriskry"
     iac_path: str = ""               # e.g. "infrastructure/terraform-prod"
     pr_url: str = ""                 # GitHub PR URL (when created)
     pr_number: int = 0               # GitHub PR number

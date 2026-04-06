@@ -65,6 +65,7 @@ htmlcov/
 infrastructure/terraform-core/.terraform/
 infrastructure/terraform-core/*.tfstate
 infrastructure/terraform-core/*.tfstate.*
+infrastructure/terraform-core/backend.hcl
 infrastructure/terraform-core/*.tfstate.backup
 infrastructure/terraform-core/terraform.tfvars
 infrastructure/terraform-core/tfplan
@@ -77,6 +78,7 @@ infrastructure/terraform-prod/*.tfstate.*
 infrastructure/terraform-prod/*.tfstate.backup
 infrastructure/terraform-prod/terraform.tfvars
 infrastructure/terraform-prod/tfplan
+infrastructure/terraform-prod/backend.hcl
 # .terraform.lock.hcl is intentionally NOT ignored — commit it to pin provider versions
 
 # Runtime-generated data (not source code)

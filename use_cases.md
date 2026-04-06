@@ -300,7 +300,7 @@ decides whether a rule is genuinely dangerous before proposing removal.
 
 | Field | Detail |
 |-------|--------|
-| **Scenario** | `nsg-east-prod` is tagged `managed_by=terraform`, `iac_repo=psc0des/ruriskry`. It has a dangerous rule `AllowRDP_Any`. |
+| **Scenario** | `nsg-east-prod` is tagged `managed_by=terraform`, `iac_repo=your-org/ruriskry`. It has a dangerous rule `AllowRDP_Any`. |
 | **Agent discovers** | Dangerous NSG rule on an IaC-managed resource |
 | **Proposed action** | `modify_nsg` — delete rule |
 | **Governance verdict** | ESCALATED (SRI medium — prod resource, human sign-off needed) |

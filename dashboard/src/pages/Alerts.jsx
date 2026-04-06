@@ -20,11 +20,14 @@ import {
 import VerdictBadge from '../components/magicui/VerdictBadge'
 import {
   streamAlertEvents,
+  investigateAlert,
+  fetchAlertStatus,
   approveExecution,
   createPRFromManual,
   dismissExecution,
   executeAgentFix,
   fetchAgentFixPreview,
+  fetchExecutionRecord,
   rollbackAgentFix,
 } from '../api'
 
@@ -85,11 +88,12 @@ function statusIcon(status) {
   if (status === 'resolved')      return <CheckCircle  className="w-3.5 h-3.5 text-emerald-400" />
   if (status === 'error')         return <XCircle      className="w-3.5 h-3.5 text-rose-400" />
   if (status === 'investigating') return <Activity     className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+  if (status === 'pending')       return <Clock        className="w-3.5 h-3.5 text-slate-400" />
   return <Zap className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
 }
 
 function statusLabel(status) {
-  const map = { firing: 'Firing', investigating: 'Investigating', resolved: 'Investigated', error: 'Error' }
+  const map = { pending: 'Pending', investigating: 'Investigating', resolved: 'Investigated', error: 'Error' }
   return map[status] ?? status ?? '—'
 }
 
@@ -97,6 +101,7 @@ function statusColor(status) {
   if (status === 'resolved')      return 'text-emerald-400'
   if (status === 'error')         return 'text-rose-400'
   if (status === 'investigating') return 'text-blue-400'
+  if (status === 'pending')       return 'text-slate-400'
   return 'text-amber-400'
 }
 
@@ -297,7 +302,7 @@ function AgentTerminal({ lines, running }) {
 // Action buttons for a single governance finding within an alert.
 // Mirrors the execution panel in EvaluationDrilldown.jsx.
 
-function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
+function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType }) {
   const [execStatus, setExecStatus] = useState(execStatusInitial)
   const [createPrLoading, setCreatePrLoading] = useState(false)
   const [agentFixLoading, setAgentFixLoading] = useState(false)
@@ -310,6 +315,20 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
   const [error, setError] = useState(null)
   const [rollbackExecuting, setRollbackExecuting] = useState(false)
   const [rollbackResult, setRollbackResult] = useState(null)
+
+  // Sync with real backend status on mount — the alert record caches execution_status
+  // at investigation time and never updates it, so after a redeployment the prop may
+  // be stale (e.g. shows 'applied' but Cosmos record was reset to 'manual_required').
+  useEffect(() => {
+    if (!execId) return
+    fetchExecutionRecord(execId)
+      .then(rec => {
+        if (rec.status) setExecStatus(rec.status)
+        if (rec.execution_plan) setAgentFixResult(rec)
+        if (rec.pr_url) setPrUrl(rec.pr_url)
+      })
+      .catch(() => { /* silently keep prop value if fetch fails */ })
+  }, [execId])
 
   // Only render when there's an actionable execution record
   const actionable = ['manual_required', 'awaiting_review'].includes(execStatus)
@@ -485,12 +504,19 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
       )}
 
       {/* Rollback failed — status stays 'applied', show failure detail */}
-      {rollbackResult && execStatus === 'applied' && rollbackResult.rollback_log?.length > 0 && (
+      {rollbackResult && execStatus === 'applied' && (
         <div className="space-y-1">
           <p className="text-xs text-rose-400/90 bg-rose-500/5 border border-rose-500/20 rounded px-2 py-1">
-            ↩ Rollback attempted but failed — fix is still applied. Review the steps below and retry manually.
+            ↩ Rollback attempted but failed — fix is still applied.
+            {rollbackResult.rollback_log?.length > 0
+              ? ' Review the steps below and retry manually.'
+              : rollbackResult.notes
+                ? ` Error: ${rollbackResult.notes}`
+                : ' The rollback agent did not complete — retry or roll back manually.'}
           </p>
-          <ExecutionLogView steps={rollbackResult.rollback_log} verification={null} label="Rollback Steps" />
+          {rollbackResult.rollback_log?.length > 0 && (
+            <ExecutionLogView steps={rollbackResult.rollback_log} verification={null} label="Rollback Steps" />
+          )}
         </div>
       )}
 
@@ -651,14 +677,74 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId }) {
   )
 }
 
+// ── Investigation log helpers ────────────────────────────────────────────────
+
+function eventToLogLine(ev) {
+  const ts = ev.timestamp
+    ? new Date(ev.timestamp).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : ''
+  const p = ts ? `[${ts}] ` : ''
+  switch (ev.event) {
+    case 'alert_investigating': return { type: 'step',        text: `${p}▶  ${ev.message}` }
+    case 'reasoning':           return { type: 'info',        text: `${p}⟳  ${ev.message}` }
+    case 'discovery':           return { type: ev.count > 0 ? 'success' : 'info', text: `${p}◆  ${ev.message}` }
+    case 'evaluation':          return { type: 'step',        text: `${p}▶  ${ev.message}` }
+    case 'verdict': {
+      const t = ev.decision === 'approved' ? 'success' : ev.decision === 'denied' ? 'error' : 'verify_warn'
+      return { type: t, text: `${p}   ${ev.message}` }
+    }
+    case 'execution':           return { type: 'info',        text: `${p}⟳  ${ev.message}` }
+    case 'alert_resolved':      return { type: 'complete',    text: `${p}── COMPLETE ── ${ev.message}` }
+    case 'alert_error':         return { type: 'failed',      text: `${p}── FAILED ── ${ev.message}` }
+    default:                    return { type: 'info',        text: `${p}${ev.message || ev.event}` }
+  }
+}
+
 // ── Alert drilldown panel ────────────────────────────────────────────────────
 
-function AlertPanel({ alert, onClose }) {
-  if (!alert) return null
+function AlertPanel({ alert, onClose, fetchAll }) {
+  const [localAlert, setLocalAlert] = useState(alert)
+  const [investigatingPanel, setInvestigatingPanel] = useState(false)
 
-  const proposals  = alert.proposals  ?? []
-  const verdicts   = alert.verdicts   ?? []
-  const totals     = alert.totals ?? {}
+  // Keep in sync when parent refreshes
+  useEffect(() => { setLocalAlert(alert) }, [alert])
+
+  // Poll for live log while investigating
+  useEffect(() => {
+    if (localAlert.status !== 'investigating') return
+    let cancelled = false
+    async function poll() {
+      if (cancelled) return
+      try {
+        const data = await fetchAlertStatus(localAlert.alert_id)
+        if (cancelled) return
+        setLocalAlert(prev => ({ ...prev, ...data }))
+        if (data.status !== 'investigating') { fetchAll?.(); return }
+      } catch {}
+      if (!cancelled) setTimeout(poll, 1500)
+    }
+    const t = setTimeout(poll, 1500)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [localAlert.status, localAlert.alert_id, fetchAll])
+
+  if (!localAlert) return null
+
+  async function handleInvestigatePanel() {
+    setInvestigatingPanel(true)
+    try {
+      await investigateAlert(localAlert.alert_id)
+      setLocalAlert(prev => ({ ...prev, status: 'investigating', investigation_log: [] }))
+    } catch (err) {
+      console.error('Panel investigate failed:', err)
+    } finally {
+      setInvestigatingPanel(false)
+    }
+  }
+
+  const logLines     = (localAlert.investigation_log ?? []).map(eventToLogLine)
+  const proposals    = localAlert.proposals ?? []
+  const verdicts     = localAlert.verdicts  ?? []
+  const totals       = localAlert.totals    ?? {}
 
   return createPortal(
     <>
@@ -677,19 +763,19 @@ function AlertPanel({ alert, onClose }) {
         <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-5 py-4 flex items-start justify-between gap-3 z-10">
           <div className="min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              {statusIcon(alert.status)}
-              <p className={`text-xs font-semibold uppercase tracking-wide ${statusColor(alert.status)}`}>
-                {statusLabel(alert.status)}
+              {statusIcon(localAlert.status)}
+              <p className={`text-xs font-semibold uppercase tracking-wide ${statusColor(localAlert.status)}`}>
+                {statusLabel(localAlert.status)}
               </p>
-              <span className={`text-xs font-bold px-1.5 py-0.5 rounded border ${severityBg(alert.severity)} ${severityColor(alert.severity)}`}>
-                {severityLabel(alert.severity)}
+              <span className={`text-xs font-bold px-1.5 py-0.5 rounded border ${severityBg(localAlert.severity)} ${severityColor(localAlert.severity)}`}>
+                {severityLabel(localAlert.severity)}
               </span>
             </div>
-            <p className="text-sm font-medium text-slate-200 font-mono truncate" title={alert.resource_id}>
-              {alert.resource_name || shortResource(alert.resource_id)}
+            <p className="text-sm font-medium text-slate-200 font-mono truncate" title={localAlert.resource_id}>
+              {localAlert.resource_name || shortResource(localAlert.resource_id)}
             </p>
             <p className="text-xs text-slate-500 mt-0.5">
-              {alert.metric} — {alert.value != null ? `${alert.value}` : '?'} / {alert.threshold ?? '?'}
+              {localAlert.metric} — {localAlert.value != null ? `${localAlert.value}` : '?'} / {localAlert.threshold ?? '?'}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors flex-shrink-0 mt-0.5">
@@ -703,15 +789,51 @@ function AlertPanel({ alert, onClose }) {
           <section>
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Timeline</h3>
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-2">
-              <TimelineRow label="Fired"         time={alert.fired_at}          icon={<Zap         className="w-3 h-3 text-amber-400" />} />
-              <TimelineRow label="Received"      time={alert.received_at}       icon={<Activity    className="w-3 h-3 text-slate-400" />} />
-              <TimelineRow label="Investigating" time={alert.investigating_at}  icon={<Activity    className="w-3 h-3 text-blue-400" />} />
-              <TimelineRow label="Investigated"   time={alert.resolved_at}       icon={<CheckCircle className="w-3 h-3 text-emerald-400" />} />
+              <TimelineRow label="Fired"         time={localAlert.fired_at}         icon={<Zap         className="w-3 h-3 text-amber-400" />} />
+              <TimelineRow label="Received"      time={localAlert.received_at}      icon={<Activity    className="w-3 h-3 text-slate-400" />} />
+              <TimelineRow label="Investigating" time={localAlert.investigating_at} icon={<Activity    className="w-3 h-3 text-blue-400" />} />
+              <TimelineRow label="Investigated"  time={localAlert.resolved_at}      icon={<CheckCircle className="w-3 h-3 text-emerald-400" />} />
             </div>
           </section>
 
+          {/* Investigate button — pending only */}
+          {localAlert.status === 'pending' && (
+            <section>
+              <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-4 space-y-3">
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  This alert is waiting for manual investigation. Click below to start the Monitoring Agent and run a full governance evaluation.
+                </p>
+                <button
+                  onClick={handleInvestigatePanel}
+                  disabled={investigatingPanel}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  {investigatingPanel
+                    ? <><span className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> Starting investigation…</>
+                    : <>🔍 Investigate this alert</>}
+                </button>
+              </div>
+            </section>
+          )}
+
+          {/* Live Investigation Log */}
+          {(localAlert.status === 'investigating' || logLines.length > 0) && (
+            <section>
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-2">
+                Investigation Log
+                {localAlert.status === 'investigating' && (
+                  <span className="flex items-center gap-1 text-blue-400 font-normal normal-case">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    Live
+                  </span>
+                )}
+              </h3>
+              <AgentTerminal lines={logLines} running={localAlert.status === 'investigating'} />
+            </section>
+          )}
+
           {/* Outcome summary */}
-          {alert.status === 'resolved' && (
+          {localAlert.status === 'resolved' && (
             <section>
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Outcome Summary</h3>
               <div className="grid grid-cols-4 gap-2">
@@ -736,11 +858,11 @@ function AlertPanel({ alert, onClose }) {
           )}
 
           {/* Error message */}
-          {alert.error && (
+          {localAlert.error && (
             <section>
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Error</h3>
               <div className="bg-rose-500/10 border border-rose-500/20 rounded-lg p-3">
-                <p className="text-xs text-rose-300 leading-relaxed">{alert.error}</p>
+                <p className="text-xs text-rose-300 leading-relaxed">{localAlert.error}</p>
               </div>
             </section>
           )}
@@ -756,7 +878,7 @@ function AlertPanel({ alert, onClose }) {
                   const proposal    = proposals[idx] ?? {}
                   const resourceId  = v.proposed_action?.target?.resource_id
                                    ?? proposal.target?.resource_id
-                                   ?? alert.resource_id
+                                   ?? localAlert.resource_id
                                    ?? ''
                   const resourceName = shortResource(resourceId)
                   const decision    = v.decision ?? null
@@ -811,6 +933,7 @@ function AlertPanel({ alert, onClose }) {
                         execId={execId}
                         execStatusInitial={execStatus}
                         resourceId={resourceId}
+                        actionType={actionType}
                       />
                     </div>
                   )
@@ -820,7 +943,7 @@ function AlertPanel({ alert, onClose }) {
           )}
 
           {/* No findings message */}
-          {alert.status === 'resolved' && verdicts.length === 0 && (
+          {localAlert.status === 'resolved' && verdicts.length === 0 && (
             <section>
               <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4 text-center">
                 <CheckCircle className="w-5 h-5 text-emerald-500 mx-auto mb-1" />
@@ -841,44 +964,44 @@ function AlertPanel({ alert, onClose }) {
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-500 flex-shrink-0">Alert ID</span>
                 <div className="flex items-center min-w-0">
-                  <span className="text-xs font-mono text-slate-400 truncate">{alert.alert_id}</span>
-                  <CopyButton text={alert.alert_id} />
+                  <span className="text-xs font-mono text-slate-400 truncate">{localAlert.alert_id}</span>
+                  <CopyButton text={localAlert.alert_id} />
                 </div>
               </div>
-              {alert.resource_id && (
+              {localAlert.resource_id && (
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-slate-500 flex-shrink-0">Resource</span>
                   <div className="flex items-center min-w-0">
-                    <span className="text-xs font-mono text-slate-400 truncate" title={alert.resource_id}>
-                      {alert.resource_id}
+                    <span className="text-xs font-mono text-slate-400 truncate" title={localAlert.resource_id}>
+                      {localAlert.resource_id}
                     </span>
-                    <CopyButton text={alert.resource_id} />
+                    <CopyButton text={localAlert.resource_id} />
                   </div>
                 </div>
               )}
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-500">Metric</span>
-                <span className="text-xs text-slate-400">{alert.metric || '—'}</span>
+                <span className="text-xs text-slate-400">{localAlert.metric || '—'}</span>
               </div>
-              {(alert.value != null || alert.threshold != null) && (
+              {(localAlert.value != null || localAlert.threshold != null) && (
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-slate-500">Value / Threshold</span>
                   <span className="text-xs text-slate-400 tabular-nums">
-                    {alert.value ?? '?'} / {alert.threshold ?? '?'}
+                    {localAlert.value ?? '?'} / {localAlert.threshold ?? '?'}
                   </span>
                 </div>
               )}
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-500">Severity</span>
-                <span className={`text-xs font-bold ${severityColor(alert.severity)}`}>
-                  {severityLabel(alert.severity)}
+                <span className={`text-xs font-bold ${severityColor(localAlert.severity)}`}>
+                  {severityLabel(localAlert.severity)}
                 </span>
               </div>
-              {(alert.description || alert.alert_payload?.description) && (
+              {(localAlert.description || localAlert.alert_payload?.description) && (
                 <div className="pt-1">
                   <span className="text-xs text-slate-500 block mb-1">Description</span>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    {alert.description || alert.alert_payload?.description}
+                    {localAlert.description || localAlert.alert_payload?.description}
                   </p>
                 </div>
               )}
@@ -915,9 +1038,9 @@ export default function Alerts() {
   const [filterSeverity,setFilterSeverity]= useState('all')
   const [selectedAlert, setSelectedAlert] = useState(null)
 
-  // Subscribe to SSE for active alerts
+  // Subscribe to SSE for alerts that are actively being investigated
   useEffect(() => {
-    const active = alerts.filter(a => a.status === 'firing' || a.status === 'investigating')
+    const active = alerts.filter(a => a.status === 'investigating')
     if (active.length === 0) return
 
     const sources = active.map(a => {
@@ -961,7 +1084,22 @@ export default function Alerts() {
     })
   }, [alerts, filterStatus, filterSeverity, searchText])
 
-  const activeCount = alerts.filter(a => a.status === 'firing' || a.status === 'investigating').length
+  const [investigatingId, setInvestigatingId] = useState(null)
+
+  async function handleInvestigate(e, alertId) {
+    e.stopPropagation()
+    setInvestigatingId(alertId)
+    try {
+      await investigateAlert(alertId)
+      fetchAll?.()
+    } catch (err) {
+      console.error('Investigate failed:', err)
+    } finally {
+      setInvestigatingId(null)
+    }
+  }
+
+  const activeCount = alerts.filter(a => a.status === 'pending' || a.status === 'investigating').length
 
   return (
     <div className="p-6 space-y-5">
@@ -1003,7 +1141,7 @@ export default function Alerts() {
           className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
         >
           <option value="all">All statuses</option>
-          <option value="firing">Firing</option>
+          <option value="pending">Pending</option>
           <option value="investigating">Investigating</option>
           <option value="resolved">Investigated</option>
           <option value="error">Error</option>
@@ -1048,6 +1186,7 @@ export default function Alerts() {
                 <th className="px-4 py-2.5 font-semibold text-center">Severity</th>
                 <th className="px-4 py-2.5 font-semibold">Fired</th>
                 <th className="px-4 py-2.5 font-semibold text-center">Outcome</th>
+                <th className="px-4 py-2.5 font-semibold text-center">Actions</th>
                 <th className="w-8" />
               </tr>
             </thead>
@@ -1139,6 +1278,21 @@ export default function Alerts() {
                       )}
                     </td>
 
+                    {/* Actions */}
+                    <td className="px-4 py-2.5 text-center">
+                      {alert.status === 'pending' && (
+                        <button
+                          onClick={e => handleInvestigate(e, alert.alert_id)}
+                          disabled={investigatingId === alert.alert_id}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50 mx-auto"
+                        >
+                          {investigatingId === alert.alert_id
+                            ? <><span className="w-2.5 h-2.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> Starting…</>
+                            : <>🔍 Investigate</>}
+                        </button>
+                      )}
+                    </td>
+
                     {/* Chevron */}
                     <td className="pr-3 text-slate-600">
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -1153,7 +1307,7 @@ export default function Alerts() {
 
       {/* Drilldown panel */}
       {selectedAlert && (
-        <AlertPanel alert={selectedAlert} onClose={() => setSelectedAlert(null)} />
+        <AlertPanel alert={selectedAlert} onClose={() => setSelectedAlert(null)} fetchAll={fetchAll} />
       )}
     </div>
   )

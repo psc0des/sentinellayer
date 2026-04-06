@@ -9,11 +9,12 @@ GET  /api/resources/{id}/risk      Risk profile for one resource.
 GET  /api/agents                   List all connected A2A agents with stats.
 GET  /api/agents/{name}/history    Recent action history for one A2A agent.
 GET  /api/agents/{name}/last-run   Most recent scan results for one agent.
-POST /api/alert-trigger            Receive Azure Monitor alert → async investigation + SSE.
-GET  /api/alerts                   List all alert records newest-first.
-GET  /api/alerts/active-count      Count of currently firing/investigating alerts.
-GET  /api/alerts/{alert_id}/status Full detail for one alert.
-GET  /api/alerts/{alert_id}/stream SSE stream of real-time investigation progress.
+POST /api/alert-trigger                  Receive Azure Monitor alert → creates pending record (no auto-investigation).
+POST /api/alerts/{alert_id}/investigate  Manually trigger investigation for a pending alert.
+GET  /api/alerts                         List all alert records newest-first.
+GET  /api/alerts/active-count            Count of currently pending/investigating alerts.
+GET  /api/alerts/{alert_id}/status       Full detail for one alert.
+GET  /api/alerts/{alert_id}/stream       SSE stream of real-time investigation progress.
 POST /api/scan/cost                Trigger cost optimisation agent scan.
 POST /api/scan/monitoring          Trigger SRE monitoring agent scan.
 POST /api/scan/deploy              Trigger infrastructure deploy agent scan.
@@ -24,6 +25,7 @@ GET  /api/scan/{scan_id}/stream    SSE stream of real-time scan progress events.
 PATCH /api/scan/{scan_id}/cancel   Request cancellation of a running scan.
 GET  /api/execution/pending-reviews              List all ESCALATED verdicts awaiting review.
 GET  /api/execution/by-action/{action_id}        Execution status for a governance verdict.
+GET  /api/execution/{execution_id}/record        Fetch a single execution record by execution_id.
 POST /api/execution/{execution_id}/approve       Human approves an escalated verdict.
 POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
 POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual_required record.
@@ -823,7 +825,7 @@ def _get_alert_record(alert_id: str) -> dict | None:
 
 
 async def _emit_alert_event(alert_id: str, event_type: str, **kwargs: Any) -> None:
-    """Push one event onto the per-alert SSE queue."""
+    """Push one event onto the per-alert SSE queue and append to investigation_log."""
     timestamp = datetime.now(timezone.utc).isoformat()
     event = {
         "event": event_type,
@@ -834,6 +836,18 @@ async def _emit_alert_event(alert_id: str, event_type: str, **kwargs: Any) -> No
     queue = _alert_events.get(alert_id)
     if queue is not None:
         await queue.put(event)
+
+    # Persist lightweight log entry so the panel can poll and show a live log
+    if event_type != "heartbeat" and alert_id in _alerts:
+        log_entry: dict[str, Any] = {
+            "event": event_type,
+            "timestamp": timestamp,
+            "message": kwargs.get("message", ""),
+        }
+        for key in ("decision", "sri_composite", "count", "execution_status"):
+            if key in kwargs:
+                log_entry[key] = kwargs[key]
+        _alerts[alert_id].setdefault("investigation_log", []).append(log_entry)
 
 
 def _persist_scan_record(scan_id: str) -> None:
@@ -1231,7 +1245,7 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
     metric = alert_payload.get("metric", "unknown")
     logger.info("alert %s: investigating — resource=%s metric=%s", alert_id[:8], resource_id, metric)
 
-    # Transition: firing → investigating
+    # Transition: pending → investigating
     _alerts[alert_id]["status"] = "investigating"
     _alerts[alert_id]["investigating_at"] = datetime.now(timezone.utc).isoformat()
     _persist_alert_record(alert_id)
@@ -1532,18 +1546,15 @@ def _normalize_azure_alert_payload(raw: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/alert-trigger")
 async def trigger_alert(
     alert: dict[str, Any],
-    background_tasks: BackgroundTasks,
 ) -> dict:
-    """Receive an Azure Monitor alert and trigger async investigation.
+    """Receive an Azure Monitor alert and create a pending alert record.
 
     This endpoint acts as an Azure Monitor Action Group webhook target.
     When a metric alert fires (e.g. CPU > 80 % on vm-web-01), Azure POSTs
-    the alert details here.  RuriSkry creates an alert record (status
-    ``firing``), launches the investigation in the background, and returns
-    immediately so the webhook does not time out.
-
-    The dashboard ``Alerts`` tab polls ``GET /api/alerts`` or subscribes to
-    ``GET /api/alerts/{alert_id}/stream`` for real-time SSE updates.
+    the alert details here.  RuriSkry creates an alert record with status
+    ``pending`` and returns immediately — no investigation is started
+    automatically.  A user must manually trigger investigation via
+    ``POST /api/alerts/{alert_id}/investigate``.
 
     Request body (JSON)::
 
@@ -1559,7 +1570,7 @@ async def trigger_alert(
     All fields are optional — the agent can work with minimal context.
 
     Returns:
-        ``{"status": "firing", "alert_id": "<uuid>"}`` — immediately.
+        ``{"status": "pending", "alert_id": "<uuid>"}`` — immediately.
     """
     alert = _normalize_azure_alert_payload(alert)
     now = datetime.now(timezone.utc).isoformat()
@@ -1567,9 +1578,9 @@ async def trigger_alert(
     resource_id = alert.get("resource_id", "")
     resource_name = alert.get("resource_name") or (resource_id.split("/")[-1] if "/" in resource_id else resource_id)
 
-    # Check for duplicate: same resource + metric already firing/investigating,
+    # Check for duplicate: same resource + metric already pending/investigating,
     # or resolved/investigated within the last 30 minutes (cooldown window).
-    # Azure Monitor evaluates every 5 min — without cooldown, a persistent outage
+    # Azure Monitor evaluates on a schedule — without cooldown, a persistent outage
     # generates a new alert every cycle after each one resolves.
     _ALERT_COOLDOWN_MINUTES = 30
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=_ALERT_COOLDOWN_MINUTES)).isoformat()
@@ -1578,7 +1589,7 @@ async def trigger_alert(
             existing.get("resource_id") == resource_id
             and existing.get("metric") == alert.get("metric")
             and (
-                existing.get("status") in ("firing", "investigating")
+                existing.get("status") in ("pending", "investigating")
                 or (
                     existing.get("status") in ("resolved", "investigated")
                     and (existing.get("resolved_at") or "") >= cutoff
@@ -1595,10 +1606,10 @@ async def trigger_alert(
                 "duplicate": True,
             }
 
-    # Create alert record
+    # Create alert record (pending — investigation is manual, not automatic)
     record: dict[str, Any] = {
         "alert_id": alert_id,
-        "status": "firing",
+        "status": "pending",
         "resource_id": resource_id,
         "resource_name": resource_name,
         "metric": alert.get("metric", ""),
@@ -1615,6 +1626,7 @@ async def trigger_alert(
         "verdicts": [],
         "totals": {"approved": 0, "escalated": 0, "denied": 0},
         "error": None,
+        "investigation_log": [],
         "alert_payload": alert,
     }
     _alerts[alert_id] = record
@@ -1623,9 +1635,7 @@ async def trigger_alert(
 
     logger.info("alert-trigger: created %s (resource=%s, metric=%s)", alert_id[:8], resource_name, alert.get("metric"))
 
-    background_tasks.add_task(_run_alert_investigation, alert_id, alert)
-
-    return {"status": "firing", "alert_id": alert_id}
+    return {"status": "pending", "alert_id": alert_id}
 
 
 # ---------------------------------------------------------------------------
@@ -1635,11 +1645,11 @@ async def trigger_alert(
 
 @app.get("/api/alerts/active-count")
 async def alert_active_count() -> dict:
-    """Return count of currently firing or investigating alerts."""
+    """Return count of currently pending or investigating alerts."""
     # Check in-memory first (most responsive), fall back to tracker
     count = sum(
         1 for a in _alerts.values()
-        if a.get("status") in ("firing", "investigating")
+        if a.get("status") in ("pending", "investigating")
     )
     if count == 0:
         count = _get_alert_tracker().count_active()
@@ -1720,6 +1730,58 @@ async def stream_alert_events(alert_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Manual investigation trigger
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/alerts/{alert_id}/investigate")
+async def investigate_alert(
+    alert_id: str,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Manually trigger investigation for a pending alert.
+
+    Looks up the alert record, verifies it is in ``pending`` status, then
+    launches ``_run_alert_investigation`` in the background and returns
+    immediately.  The caller can subscribe to
+    ``GET /api/alerts/{alert_id}/stream`` for real-time SSE progress.
+
+    Returns:
+        ``{"status": "investigating", "alert_id": "<uuid>"}``
+
+    Raises:
+        404 if the alert does not exist.
+        409 if the alert is not in ``pending`` status (already investigating
+            or already resolved).
+    """
+    record = _get_alert_record(alert_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+
+    current_status = record.get("status")
+    if current_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Alert {alert_id} is in '{current_status}' status — only pending alerts can be investigated",
+        )
+
+    # Ensure the alert is in _alerts (in-memory) so status transitions work.
+    # If it was loaded from Cosmos after a restart, bring it into memory first.
+    if alert_id not in _alerts:
+        _alerts[alert_id] = dict(record)
+
+    # Create SSE queue if not already present (e.g. after a server restart)
+    if alert_id not in _alert_events:
+        _alert_events[alert_id] = asyncio.Queue()
+
+    alert_payload = record.get("alert_payload") or record
+    background_tasks.add_task(_run_alert_investigation, alert_id, alert_payload)
+
+    logger.info("alert %s: manual investigation triggered", alert_id[:8])
+    return {"status": "investigating", "alert_id": alert_id}
 
 
 # ---------------------------------------------------------------------------
@@ -2254,6 +2316,23 @@ async def get_execution_status(action_id: str) -> dict:
         "action_id": action_id,
         "executions": [r.model_dump(mode="json") for r in records],
     }
+
+
+@app.get("/api/execution/{execution_id}/record")
+async def get_execution_record(execution_id: str) -> dict:
+    """Return a single execution record by its execution_id.
+
+    Used by the dashboard to sync local component state with the real backend
+    record after a redeployment or page refresh.
+
+    Returns 404 if the execution_id is unknown.
+    """
+    gateway = _get_execution_gateway()
+    gateway._ensure_loaded()
+    record = gateway._records.get(execution_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Execution record not found: {execution_id!r}")
+    return record.model_dump(mode="json")
 
 
 @app.post("/api/execution/{execution_id}/approve")

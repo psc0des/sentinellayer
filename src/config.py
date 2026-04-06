@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     # Env var: GITHUB_TOKEN
     github_token: str = ""
 
-    # GitHub repo that owns the IaC (e.g. "psc0des/ruriskry").
+    # GitHub repo that owns the IaC (e.g. "your-org/ruriskry").
     # Env var: IAC_GITHUB_REPO
     iac_github_repo: str = ""
 

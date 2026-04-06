@@ -858,17 +858,24 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
                             />
                         )}
 
-                        {/* Rollback failed — status stays 'applied', rollback_log has failed steps */}
-                        {executionStatus.status === 'applied' && executionStatus.rollback_log?.length > 0 && (
+                        {/* Rollback failed — covers: backend steps failed, LLM no-op, and network/API errors */}
+                        {rollbackResult && rollbackResult.status !== 'rolled_back' && executionStatus.status === 'applied' && (
                             <div className="space-y-2">
                                 <div className="text-xs rounded-lg px-3 py-2 border bg-rose-500/10 border-rose-500/30 text-rose-300">
-                                    ↩ Rollback attempted but failed — fix is still applied. Review the steps below and retry manually.
+                                    ↩ Rollback attempted but failed — fix is still applied.
+                                    {(executionStatus.rollback_log?.length > 0 || rollbackResult.rollback_log?.length > 0)
+                                        ? ' Review the steps below and retry manually.'
+                                        : rollbackResult.notes
+                                            ? ` Error: ${rollbackResult.notes}`
+                                            : ' The rollback agent did not complete — retry or roll back manually.'}
                                 </div>
-                                <ExecutionLogView
-                                    steps={executionStatus.rollback_log}
-                                    verification={null}
-                                    label="Rollback Steps"
-                                />
+                                {(executionStatus.rollback_log?.length > 0 || rollbackResult.rollback_log?.length > 0) && (
+                                    <ExecutionLogView
+                                        steps={executionStatus.rollback_log ?? rollbackResult.rollback_log}
+                                        verification={null}
+                                        label="Rollback Steps"
+                                    />
+                                )}
                             </div>
                         )}
 

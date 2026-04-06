@@ -236,10 +236,12 @@ class ExecutionAgent:
         try:
             return await self._rollback_with_framework(action, plan)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "ExecutionAgent: rollback LLM failed (%s) — using deterministic fallback", exc
-            )
-            return self._rollback_mock(action, plan)
+            logger.warning("ExecutionAgent: rollback LLM failed (%s)", exc)
+            return {
+                "success": False,
+                "steps_completed": [],
+                "summary": f"Rollback failed — LLM agent error: {exc}",
+            }
 
     # ------------------------------------------------------------------
     # Mock / deterministic paths (no LLM, no Azure SDK)
@@ -1045,9 +1047,10 @@ class ExecutionAgent:
 
         @af.tool(name="start_vm", description="Start a stopped/deallocated Azure VM.")
         async def tool_start_vm(resource_group: str, vm_name: str) -> str:
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
             try:
-                async with DefaultAzureCredential() as cred:
+                async with AioCredential() as cred:
                     async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
                         poller = await cc.virtual_machines.begin_start(resource_group, vm_name)
                         await poller.result()
@@ -1057,9 +1060,10 @@ class ExecutionAgent:
 
         @af.tool(name="deallocate_vm", description="Deallocate (stop) an Azure VM.")
         async def tool_deallocate_vm(resource_group: str, vm_name: str) -> str:
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
             try:
-                async with DefaultAzureCredential() as cred:
+                async with AioCredential() as cred:
                     async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
                         poller = await cc.virtual_machines.begin_deallocate(resource_group, vm_name)
                         await poller.result()
@@ -1069,10 +1073,11 @@ class ExecutionAgent:
 
         @af.tool(name="resize_vm", description="Resize an Azure VM to a different SKU.")
         async def tool_resize_vm(resource_group: str, vm_name: str, new_size: str) -> str:
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.compute.aio import ComputeManagementClient  # noqa: PLC0415
             from azure.mgmt.compute.models import VirtualMachineUpdate  # noqa: PLC0415
             try:
-                async with DefaultAzureCredential() as cred:
+                async with AioCredential() as cred:
                     async with ComputeManagementClient(cred, self._cfg.azure_subscription_id) as cc:
                         poller = await cc.virtual_machines.begin_update(
                             resource_group, vm_name,
@@ -1090,10 +1095,11 @@ class ExecutionAgent:
             source_address_prefix: str, destination_address_prefix: str,
             destination_port_range: str,
         ) -> str:
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.network.aio import NetworkManagementClient  # noqa: PLC0415
             from azure.mgmt.network.models import SecurityRule  # noqa: PLC0415
             try:
-                async with DefaultAzureCredential() as cred:
+                async with AioCredential() as cred:
                     async with NetworkManagementClient(cred, self._cfg.azure_subscription_id) as nc:
                         poller = await nc.security_rules.begin_create_or_update(
                             resource_group, nsg_name, rule_name,

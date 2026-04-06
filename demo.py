@@ -114,7 +114,7 @@ async def scenario_1(pipeline: RuriSkryPipeline, tracker: DecisionTracker) -> No
         action_type=ActionType.DELETE_RESOURCE,
         target=ActionTarget(
             resource_id=(
-                "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
+                "/subscriptions/00000000-0000-0000-0000-000000000000"
                 "/resourceGroups/ruriskry-prod-rg"
                 "/providers/Microsoft.Compute/virtualMachines/vm-dr-01"
             ),
@@ -145,7 +145,7 @@ async def scenario_2(pipeline: RuriSkryPipeline, tracker: DecisionTracker) -> No
         action_type=ActionType.SCALE_UP,
         target=ActionTarget(
             resource_id=(
-                "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
+                "/subscriptions/00000000-0000-0000-0000-000000000000"
                 "/resourceGroups/ruriskry-prod-rg"
                 "/providers/Microsoft.Compute/virtualMachines/vm-web-01"
             ),
@@ -177,7 +177,7 @@ async def scenario_3(pipeline: RuriSkryPipeline, tracker: DecisionTracker) -> No
         action_type=ActionType.MODIFY_NSG,
         target=ActionTarget(
             resource_id=(
-                "/subscriptions/44caae19-24a6-4c48-9f94-b3aa3865a3f7"
+                "/subscriptions/00000000-0000-0000-0000-000000000000"
                 "/resourceGroups/ruriskry-prod-rg"
                 "/providers/Microsoft.Network/networkSecurityGroups/nsg-east-prod"
             ),

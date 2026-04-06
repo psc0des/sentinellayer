@@ -44,5 +44,5 @@ allowed_source_cidr_override = ""
 # These are written to Azure resource tags so RuriSkry can detect which resources
 # are Terraform-managed and create PRs for APPROVED verdicts instead of direct changes.
 # Change iac_github_repo to your fork's GitHub repo (owner/repo format).
-iac_github_repo    = "psc0des/ruriskry"
+iac_github_repo    = "your-org/ruriskry"
 iac_terraform_path = "infrastructure/terraform-prod"

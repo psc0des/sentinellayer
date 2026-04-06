@@ -131,6 +131,12 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    connections for token acquisition. Pattern: nest `async with DefaultAzureCredential() as
    credential:` around `async with SomeClient(credential) as client:` so both are closed
    deterministically when the block exits.
+   > **Rollback bug (fixed 2026-04-06):** `_rollback_with_framework` imported sync
+   > `DefaultAzureCredential` at the method top for the token provider, and the four rollback
+   > write tools accidentally inherited it and used `async with` on the sync credential —
+   > throwing `'DefaultAzureCredential' object does not support the asynchronous context manager
+   > protocol`. Each tool now imports `AioCredential` locally (`from azure.identity.aio import
+   > DefaultAzureCredential as AioCredential`), matching the execute-phase tool pattern.
 
 6. **Branded scoring (SRI™)** — consistent 0–100 scale per dimension, weighted composite,
    configurable thresholds in `src/config.py`.
@@ -388,8 +394,13 @@ _normalize_azure_alert_payload():
   • Workspace pivot: regex-extracts VM name from essentials.description / alertRule
   • Constructs correct VM ARM ID → resource_id = /subscriptions/.../vm-dr-01
     ↓
+Alert record created: status=pending  ← NO automatic investigation
+  investigation_log: []            ← appended as investigation progresses
+    ↓ shown in Alerts tab with "🔍 Investigate" button (table row + AlertPanel)
+User clicks Investigate (table or panel) → POST /api/alerts/{alert_id}/investigate
+    ↓ status=investigating; SSE queue created; investigation_log populated by _emit_alert_event()
 MonitoringAgent.scan(alert_payload) — always investigates the right VM
-    ↓
+    ↓ AlertPanel polls GET /api/alerts/{id}/status every 1.5s for live log display
 gpt-5-mini: "VM deallocated, heartbeat absent. Restart required."
 ProposedAction: restart_service on vm-dr-01
     ↓
@@ -400,6 +411,12 @@ ExecutionGateway.process_verdict() → ExecutionRecord (status=manual_required)
 Alert record: status=resolved, 1 finding, shown in Alerts tab
     ↓ AlertPanel drilldown: AlertFindingActions renders action buttons
 📝 Terraform PR  |  🤖 Fix by Agent  |  🌐 Azure Portal  |  ✕ Ignore
+
+> **Live investigation log design:** AlertPanel does NOT subscribe to the SSE stream directly
+> (would compete with the parent component's SSE consumer). Instead `_emit_alert_event()`
+> appends a lightweight copy of each event to `alert["investigation_log"]`. The panel polls
+> `GET /api/alerts/{id}/status` every 1.5s to render a terminal-style log — works even when
+> the panel is opened mid-investigation or after a page refresh.
 ```
 
 > **Note on Log Alerts V2:** `azurerm_monitor_scheduled_query_rules_alert_v2` always sends the Log Analytics workspace ARM ID as `alertTargetID` (not the monitored VM), and `configurationItems` is always empty when the query returns 0 rows (the "no heartbeat" case). The workspace pivot in `_normalize_azure_alert_payload()` is essential for correct behaviour — without it the agent investigates the workspace and finds nothing actionable ~50% of the time.
@@ -546,7 +563,7 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
 - **Durable state** — `ExecutionRecord` persisted as JSON in `data/executions/`; survives restarts
 - **Flag until fixed** — `manual_required` records are re-proposed on every subsequent scan via `get_unresolved_proposals()`; stops when human clicks **Decline / Ignore** or the agent stops flagging it. `pr_created`, `awaiting_review`, `blocked`, `dismissed`, `applied`, and `rolled_back` records are excluded.
 - **Dedup `action_id` update** — when a resource is re-scanned and an existing `manual_required` record is found for the same `(resource_id, action_type)`, the record's `action_id` is updated to the latest verdict's `action_id` before returning. This ensures the drilldown's `by-action` lookup always resolves to the live execution record.
-- **Rollback** — after a fix is applied (`status=applied`), `ExecutionGateway.rollback_agent_fix()` calls `ExecutionAgent.rollback()`. On success: sets `status → rolled_back`, stores `rollback_log`. On failure: keeps `status = applied` (fix is still in place), stores failed `rollback_log`, appends failure note. Mock path maps each `ActionType` to its deterministic inverse (RESTART→deallocate, SCALE_UP/DOWN→resize back, NSG→restore rule, DELETE→cannot auto-rollback). Live path is LLM-driven using `rollback_hint` from the stored plan. The dashboard shows an amber ↩ Rollback button next to the Applied badge; on failure a rose-colored "Rollback attempted but failed" banner shows and the button remains for retry.
+- **Rollback** — after a fix is applied (`status=applied`), `ExecutionGateway.rollback_agent_fix()` calls `ExecutionAgent.rollback()`. On success: sets `status → rolled_back`, stores `rollback_log`. On failure: keeps `status = applied` (fix is still in place), stores failed `rollback_log`, appends failure note. Mock path maps each `ActionType` to its deterministic inverse (RESTART→deallocate, SCALE_UP/DOWN→resize back, NSG→restore rule, DELETE→cannot auto-rollback). Live path is LLM-driven using `rollback_hint` from the stored plan. On LLM/framework exception, `rollback()` returns `{"success": False, ...}` — it does **not** fall back to the mock (mock returning `success=True` would falsely mark the record `rolled_back` while Azure never ran). The dashboard shows an amber ↩ Rollback button next to the Applied badge; on failure a rose-colored "Rollback attempted but failed" banner shows even when `rollback_log` is empty (e.g. API error or LLM timeout), and the button remains for retry.
 - **NSG rule auto-dismiss** — when a scan finds resource `nsg-east-prod` clean, the system dismisses all `manual_required` records whose ARM ID contains `/securityRules/` with that NSG as parent. The parent name is extracted from the ARM ID segment before `/securityRules/`.
 - **Deterministic historical boost** — `HistoricalPatternAgent._governance_history_boost()` reads `DecisionTracker.get_recent(50)` and adds +25 per prior ESCALATED / +5 per prior APPROVED for the same `action_type` (cap +60). Ensures consistent ESCALATED routing when Azure AI Search BM25 returns sparse results.
 
@@ -725,6 +742,8 @@ dashboard/
     │   ├── Agents.jsx            # Enterprise agents page — useScanManager + AgentCardGrid + ScanHistoryTable + ScanLogViewer (single-system architecture)
     │   ├── Decisions.jsx         # DecisionTable + EvaluationDrilldown (breadcrumb nav)
     │   ├── Alerts.jsx             # Azure Monitor alert investigations — table + severity/status filters + drilldown panel;
+    │   │                          #   "🔍 Investigate" button in table row AND AlertPanel (pending alerts only);
+    │   │                          #   AlertPanel: live Investigation Log terminal (polls /api/alerts/{id}/status 1.5s);
     │   │                          #   AlertFindingActions: per-finding action buttons (📝 Terraform PR, 🤖 Fix by Agent,
     │   │                          #   🌐 Azure Portal, ✕ Ignore) — same HITL flow as scan verdicts, driven by execution_id
     │   ├── AuditLog.jsx          # Scan-level operational audit log with filters + CSV/JSON export

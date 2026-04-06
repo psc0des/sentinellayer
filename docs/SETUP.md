@@ -159,8 +159,9 @@ See `infrastructure/terraform-prod/README.md` for full detail including cost est
 ## Optional: Wire Azure Monitor Alerts (real-time governance)
 
 RuriSkry agents run periodic scans, but you can also wire Azure Monitor alerts
-so any infrastructure event (VM stops, CPU spikes, disk fills) triggers an
-immediate governance investigation.
+so any infrastructure event (VM stops, CPU spikes, disk fills) creates a
+**pending alert** in the dashboard for manual investigation.  Click
+**Investigate** on any pending alert row to trigger the Monitoring Agent.
 
 See [`docs/alert-wiring.md`](alert-wiring.md) for:
 - What is wired automatically vs what requires manual steps
@@ -228,7 +229,7 @@ All resources in `infrastructure/terraform-prod/main.tf` need:
 ```hcl
 tags = {
   managed_by = "terraform"
-  iac_repo   = "psc0des/ruriskry"
+  iac_repo   = "your-org/ruriskry"
   iac_path   = "infrastructure/terraform-prod"
 }
 ```
@@ -363,7 +364,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |
 | `GITHUB_TOKEN` | Phase 21 | `""` | GitHub PAT with repo write access (Contents + Pull requests). Required for Terraform PR generation. |
-| `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `psc0des/ruriskry`). |
+| `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `your-org/ruriskry`). |
 | `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-prod` | Path within the repo to the Terraform config directory. |
 | `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |
 | `LLM_TIMEOUT` | No | `600` | Hard timeout (seconds) for any single agentic LLM call. Applied at two layers: (1) each individual HTTP request to Azure OpenAI, (2) the entire `agent.run()` agentic loop via `asyncio.wait_for`. gpt-5-mini multi-step audit loops need 10+ minutes; 600s is the production-tested minimum. Scans that exceed this limit set `scan_error` and show a red Error badge. |
