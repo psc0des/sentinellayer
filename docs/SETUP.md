@@ -84,6 +84,15 @@ subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # az account show --q
 suffix          = "<suffix>"   # same as Step 2 — used in all Azure resource names
 ```
 
+**Cross-subscription scanning (optional):** if you want RuriSkry to scan a *different* subscription
+than the one it deploys into, also set:
+```hcl
+target_subscription_id = "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+```
+Terraform automatically creates all required RBAC role assignments on that subscription —
+no manual `az role assignment create` commands needed. Leave it commented out if both
+RuriSkry and your resources are in the same subscription.
+
 ### Step 5 — Deploy everything
 
 ```bash

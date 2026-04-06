@@ -64,6 +64,10 @@ data "azurerm_client_config" "current" {}
 locals {
   name_suffix = var.suffix
 
+  # Subscription that RuriSkry scans. Defaults to the deployment subscription
+  # when target_subscription_id is not set (same-subscription case).
+  scan_subscription_id = var.target_subscription_id != "" ? var.target_subscription_id : var.subscription_id
+
   # Consistent name prefix for all hyphenated resources.
   # "ruriskry-core" is the longest prefix that satisfies every Azure name
   # length constraint, including Key Vault (max 24 chars):
@@ -662,7 +666,7 @@ resource "azurerm_container_app" "backend" {
       }
       env {
         name  = "AZURE_SUBSCRIPTION_ID"
-        value = var.subscription_id
+        value = local.scan_subscription_id
       }
 
       # ── LLM tuning ────────────────────────────────────────────────────────
@@ -810,7 +814,7 @@ resource "azurerm_role_assignment" "foundry_openai_user" {
 # Get the principal ID after apply with:
 #   terraform output -raw backend_container_app_principal_id
 resource "azurerm_role_assignment" "subscription_reader" {
-  scope                = "/subscriptions/${var.subscription_id}"
+  scope                = "/subscriptions/${local.scan_subscription_id}"
   role_definition_name = "Reader"
   principal_id         = azurerm_container_app.backend.identity[0].principal_id
 
@@ -830,7 +834,7 @@ resource "azurerm_role_assignment" "subscription_reader" {
 # If you want tighter scope, change to the specific resource group:
 #   scope = azurerm_resource_group.rg.id
 resource "azurerm_role_assignment" "network_contributor" {
-  scope                = "/subscriptions/${var.subscription_id}"
+  scope                = "/subscriptions/${local.scan_subscription_id}"
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_container_app.backend.identity[0].principal_id
 
@@ -850,7 +854,7 @@ resource "azurerm_role_assignment" "network_contributor" {
 #
 # Scope: subscription-level so it covers prod VMs in any resource group.
 resource "azurerm_role_assignment" "vm_contributor" {
-  scope                = "/subscriptions/${var.subscription_id}"
+  scope                = "/subscriptions/${local.scan_subscription_id}"
   role_definition_name = "Virtual Machine Contributor"
   principal_id         = azurerm_container_app.backend.identity[0].principal_id
 

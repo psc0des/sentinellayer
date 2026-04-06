@@ -5,8 +5,30 @@
 # terraform.tfvars is in .gitignore and must not be committed.
 # =============================================================================
 
-# Azure subscription
-subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# =============================================================================
+# Azure subscriptions
+# =============================================================================
+# subscription_id        — where RuriSkry infrastructure is deployed (Container App, Cosmos, etc.)
+# target_subscription_id — the subscription whose resources RuriSkry will SCAN
+#
+# SAME subscription (most common — leave target_subscription_id commented out):
+#   RuriSkry and the scanned resources live together. No extra steps needed.
+#
+# DIFFERENT subscriptions (hub-spoke / enterprise):
+#   1. Uncomment target_subscription_id and set it to the workload subscription.
+#   2. Make sure the identity running `terraform apply` has Owner or
+#      User Access Administrator on target_subscription_id (needed to create
+#      the cross-subscription role assignments).
+#
+# Terraform automatically grants RuriSkry's Managed Identity the following
+# roles on target_subscription_id — no manual az commands required:
+#   - Reader                 (scan / query all resources)
+#   - Network Contributor    (modify NSG rules for remediation)
+#   - Virtual Machine Contributor  (start / restart VMs for remediation)
+# =============================================================================
+
+subscription_id        = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # az account show --query id -o tsv
+# target_subscription_id = "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"  # uncomment for cross-subscription scanning
 
 # Core resources
 resource_group_name = "ruriskry-core-engine-rg"

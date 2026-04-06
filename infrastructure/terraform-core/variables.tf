@@ -6,8 +6,25 @@
 # =============================================================================
 
 variable "subscription_id" {
-  description = "Azure Subscription ID - find it in: az account show --query id -o tsv"
+  description = "Azure Subscription ID where RuriSkry infrastructure is deployed. Find it with: az account show --query id -o tsv"
   type        = string
+}
+
+variable "target_subscription_id" {
+  description = <<-EOT
+    Azure Subscription ID that RuriSkry will SCAN (Resource Graph queries, SDK calls, RBAC assignments).
+
+    Leave empty (default) when RuriSkry and the scanned resources live in the SAME subscription.
+    Set to a different subscription ID when using a hub-spoke model:
+      - RuriSkry deploys into subscription_id  (platform/governance sub)
+      - Resources to scan live in target_subscription_id  (workload sub)
+
+    Terraform automatically grants the Container App's Managed Identity
+    Reader + Network Contributor + VM Contributor on this subscription.
+    No manual az role assignment commands needed.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "resource_group_name" {

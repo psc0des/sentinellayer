@@ -73,23 +73,37 @@ RuriSkry evaluates:
 
 ## Deploy
 
+> **Deploy terraform-core first.** You need the backend URL (`terraform output -raw backend_url`
+> from terraform-core) to fill in `alert_webhook_url` below before deploying prod.
+
 ```bash
 # 1. Go to this folder
 cd infrastructure/terraform-prod
 
 # 2. Copy and fill in your variables
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your subscription ID, suffix, password, email
-# NSG source IP is auto-detected by default (api.ipify.org) and applied as /32.
-# Optional: set allowed_source_cidr_override to pin a fixed CIDR.
+# Edit terraform.tfvars — required fields:
+#   subscription_id   → the prod subscription ID (az account show --query id -o tsv)
+#   suffix            → same short suffix you used for terraform-core
+#   vm_admin_password → strong password for the demo VMs
+#   alert_email       → your email for Azure Monitor alerts
+#   alert_webhook_url → backend URL from terraform-core output (e.g. https://ruriskry-core-backend-<suffix>.<hash>.azurecontainerapps.io/api/alert-trigger)
 
-# 3. Initialize Terraform (downloads the Azure provider)
-terraform init
+# 3. Create backend.hcl (not committed — holds your storage account name)
+cat > backend.hcl <<EOF
+resource_group_name  = "ruriskry-tfstate-rg"
+storage_account_name = "ruriskrytfstate<suffix>"
+container_name       = "tfstate"
+key                  = "terraform-prod.tfstate"
+EOF
 
-# 4. Preview what will be created
+# 4. Initialize Terraform with remote state
+terraform init -backend-config=backend.hcl
+
+# 5. Preview what will be created
 terraform plan
 
-# 5. Create the resources (takes ~5 minutes)
+# 6. Create the resources (takes ~5 minutes)
 terraform apply
 
 # 6. Copy real resource IDs into seed_resources.json

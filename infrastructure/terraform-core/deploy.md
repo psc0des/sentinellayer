@@ -54,6 +54,20 @@ Run `az login` before starting.
 
 **Windows users:** `deploy.sh` is a bash script. Run it in **Git Bash** (ships with Git for Windows) or **WSL**. Do not use PowerShell or CMD — they cannot run `.sh` files directly. All other commands in this doc that start with `az`, `terraform`, `docker`, and `npm` work fine in PowerShell too.
 
+**Two-subscription setup (hub-spoke):** If you are deploying RuriSkry into one subscription
+and scanning resources in a second subscription, the identity running `terraform apply` must
+have **Owner** or **User Access Administrator** on the *scan* subscription — this is needed
+to create the cross-subscription RBAC role assignments. Set `target_subscription_id` in
+`terraform.tfvars` to the scan subscription ID (see Step 4).
+
+Deploy order matters:
+1. `terraform-core` first (creates Container App — gives you the backend URL)
+2. `terraform-prod` second (put the backend URL into `alert_webhook_url` in its tfvars)
+
+Both use the same tfstate storage account (`ruriskrytfstate<suffix>`) with different state keys:
+- `terraform-core.tfstate` → core infrastructure
+- `terraform-prod.tfstate` → prod demo environment
+
 ---
 
 ## One-time Setup
@@ -122,6 +136,17 @@ Edit `terraform.tfvars` — mandatory fields:
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 suffix          = "yourname"   # globally unique — used in all resource names
 ```
+
+**Cross-subscription scanning (optional):**
+By default RuriSkry scans the same subscription it deploys into. To scan a different subscription
+(hub-spoke / enterprise model), set:
+```hcl
+target_subscription_id = "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+```
+Terraform will automatically create the Reader + Network Contributor + VM Contributor role
+assignments on `target_subscription_id`. The identity running `terraform apply` must have
+Owner or User Access Administrator on that subscription for this to work.
+Leave it commented out when both RuriSkry and your resources are in the same subscription.
 
 Other fields to review:
 
