@@ -78,7 +78,6 @@ infrastructure/terraform-demo/*.tfstate.*
 infrastructure/terraform-demo/*.tfstate.backup
 infrastructure/terraform-demo/terraform.tfvars
 infrastructure/terraform-demo/tfplan
-infrastructure/terraform-demo/backend.hcl
 # .terraform.lock.hcl is intentionally NOT ignored — commit it to pin provider versions
 
 # Runtime-generated data (not source code)

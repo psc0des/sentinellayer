@@ -193,15 +193,8 @@ cp terraform.tfvars.example terraform.tfvars
 #   alert_webhook_url = "<backend_url>/api/alert-trigger"
 #     → wires Azure Monitor alerts directly into RuriSkry; leave empty to disable
 
-# Create backend.hcl (not committed — uses the same tfstate storage account as terraform-core)
-cat > backend.hcl <<EOF
-resource_group_name  = "ruriskry-tfstate-rg"
-storage_account_name = "ruriskrytfstate<suffix>"
-container_name       = "tfstate"
-key                  = "terraform-demo.tfstate"
-EOF
-
-terraform init -backend-config=backend.hcl
+# Local state — no remote backend needed for a demo environment
+terraform init
 terraform apply
 
 # After apply — paste real IDs into data/seed_resources.json:

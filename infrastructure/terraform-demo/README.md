@@ -97,21 +97,13 @@ cp terraform.tfvars.example terraform.tfvars
 #   alert_email       → your email for Azure Monitor alerts
 #   alert_webhook_url → backend URL from terraform-core output (e.g. https://ruriskry-core-backend-<suffix>.<hash>.azurecontainerapps.io/api/alert-trigger)
 
-# 3. Create backend.hcl (not committed — holds your storage account name)
-cat > backend.hcl <<EOF
-resource_group_name  = "ruriskry-tfstate-rg"
-storage_account_name = "ruriskrytfstate<suffix>"
-container_name       = "tfstate"
-key                  = "terraform-demo.tfstate"
-EOF
+# 3. Initialize Terraform (local state — no remote backend needed for demo)
+terraform init
 
-# 4. Initialize Terraform with remote state
-terraform init -backend-config=backend.hcl
-
-# 5. Preview what will be created
+# 4. Preview what will be created
 terraform plan
 
-# 6. Create the resources (takes ~5 minutes)
+# 5. Create the resources (takes ~5 minutes)
 terraform apply
 
 # 6. Copy real resource IDs into seed_resources.json
