@@ -274,7 +274,7 @@ variable "llm_timeout" {
 }
 
 variable "llm_concurrency_limit" {
-  description = "Max simultaneous LLM calls across all agents (shared semaphore). 3 operational + 4 governance + 1 execution = up to 8 callers; 6 is safe at 200K TPM. Lower only if hitting 429s."
+  description = "Max simultaneous LLM calls across all agents (shared semaphore). 3 operational + 4 governance + 1 execution = up to 8 callers; 6 is safe at 150K TPM (default gpt-4.1-mini Standard allocation). Lower only if hitting 429s."
   type        = number
   default     = 6
 }
