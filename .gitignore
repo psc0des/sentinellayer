@@ -98,6 +98,16 @@ CLAUDE.md
 # Learning notes (personal)
 learning/
 
+# Internal dev status & AI context (not for public OSS repo)
+STATUS.md
+CONTEXT.md
+
+# Internal demo production notes (not for contributors)
+docs/demo-script.md
+
+# Internal Playwright visual-scan screenshots (not product demos)
+docs/screenshots/visual-scan-*.png
+
 # Internal planning / rearchitecture working docs (not for contributors)
 Adding-HITL-Agent-Fix-Plan.md
 Adding-Terraform-Feature.md
