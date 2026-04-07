@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Application settings loaded from .env file."""
 
     # --- Microsoft Foundry — configurable model (Terraform-managed) ---
-    # Default: gpt-4.1-mini (Standard, 50K TPM — pre-allocated on new subscriptions)
+    # Default: gpt-4.1-mini (Standard, 150K TPM — pre-allocated on new subscriptions, no request needed)
     # To use gpt-5-mini: set foundry_model = "gpt-5-mini" in terraform.tfvars and re-apply.
     # Endpoint and key are populated automatically by scripts/setup_env.sh
     # from Terraform outputs (foundry_endpoint, foundry_primary_key).

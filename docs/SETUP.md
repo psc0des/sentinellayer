@@ -13,7 +13,7 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
   | Quota | Sub | Default on new sub | Action if missing |
   |---|---|---|---|
   | Container Apps (6 vCPU, Consumption) | Core | Usually available | Request via portal |
-  | gpt-4.1-mini Standard 50K TPM | Core | Pre-allocated on all new subs | Default — no request needed |
+  | gpt-4.1-mini Standard 150K TPM | Core | Pre-allocated on all new subs | Default — no request needed |
   | gpt-5-mini GlobalStandard 30K TPM | Core | Not pre-allocated | Request via ai.azure.com/quota (upgrade option) |
   | AI Search Free tier | Core | 1 per sub | Set `search_sku = "basic"` in tfvars if taken |
   | Cosmos DB Free tier | Core | 1 per sub | Set `cosmos_free_tier = false` in tfvars if taken |
@@ -29,7 +29,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 
 1. Azure Resource Group (`ruriskry-core-engine-rg`) — with a CanNotDelete management lock
 2. Azure AI Foundry account (`azurerm_ai_services`)
-3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1-mini` version `2025-04-14`, Standard, 50K TPM)
+3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1-mini` version `2025-04-14`, Standard, 150K TPM)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
 5. Azure AI Search
 6. Azure Cosmos DB (SQL API) — five containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`). Managed Identity auth; no connection string stored in tfstate.
