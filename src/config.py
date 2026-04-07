@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     # Maximum number of simultaneous LLM calls across ALL agents in the process
     # (3 operational + 4 governance + execution agent = up to 8 potential concurrent callers).
     # All agents share one process-level semaphore from llm_throttle.py.
-    # At 200K TPM / 200 RPM each call uses ~5-10K tokens so 6 concurrent calls is safe.
+    # At 150K TPM / 200 RPM each call uses ~5-10K tokens so 6 concurrent calls is safe.
     # Set lower (e.g. 3) only if hitting 429s; set to 1 to fully serialise.
     # Env var: LLM_CONCURRENCY_LIMIT=6
     llm_concurrency_limit: int = 6

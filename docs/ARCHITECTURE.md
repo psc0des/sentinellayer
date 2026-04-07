@@ -112,7 +112,7 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
    MCP-capable agent (Claude Desktop, Copilot, custom agents) can call RuriSkry without
    SDK changes.
 
-4. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses gpt-5-mini as
+4. **LLM-as-Decision-Maker (Phase 22)** — in live mode, each governance agent uses gpt-4.1-mini as
    an **active decision maker**, not a narrator. The flow: (1) deterministic rules run and produce
    a baseline score; (2) the LLM receives the baseline + full policy definitions + ops agent's
    reasoning; (3) the LLM calls `submit_governance_decision` with an adjusted score and per-adjustment
@@ -169,10 +169,10 @@ boundary — minimal overhead. Used by `demo.py` and all unit tests.
 
 | Agent | SRI Dimension | Data Source |
 |---|---|---|
-| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` (KQL topology) + gpt-5-mini decision maker · **Mock:** `seed_resources.json` |
-| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies · gpt-5-mini decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports |
-| `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` · gpt-5-mini decision maker |
-| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · gpt-5-mini decision maker · **Mock:** `seed_resources.json` |
+| `BlastRadiusAgent` | Infrastructure (0.30) | **Live:** `ResourceGraphClient` (KQL topology) + gpt-4.1-mini decision maker · **Mock:** `seed_resources.json` |
+| `PolicyComplianceAgent` | Policy (0.25) | `policies.json` — 11 production policies · gpt-4.1-mini decision maker with remediation intent detection · structured `nsg_change_direction` field distinguishes opening from restricting ports |
+| `HistoricalPatternAgent` | Historical (0.25) | Azure AI Search / `seed_incidents.json` · gpt-4.1-mini decision maker |
+| `FinancialImpactAgent` | Cost (0.20) | **Live:** `ResourceGraphClient` + Azure Retail Prices API · gpt-4.1-mini decision maker · **Mock:** `seed_resources.json` |
 
 All 4 agents follow the same Phase 22 pattern: deterministic baseline → LLM contextual adjustment
 (+/-30 pts guardrail) → adjusted score used in SRI™ composite.
@@ -183,11 +183,11 @@ and `format_adjustment_text()` utilities used by all 4 agents.
 
 | Agent | What it proposes | Scan coverage |
 |---|---|---|
-| `CostOptimizationAgent` | VM downsizing, idle resource deletion, unattached disk deletion, orphaned public IP release | gpt-5-mini — 8 tools (azure_tools). Discovers VMs, AKS, databases, Redis, storage accounts. Flags: deallocated VMs (disk cost with no value, MEDIUM), unattached disks (`diskState=Unattached`, MEDIUM), orphaned public IPs (LOW), over-provisioned SKUs (LOW). Calls `get_resource_health` before proposing deletion — won't delete platform-degraded resources. Calls `list_advisor_recommendations(category=Cost)` for pre-computed Microsoft intelligence. |
-| `MonitoringAgent` | SRE anomaly remediation — VM restarts, scale-ups, AMA extension installs, tag additions | gpt-5-mini — 8 tools (azure_tools). **6-step enterprise proactive scan**: (1) resource discovery via Resource Graph, (2) VM power state check via `get_resource_details` (Compute instance view → `powerState` field) — stopped/deallocated = HIGH `restart_service`, (3) database health, (4) Container Apps & App Services, (5) observability gaps, (6) orphaned resources. Calls `get_resource_health` for platform availability confirmation. Calls `list_advisor_recommendations(category=HighAvailability)`. **Alert-driven mode** handles 5 alert types: A) availability/heartbeat, B) CPU/memory, C) disk/storage, D) database, E) network. |
-| `DeployAgent` | NSG rule hardening, storage security fixes, DB/KV security configs, VM security posture fixes, lifecycle tag additions | gpt-5-mini — 10 tools (azure_tools). **9-domain security audit**: (1) resource discovery, (2) NSG audit, (3) storage security, (4) database & Key Vault, (5) VM security posture, (6) activity log audit, (7) zero-tag governance, (8) Defender for Cloud assessments, (9) Azure Policy compliance. **Three-layer deterministic detection**: Layer 1 = hardcoded Python checks (NSG critical ports, storage public access, Key Vault soft-delete, DB public network); Layer 2 = Microsoft safety nets (Advisor Security, Defender for Cloud HIGH assessments, Azure Policy non-compliant resources) — all called deterministically post-scan, auto-proposing for findings the LLM missed; Layer 3 = LLM reasoning for nuanced findings. Dedup by `(resource_id, action_type)` across all layers. |
+| `CostOptimizationAgent` | VM downsizing, idle resource deletion, unattached disk deletion, orphaned public IP release | gpt-4.1-mini — 8 tools (azure_tools). Discovers VMs, AKS, databases, Redis, storage accounts. Flags: deallocated VMs (disk cost with no value, MEDIUM), unattached disks (`diskState=Unattached`, MEDIUM), orphaned public IPs (LOW), over-provisioned SKUs (LOW). Calls `get_resource_health` before proposing deletion — won't delete platform-degraded resources. Calls `list_advisor_recommendations(category=Cost)` for pre-computed Microsoft intelligence. |
+| `MonitoringAgent` | SRE anomaly remediation — VM restarts, scale-ups, AMA extension installs, tag additions | gpt-4.1-mini — 8 tools (azure_tools). **6-step enterprise proactive scan**: (1) resource discovery via Resource Graph, (2) VM power state check via `get_resource_details` (Compute instance view → `powerState` field) — stopped/deallocated = HIGH `restart_service`, (3) database health, (4) Container Apps & App Services, (5) observability gaps, (6) orphaned resources. Calls `get_resource_health` for platform availability confirmation. Calls `list_advisor_recommendations(category=HighAvailability)`. **Alert-driven mode** handles 5 alert types: A) availability/heartbeat, B) CPU/memory, C) disk/storage, D) database, E) network. |
+| `DeployAgent` | NSG rule hardening, storage security fixes, DB/KV security configs, VM security posture fixes, lifecycle tag additions | gpt-4.1-mini — 10 tools (azure_tools). **9-domain security audit**: (1) resource discovery, (2) NSG audit, (3) storage security, (4) database & Key Vault, (5) VM security posture, (6) activity log audit, (7) zero-tag governance, (8) Defender for Cloud assessments, (9) Azure Policy compliance. **Three-layer deterministic detection**: Layer 1 = hardcoded Python checks (NSG critical ports, storage public access, Key Vault soft-delete, DB public network); Layer 2 = Microsoft safety nets (Advisor Security, Defender for Cloud HIGH assessments, Azure Policy non-compliant resources) — all called deterministically post-scan, auto-proposing for findings the LLM missed; Layer 3 = LLM reasoning for nuanced findings. Dedup by `(resource_id, action_type)` across all layers. |
 
-**Phase 12 + Phase 15 + Agent Intelligence Overhaul (2026-03-13, complete):** All three agents query real Azure data sources via tools in `azure_tools.py` and use gpt-5-mini via `agent-framework-core` to reason about context before proposing. Tools include: static config (Resource Graph), runtime metrics (Monitor), VM power state (Compute instance view), network rules (NSG), activity log, Azure Resource Health API, Azure Advisor API, Microsoft Defender for Cloud API, and Azure Policy API. DeployAgent has 10 tools; CostAgent and MonitoringAgent have 8 each. `scan()` is framework-only — `_scan_rules()` exists for direct test access only. Environment-agnostic: no hardcoded resource names, tag keys, or org-specific assumptions.
+**Phase 12 + Phase 15 + Agent Intelligence Overhaul (2026-03-13, complete):** All three agents query real Azure data sources via tools in `azure_tools.py` and use gpt-4.1-mini via `agent-framework-core` to reason about context before proposing. Tools include: static config (Resource Graph), runtime metrics (Monitor), VM power state (Compute instance view), network rules (NSG), activity log, Azure Resource Health API, Azure Advisor API, Microsoft Defender for Cloud API, and Azure Policy API. DeployAgent has 10 tools; CostAgent and MonitoringAgent have 8 each. `scan()` is framework-only — `_scan_rules()` exists for direct test access only. Environment-agnostic: no hardcoded resource names, tag keys, or org-specific assumptions.
 
 ---
 
@@ -201,7 +201,7 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 
 | Service | Used by | Config var | Security posture |
 |---|---|---|---|
-| Azure OpenAI / gpt-5-mini (Foundry) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only; Container App MI has `Cognitive Services OpenAI User` role (`azurerm_role_assignment.foundry_openai_user`) |
+| Azure OpenAI / gpt-4.1-mini (Foundry, default) | All 7 agents (Agent Framework) | `AZURE_OPENAI_ENDPOINT` | `local_authentication_enabled=false` — Managed Identity only; Container App MI has `Cognitive Services OpenAI User` role (`azurerm_role_assignment.foundry_openai_user`) |
 | Azure AI Search | `HistoricalPatternAgent` | `AZURE_SEARCH_ENDPOINT` | — |
 | Azure Cosmos DB — `governance-decisions` | `DecisionTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; `network_acl_bypass_for_azure_services=true` |
 | Azure Cosmos DB — `governance-agents` | `AgentRegistry` | `COSMOS_ENDPOINT` | Managed Identity auth |
@@ -273,7 +273,7 @@ Azure Key Vault
 
 | Service | Deployed via | Purpose |
 |---------|-------------|---------|
-| Azure OpenAI / gpt-5-mini (Foundry) | `infrastructure/terraform-core/` | LLM backbone for all 7 agents — project fully Terraform-managed via AzAPI provider |
+| Azure OpenAI / gpt-4.1-mini (Foundry, default) | `infrastructure/terraform-core/` | LLM backbone for all 7 agents — project fully Terraform-managed via AzAPI provider |
 | Azure AI Search | `infrastructure/terraform-core/` | Historical incident BM25 search |
 | Azure Cosmos DB | `infrastructure/terraform-core/` | Audit trail + agent registry + scan runs — Managed Identity auth |
 | Azure Key Vault | `infrastructure/terraform-core/` | Runtime secrets — purge protection enabled, 90-day soft-delete |
@@ -295,7 +295,7 @@ Azure Static Web Apps          ← React dashboard (dashboard/)
   ▼
 Azure Container Apps           ← FastAPI + all agents (src/)
   │  HTTPS calls via SDK
-  ├──► Azure OpenAI Foundry    ← gpt-5-mini LLM calls (7 agents)
+  ├──► Azure OpenAI Foundry    ← gpt-4.1-mini LLM calls (7 agents, default)
   ├──► Azure AI Search         ← historical incident lookup
   ├──► Azure Cosmos DB         ← audit trail reads/writes
   ├──► Azure Resource Graph    ← live topology queries
@@ -401,7 +401,7 @@ User clicks Investigate (table or panel) → POST /api/alerts/{alert_id}/investi
     ↓ status=investigating; SSE queue created; investigation_log populated by _emit_alert_event()
 MonitoringAgent.scan(alert_payload) — always investigates the right VM
     ↓ AlertPanel polls GET /api/alerts/{id}/status every 1.5s for live log display
-gpt-5-mini: "VM deallocated, heartbeat absent. Restart required."
+gpt-4.1-mini: "VM deallocated, heartbeat absent. Restart required."
 ProposedAction: restart_service on vm-dr-01
     ↓
 Governance pipeline: SRI 1.5 → APPROVED ✅
@@ -667,7 +667,7 @@ DecisionExplainer.explain(verdict, action)
     ├── _extract_policy_violations() → from agent_results["policy"]
     ├── _build_risk_highlights()   → natural-language risk callouts
     ├── _build_counterfactuals()   → 3 "what would change this?" scenarios per verdict type
-    └── _try_llm_summary()         → gpt-5-mini plain-English summary (template fallback in mock)
+    └── _try_llm_summary()         → gpt-4.1-mini plain-English summary (template fallback in mock)
     ↓
 DecisionExplanation (cached by action_id)
 ```
@@ -680,7 +680,7 @@ DecisionExplanation (cached by action_id)
 **Frontend — EvaluationDrilldown.jsx (6 sections):**
 1. Verdict header — large badge, SRI composite score, resource/agent/timestamp
 2. SRI™ Dimensional Breakdown — 4 horizontal bars, ⭐ marks the primary factor
-3. Decision Explanation — gpt-5-mini summary, primary factor callout, risk highlights, policy violations
+3. Decision Explanation — gpt-4.1-mini summary, primary factor callout, risk highlights, policy violations
 4. Counterfactual Analysis — score-transition cards ("X.X → Y.Y → VERDICT pill")
 5. Agent Reasoning — proposing agent's reason + per-governance-agent assessments
 6. Audit Trail — UUID, timestamp, collapsible raw JSON
@@ -732,7 +732,7 @@ src/
 │   ├── llm_throttle.py        # asyncio.Semaphore + exponential backoff for Azure OpenAI rate limits
 │   ├── cosmos_client.py       # Cosmos DB decisions client (live: CosmosClient; mock: JSON files)
 │   ├── search_client.py       # Azure AI Search client (live: BM25 full-text; mock: keyword matching)
-│   ├── openai_client.py       # Azure OpenAI / gpt-5-mini client (live: Responses API; mock: canned string)
+│   ├── openai_client.py       # Azure OpenAI / gpt-4.1-mini client (live: Responses API; mock: canned string)
 │   └── secrets.py             # Key Vault secret resolver (env → KV → empty string)
 └── config.py                  # SRI thresholds + env vars + DEMO_MODE + Slack settings
 dashboard/

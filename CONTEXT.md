@@ -53,7 +53,7 @@ src/
 │   ├── cosmos_client.py         # Cosmos DB clients: CosmosDecisionClient (mock: data/decisions/*.json),
 │   │                            #   CosmosExecutionClient (mock: data/executions/*.json)
 │   ├── search_client.py         # Azure AI Search incidents (mock: seed_incidents.json)
-│   ├── openai_client.py         # Azure OpenAI / gpt-5-mini (mock: canned string)
+│   ├── openai_client.py         # Azure OpenAI / gpt-4.1-mini (mock: canned string)
 │   └── secrets.py               # Key Vault secret resolver (env → KV → empty)
 ├── notifications/               # Outbound alerting
 │   └── slack_notifier.py        # send_verdict_notification/send_alert_notification/send_alert_resolved_notification — Block Kit; shared AsyncClient singleton, rate limiter, smart retry
@@ -542,7 +542,7 @@ until human dismisses them ("flag until fixed" governance pattern).
 
 - `src/core/explanation_engine.py` (NEW) — `DecisionExplainer.explain(verdict, action)` returns a
   `DecisionExplanation` with ranked `Factor` list, `Counterfactual` scenarios, policy violations,
-  risk highlights, and an LLM-generated summary (gpt-5-mini in live mode; template fallback in mock).
+  risk highlights, and an LLM-generated summary (gpt-4.1-mini in live mode; template fallback in mock).
   Module-level `_explanation_cache` keyed by `action_id` prevents redundant recomputation.
 - `src/core/models.py` — 3 new Pydantic models: `Factor`, `Counterfactual`, `DecisionExplanation`.
 - `src/api/dashboard_api.py` — 1 new endpoint: `GET /api/evaluations/{id}/explanation` (18 total).
@@ -607,7 +607,7 @@ instead of seed-data proposals; mock RG filter and default metrics fixed.
 **Phase 12 — Intelligent Ops Agents (complete)**
 
 Ops agents now use 5 generic Azure tools (``src/infrastructure/azure_tools.py``) to
-investigate real data before proposing. gpt-5-mini discovers resources, checks actual CPU
+investigate real data before proposing. gpt-4.1-mini discovers resources, checks actual CPU
 metrics, inspects NSG rules, and reviews activity logs — then calls ``propose_action``
 with evidence-backed reasons. ``POST /api/alert-trigger`` enables Azure Monitor webhook
 integration. Run ``python demo_live.py --resource-group <rg>`` (or without flag to scan
@@ -698,7 +698,7 @@ to seed data. All ops agent framework calls are throttled via ``run_with_throttl
 **Previous: Phase 8 — Microsoft Agent Framework SDK (via Phase 9)**
 
 - All 4 governance agents + all 3 operational agents rebuilt on `agent-framework-core`.
-- Each agent defines its rule-based logic as an `@af.tool`; gpt-5-mini calls the tool and synthesises reasoning.
+- Each agent defines its rule-based logic as an `@af.tool`; gpt-4.1-mini (default) calls the tool and synthesises reasoning.
 - `deploy_agent.py` added: proposes NSG deny-all rules, lifecycle tag additions, observability resources.
 - `pipeline.py` exposes `scan_operational_agents()` running all 3 operational agents concurrently.
 

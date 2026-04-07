@@ -101,7 +101,7 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 ## Key Features
 
 ### Intelligent Governance — LLM as Decision Maker
-All 4 governance agents use gpt-5-mini as an **active decision maker**, not a narrator. The
+All 4 governance agents use gpt-4.1-mini as an **active decision maker**, not a narrator. The
 deterministic rule engine produces a **baseline score**; the LLM then receives the full policy
 definitions, the ops agent's reasoning, and the baseline — and adjusts the score up or down
 with explicit justification. A guardrail bounds adjustments to ±30 points so hallucination
@@ -111,7 +111,7 @@ rather than blocking the fix.
 
 ### Two-Layer Intelligence
 Operational agents aren't blind action-proposers — they query **real Azure data** (Resource
-Graph tags, Monitor metrics, NSG rules, activity logs) via gpt-5-mini before proposing. RuriSkry
+Graph tags, Monitor metrics, NSG rules, activity logs) via gpt-4.1-mini before proposing. RuriSkry
 then provides an **independent second opinion** using 4 governance agents in parallel. The ops
 agent catches obvious risks; RuriSkry catches what the ops agent missed.
 
@@ -160,7 +160,7 @@ Click any row in the Live Activity Feed to open a **6-section full-page drilldow
 
 1. **Verdict header** — SRI composite score, resource, agent, timestamp
 2. **SRI™ Dimensional Breakdown** — 4 weighted bars; primary factor marked
-3. **Decision Explanation** — gpt-5-mini plain-English summary, risk highlights, policy violations
+3. **Decision Explanation** — gpt-4.1-mini plain-English summary, risk highlights, policy violations
 4. **Counterfactual Analysis** — "what would change this outcome?" — 3 hypothetical scenarios
    with score transitions (e.g. `77.0 → 53.1 → ESCALATED`)
 5. **Agent Reasoning** — proposing agent's rationale + per-governance-agent assessments
@@ -416,7 +416,7 @@ ruriskry/
 │   │   ├── llm_throttle.py          # asyncio.Semaphore + exponential backoff for LLM calls
 │   │   ├── cosmos_client.py         # Cosmos DB decisions + executions client
 │   │   ├── search_client.py         # Azure AI Search client
-│   │   ├── openai_client.py         # Azure OpenAI / gpt-5-mini client
+│   │   ├── openai_client.py         # Azure OpenAI / gpt-4.1-mini client
 │   │   └── secrets.py               # Key Vault secret resolver
 │   ├── notifications/          # Outbound alerting
 │   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts

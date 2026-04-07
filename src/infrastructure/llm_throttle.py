@@ -15,7 +15,7 @@ falls back to deterministic rules — meaning GPT-4.1 is **never used**.
 Two complementary defences are implemented here:
 
 1. **asyncio.Semaphore** — limits simultaneous LLM calls to
-   ``settings.llm_concurrency_limit`` (default 3) across all agents in the
+   ``settings.llm_concurrency_limit`` (default 6) across all agents in the
    same process.  The semaphore is module-level (one object per process), so
    all four agent instances share the same gate.  When a slot is available the
    agent proceeds immediately; when all slots are full it waits in a queue.

@@ -945,7 +945,7 @@ Returns safe system configuration — no secrets exposed.
 {
   "mode": "mock",
   "llm_timeout": 120,
-  "llm_concurrency_limit": 5,
+  "llm_concurrency_limit": 6,
   "execution_gateway_enabled": true,
   "use_live_topology": false,
   "version": "1.0.0"
