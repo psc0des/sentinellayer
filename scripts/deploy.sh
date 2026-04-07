@@ -541,7 +541,8 @@ ok "Sticky sessions enabled (affinity=sticky)"
 # =============================================================================
 # The Container App needs the github-pat KV secret to exist before it can start.
 # We prompt here so the user doesn't have to do it manually after deployment.
-USE_GITHUB_PAT=$(grep -E '^use_github_pat\s*=\s*true' terraform.tfvars 2>/dev/null | wc -l)
+USE_GITHUB_PAT=$(grep -cE '^use_github_pat\s*=\s*true' terraform.tfvars 2>/dev/null || true)
+USE_GITHUB_PAT=${USE_GITHUB_PAT:-0}
 if [[ "$USE_GITHUB_PAT" -gt 0 && -n "$KV_NAME" ]]; then
   if az keyvault secret show --vault-name "$KV_NAME" --name github-pat &>/dev/null; then
     ok "github-pat already exists in Key Vault — skipping"
