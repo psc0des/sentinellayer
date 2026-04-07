@@ -53,13 +53,23 @@ foundry_custom_subdomain_name = ""
 create_foundry_project    = true
 foundry_project_name      = "ruriskry"
 create_foundry_deployment = true
-foundry_model             = "gpt-5-mini"
-foundry_model_version     = "2025-08-07"
-foundry_deployment_name   = "gpt-5-mini"
-foundry_scale_type        = "GlobalStandard"
-foundry_capacity          = 30    # 30K TPM — works on new subscriptions with no quota request
-                                   # Increase to 200 for production (run terraform apply after quota approved)
-                                   # Check current quota: az cognitiveservices usage list --location eastus2 --query "[?contains(name.value,'gpt')]" -o table
+foundry_model             = "gpt-4.1-mini"
+foundry_model_version     = "2025-04-14"
+foundry_deployment_name   = "gpt-4.1-mini"
+foundry_scale_type        = "Standard"   # Standard quota is pre-allocated on new subscriptions (no request needed)
+foundry_capacity          = 50           # 50K TPM — full pre-allocated Standard quota for gpt-4.1-mini
+
+# ── Upgrading to gpt-5-mini GlobalStandard (better for high-concurrency) ─────
+# gpt-5-mini GlobalStandard requires a manual quota request on new subscriptions:
+#   1. Go to https://ai.azure.com/quota → select your region → find gpt-5-mini GlobalStandard
+#   2. Request increase → enter 3 (= 30,000 TPM)
+#   3. Once approved, update these values and run: terraform apply
+#        foundry_model           = "gpt-5-mini"
+#        foundry_model_version   = "2025-08-07"
+#        foundry_deployment_name = "gpt-5-mini"
+#        foundry_scale_type      = "GlobalStandard"
+#        foundry_capacity        = 30
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Key Vault secret names (runtime reads these via .env)
 keyvault_secret_name_foundry_key = "foundry-primary-key"
@@ -84,9 +94,9 @@ backend_max_replicas = 3
 # LLM tuning
 # llm_timeout: hard wall-clock cap per agent call. Must be >300s for multi-step loops.
 # llm_concurrency_limit: shared semaphore across ALL agents (3 ops + 4 governance + 1 execution
-#   = up to 8 callers). 3 is safe at 30K TPM. Increase to 6 when foundry_capacity = 200.
+#   = up to 8 callers). 5 is safe at 50K TPM. Increase to 6 when foundry_capacity = 200.
 llm_timeout           = 600
-llm_concurrency_limit = 3
+llm_concurrency_limit = 5
 
 # Execution Gateway — GitHub PAT
 # Store the PAT manually in Key Vault (never in this file):

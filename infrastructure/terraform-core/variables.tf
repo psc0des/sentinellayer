@@ -134,38 +134,38 @@ variable "create_foundry_deployment" {
 }
 
 variable "foundry_model" {
-  description = "Foundry model name (example: gpt-5-mini)."
+  description = "Foundry model name. Check available models at https://ai.azure.com/quota."
   type        = string
-  default     = "gpt-5-mini"
+  default     = "gpt-4.1-mini"
 }
 
 variable "foundry_model_version" {
   description = "Foundry model version string. Use empty string to let Azure choose latest."
   type        = string
-  default     = ""
+  default     = "2025-04-14"
 }
 
 variable "foundry_deployment_name" {
   description = "Foundry deployment name used by application runtime (passed as AZURE_OPENAI_DEPLOYMENT env var)."
   type        = string
-  default     = "gpt-5-mini"
+  default     = "gpt-4.1-mini"
 }
 
 variable "foundry_capacity" {
   description = <<-EOT
     Foundry deployment capacity in thousands TPM (tokens per minute).
-    30  = works on new subscriptions with no quota request (demo / getting started)
+    50  = full pre-allocated Standard quota for gpt-4.1-mini (no request needed)
     200 = production — requires quota approval; run `terraform apply` after approval
     Check current quota: az cognitiveservices usage list --location eastus2 --query "[?contains(name.value,'gpt')]" -o table
   EOT
   type        = number
-  default     = 30
+  default     = 50
 }
 
 variable "foundry_scale_type" {
-  description = "Foundry deployment scale type."
+  description = "Foundry deployment scale type. Standard quota is pre-allocated on new subscriptions. GlobalStandard requires a quota request."
   type        = string
-  default     = "GlobalStandard"
+  default     = "Standard"
 
   validation {
     condition     = contains(["GlobalStandard", "Standard"], var.foundry_scale_type)
