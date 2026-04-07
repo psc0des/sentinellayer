@@ -69,29 +69,7 @@ az account show --query "{sub:id, name:name}" -o table   # confirm correct sub
 az provider register --namespace Microsoft.App --wait
 ```
 
-### Step 2 — Create Terraform remote state storage *(one-time, run in PowerShell)*
-
-> Skip this if you already have a `ruriskrytfstate<suffix>` storage account.
-
-```powershell
-# Replace <suffix> with a short unique string (e.g. "jd4821") — use the same value throughout
-az group create --name ruriskry-tfstate-rg --location eastus2
-az storage account create --name ruriskrytfstate<suffix> --resource-group ruriskry-tfstate-rg --location eastus2 --sku Standard_LRS --allow-blob-public-access false
-az storage container create --name tfstate --account-name ruriskrytfstate<suffix>
-```
-
-### Step 3 — Create `backend.hcl` *(not committed — contains your storage account name)*
-
-```bash
-cat > infrastructure/terraform-core/backend.hcl <<EOF
-resource_group_name  = "ruriskry-tfstate-rg"
-storage_account_name = "ruriskrytfstate<suffix>"
-container_name       = "tfstate"
-key                  = "terraform-core.tfstate"
-EOF
-```
-
-### Step 4 — Configure tfvars
+### Step 2 — Configure tfvars
 
 ```bash
 cp infrastructure/terraform-core/terraform.tfvars.example \
@@ -101,7 +79,7 @@ cp infrastructure/terraform-core/terraform.tfvars.example \
 Edit `terraform.tfvars` — at minimum set:
 ```hcl
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # az account show --query id -o tsv
-suffix          = "<suffix>"   # same as Step 2 — used in all Azure resource names
+suffix          = "<suffix>"   # short unique string used in all Azure resource names
 ```
 
 **Cross-subscription scanning (optional):** if you want RuriSkry to scan a *different* subscription
@@ -117,7 +95,7 @@ RuriSkry and your resources are in the same subscription.
 > (your `az login` account) must have **Owner** or **User Access Administrator** on
 > `target_subscription_id`. Without it, Terraform will fail when creating the RBAC assignments.
 
-### Step 5 — Deploy everything
+### Step 3 — Deploy everything
 
 ```bash
 # Run in Git Bash (not PowerShell) from the repo root
@@ -126,8 +104,17 @@ bash scripts/deploy.sh
 #   bash scripts/deploy.sh --stage2
 ```
 
-`deploy.sh` handles Terraform init (with `backend.hcl`) → ACR creation → Docker build/push
-→ full infra apply → frontend deploy → health check. When it finishes:
+`deploy.sh` fully automates the deployment. It handles:
+- **Azure provider registration** (Microsoft.App, etc.) — required once on new subscriptions
+- **Remote state storage** — creates `ruriskry-tfstate-rg` + storage account + `backend.hcl` if they don't exist
+- **Terraform init → Stage 1** (ACR + Managed Identity)
+- **Docker build + push** to ACR
+- **Stage 2** full infra apply (Container App, Cosmos DB, Key Vault, Static Web App)
+- **Dashboard build + deploy**
+- **Health check**
+- **Demo environment wiring** (if terraform-demo is already deployed)
+
+When it finishes:
 
 ```
 Dashboard  →  https://<app>.azurestaticapps.net
@@ -143,7 +130,7 @@ terraform -chdir=infrastructure/terraform-core output backend_url
 terraform -chdir=infrastructure/terraform-core output dashboard_url
 ```
 
-### Step 6 — Wire demo environment to RuriSkry *(if using terraform-demo)*
+### Step 4 — Wire demo environment to RuriSkry *(if using terraform-demo)*
 
 If you deployed `infrastructure/terraform-demo/` in a separate subscription, connect
 its Azure Monitor alerts to RuriSkry now that the backend URL is known:

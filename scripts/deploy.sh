@@ -21,11 +21,11 @@
 #           infrastructure/terraform-core/terraform.tfvars
 #      Edit terraform.tfvars — set subscription_id and suffix at minimum.
 #
-#   2. Create remote state storage (one-time, if not done):
-#        See infrastructure/terraform-core/deploy.md § "Create remote state storage"
-#
-#   3. Tools required: terraform, az (Azure CLI), docker, node, npm
+#   2. Tools required: terraform, az (Azure CLI), docker, node, npm
 #      Run `az login` before executing this script.
+#
+# Everything else (provider registration, remote state storage, backend.hcl,
+# Docker build/push, Terraform apply, dashboard deploy) is fully automated.
 # =============================================================================
 set -euo pipefail
 
@@ -95,7 +95,79 @@ fi
 [[ -f "$TF_DIR/terraform.tfvars" ]] \
   || die "terraform.tfvars not found.\n   Run: cp $TF_DIR/terraform.tfvars.example $TF_DIR/terraform.tfvars\n   Then fill in subscription_id and suffix."
 
+# Read suffix early — needed for tfstate storage name
+SUFFIX=$(grep -E '^suffix\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+[[ -n "$SUFFIX" && "$SUFFIX" != "replace-me" ]] \
+  || die "suffix is not set in terraform.tfvars.\n   Open terraform.tfvars and set a short unique suffix (e.g. \"jd4821\")."
+
 ok "All prerequisites satisfied"
+
+# =============================================================================
+# 0a. Register required Azure providers
+# =============================================================================
+step "Registering Azure providers"
+
+for PROVIDER in Microsoft.App Microsoft.ContainerService Microsoft.OperationalInsights; do
+  STATE=$(az provider show --namespace "$PROVIDER" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
+  if [[ "$STATE" == "Registered" ]]; then
+    ok "$PROVIDER already registered"
+  else
+    log "Registering $PROVIDER (this may take a minute)..."
+    az provider register --namespace "$PROVIDER" --wait
+    ok "$PROVIDER registered"
+  fi
+done
+
+# =============================================================================
+# 0b. Terraform remote state — auto-create if missing
+# =============================================================================
+TFSTATE_RG="ruriskry-tfstate-rg"
+TFSTATE_SA="ruriskrytfstate${SUFFIX}"
+TFSTATE_LOCATION="eastus2"
+
+if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
+  step "Setting up Terraform remote state"
+
+  # Create resource group if it doesn't exist
+  if ! az group show --name "$TFSTATE_RG" &>/dev/null; then
+    log "Creating resource group: $TFSTATE_RG"
+    az group create --name "$TFSTATE_RG" --location "$TFSTATE_LOCATION" --output none
+    ok "Resource group created: $TFSTATE_RG"
+  else
+    ok "Resource group already exists: $TFSTATE_RG"
+  fi
+
+  # Create storage account if it doesn't exist
+  if ! az storage account show --name "$TFSTATE_SA" --resource-group "$TFSTATE_RG" &>/dev/null; then
+    log "Creating storage account: $TFSTATE_SA"
+    az storage account create \
+      --name "$TFSTATE_SA" \
+      --resource-group "$TFSTATE_RG" \
+      --location "$TFSTATE_LOCATION" \
+      --sku Standard_LRS \
+      --allow-blob-public-access false \
+      --output none
+    az storage container create \
+      --name tfstate \
+      --account-name "$TFSTATE_SA" \
+      --output none
+    ok "Storage account created: $TFSTATE_SA"
+  else
+    ok "Storage account already exists: $TFSTATE_SA"
+  fi
+
+  # Generate backend.hcl
+  cat > "$TF_DIR/backend.hcl" <<EOF
+resource_group_name  = "$TFSTATE_RG"
+storage_account_name = "$TFSTATE_SA"
+container_name       = "tfstate"
+key                  = "terraform-core.tfstate"
+EOF
+  ok "backend.hcl created"
+else
+  ok "backend.hcl already exists — skipping remote state setup"
+fi
 
 # =============================================================================
 # 1. Terraform init
@@ -104,14 +176,7 @@ step "Initialising Terraform"
 
 cd "$TF_DIR"
 
-# backend.hcl holds the storage account name (not committed — see deploy.md Step 3)
-BACKEND_CONFIG=""
-if [[ -f "backend.hcl" ]]; then
-  BACKEND_CONFIG="-backend-config=backend.hcl"
-else
-  warn "backend.hcl not found in $TF_DIR — Terraform will prompt for backend config."
-  warn "See infrastructure/terraform-core/deploy.md Step 3 to create it."
-fi
+BACKEND_CONFIG="-backend-config=backend.hcl"
 
 if [[ "$UPGRADE_PROVIDERS" == true ]]; then
   terraform init -upgrade $BACKEND_CONFIG
@@ -430,3 +495,52 @@ echo ""
 echo "  For subsequent code or infra changes, see:"
 echo "  infrastructure/terraform-core/deploy.md § Redeploy Workflows"
 echo ""
+
+# =============================================================================
+# 8. Wire demo environment to this backend (if deployed)
+# =============================================================================
+# If the user has also deployed infrastructure/terraform-demo, this step
+# injects the backend URL into the demo environment's Azure Monitor action
+# group so alerts flow into RuriSkry automatically.
+#
+# Skipped if:
+#   - terraform-demo/terraform.tfvars doesn't exist (demo not set up yet)
+#   - terraform-demo/.terraform doesn't exist (demo not initialised/applied)
+#   - alert_webhook_url is already set in demo terraform.tfvars
+
+DEMO_DIR="$REPO_ROOT/infrastructure/terraform-demo"
+
+if [[ -f "$DEMO_DIR/terraform.tfvars" && -d "$DEMO_DIR/.terraform" ]]; then
+  step "Wiring demo environment to RuriSkry backend"
+
+  CURRENT_WEBHOOK=$(grep -E '^alert_webhook_url\s*=' "$DEMO_DIR/terraform.tfvars" 2>/dev/null \
+    | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || echo "")
+
+  if [[ -z "$CURRENT_WEBHOOK" ]]; then
+    log "Injecting alert_webhook_url = $BACKEND_URL/api/alert-trigger"
+
+    # Replace existing line if present, otherwise append
+    if grep -qE '^alert_webhook_url\s*=' "$DEMO_DIR/terraform.tfvars"; then
+      sed -i "s|^alert_webhook_url\s*=.*|alert_webhook_url = \"$BACKEND_URL/api/alert-trigger\"|" \
+        "$DEMO_DIR/terraform.tfvars"
+    else
+      printf '\nalert_webhook_url = "%s/api/alert-trigger"\n' "$BACKEND_URL" \
+        >> "$DEMO_DIR/terraform.tfvars"
+    fi
+
+    log "Applying demo action group update..."
+    cd "$DEMO_DIR"
+    terraform apply -auto-approve -target=azurerm_monitor_action_group.prod
+    cd "$TF_DIR"
+    ok "Demo environment wired: alerts → $BACKEND_URL/api/alert-trigger"
+  else
+    ok "Demo environment already wired ($CURRENT_WEBHOOK) — skipping"
+  fi
+else
+  if [[ ! -f "$DEMO_DIR/terraform.tfvars" ]]; then
+    log "Demo environment not configured — skipping webhook wiring."
+    log "To wire it later, deploy terraform-demo then re-run: bash scripts/deploy.sh --stage2"
+  else
+    log "Demo environment not initialised — run 'terraform init && terraform apply' in terraform-demo first."
+  fi
+fi
