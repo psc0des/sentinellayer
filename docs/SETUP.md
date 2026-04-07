@@ -106,13 +106,23 @@ bash scripts/deploy.sh
 
 `deploy.sh` fully automates the deployment. It handles:
 - **Azure provider registration** (Microsoft.App, etc.) — required once on new subscriptions
+- **Soft-delete purge** — purges any soft-deleted Foundry account or Key Vault from previous failed deploys
 - **Remote state storage** — creates `ruriskry-tfstate-rg` + storage account + `backend.hcl` if they don't exist
+- **Foundry quota check** — fails fast with clear instructions if model quota is 0
 - **Terraform init → Stage 1** (ACR + Managed Identity)
 - **Docker build + push** to ACR
 - **Stage 2** full infra apply (Container App, Cosmos DB, Key Vault, Static Web App)
-- **Dashboard build + deploy**
+- **Dashboard build + deploy** to Azure Static Web Apps
 - **Health check**
+- **Alert rule wiring** — sweeps `target_subscription_id` for existing alert rules and offers to add the RuriSkry Action Group to each one
 - **Demo environment wiring** (if terraform-demo is already deployed)
+
+**Cleaning up / retrying a failed deploy:**
+```bash
+bash scripts/cleanup.sh        # delete RG + purge soft-deleted resources (keeps tfstate)
+bash scripts/cleanup.sh --all  # full wipe including tfstate storage
+bash scripts/deploy.sh         # fresh deploy after cleanup
+```
 
 When it finishes:
 
@@ -429,6 +439,20 @@ RuriSkry agents run periodic scans, but you can also wire Azure Monitor alerts
 so any infrastructure event (VM stops, CPU spikes, disk fills) creates a
 **pending alert** in the dashboard for manual investigation.  Click
 **Investigate** on any pending alert row to trigger the Monitoring Agent.
+
+**`deploy.sh` automates this** (Step 9): after provisioning it sweeps your
+`target_subscription_id` for all existing metric and activity-log alert rules
+and offers to add the RuriSkry Action Group to each one. This is idempotent —
+safe to accept even if some rules are already wired. If you skipped this step
+during deploy, run the commands manually:
+
+```bash
+ACTION_GROUP_ID=$(cd infrastructure/terraform-core && terraform output -raw alert_action_group_id)
+az monitor metrics alert update \
+  --name "<rule-name>" --resource-group "<rg>" \
+  --subscription "<target-subscription-id>" \
+  --add-action "$ACTION_GROUP_ID"
+```
 
 See [`docs/alert-wiring.md`](alert-wiring.md) for:
 - What is wired automatically vs what requires manual steps

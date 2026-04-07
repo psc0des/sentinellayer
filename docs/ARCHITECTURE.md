@@ -65,7 +65,7 @@ and receive streaming `GovernanceVerdict` results via SSE.
 
 - **Entry point:** `src/a2a/ruriskry_a2a_server.py`
 - **Start:** `uvicorn src.a2a.ruriskry_a2a_server:app --host 0.0.0.0 --port 8000`
-- **Demo:** `python demo_a2a.py`
+- **Demo (local dev):** `python demo_a2a.py` — in a live deployment agents self-register on first scan; no manual connection needed
 
 ### 2. MCP (stdio) — Developer / IDE Pattern
 AI tools on the same machine (Claude Desktop, GitHub Copilot, any MCP host) call
@@ -214,7 +214,7 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 Additional security controls managed by Terraform:
 - **Management lock** — `azurerm_management_lock` (CanNotDelete) on the resource group. The lock `depends_on` all major resources so `terraform destroy` removes it automatically before deleting anything else — no manual step required
 - **Subscription-level Reader** — `azurerm_role_assignment.subscription_reader` grants the Container App's Managed Identity `Reader` at subscription scope for cross-RG Resource Graph scanning
-- **Azure Monitor Action Group** — `azurerm_monitor_action_group.ruriskry` (`terraform-core`) points at `https://<backend-fqdn>/api/alert-trigger`. Attach alert rules to this group (portal or `az monitor metrics alert update --add-action`) so Azure Monitor alerts POST to the backend and trigger automatic governance evaluation. See [`docs/alert-wiring.md`](alert-wiring.md) for a step-by-step guide on wiring new resources.
+- **Azure Monitor Action Group** — `azurerm_monitor_action_group.ruriskry` (`terraform-core`) points at `https://<backend-fqdn>/api/alert-trigger`. `deploy.sh` Step 9 automatically sweeps `target_subscription_id` for existing alert rules and offers to add this group — no manual `az` commands needed on first deploy. See [`docs/alert-wiring.md`](alert-wiring.md) for wiring additional resources after initial deploy.
 - **CORS** — enforced at the application layer in `src/api/dashboard_api.py` via `CORSMiddleware` with exact origin matching against `DASHBOARD_URL`. The Container App references `azurerm_static_web_app.dashboard.default_host_name` directly in `main.tf` — Terraform creates the SWA first (implicit dependency), reads the URL in-memory, and passes the exact value into `DASHBOARD_URL` in the same apply — no tfvars patching, no re-apply, no stale CORS window, no wildcard patterns needed
 - **Slack webhook** — stored as a Key Vault secret and injected via the Container App secret mechanism; not exposed as a plain env var
 

@@ -357,7 +357,7 @@ cd dashboard && npm install && npm run dev
 # Other entry points:
 python -m src.mcp_server.server    # MCP stdio server (for Claude Desktop)
 python demo.py                     # direct pipeline demo (3 scenarios)
-python demo_a2a.py                 # A2A protocol demo
+python demo_a2a.py                 # A2A protocol demo (local dev only)
 python demo_live.py                # two-layer intelligence demo
 ```
 
@@ -452,7 +452,7 @@ ruriskry/
 
 ## Demo Scenarios
 
-Run `python demo.py` (direct pipeline) or `python demo_a2a.py` (A2A protocol).
+Run `python demo.py` (direct pipeline) or `python demo_a2a.py` (A2A protocol, local dev only).
 
 ### Scenario 1: Dangerous Action → DENIED
 **Cost Agent** proposes deleting `vm-23` (disaster-recovery VM, $847/mo).
