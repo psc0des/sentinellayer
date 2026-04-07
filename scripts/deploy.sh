@@ -118,7 +118,7 @@ ok "All prerequisites satisfied"
 # =============================================================================
 step "Registering Azure providers"
 
-for PROVIDER in Microsoft.App Microsoft.ContainerService Microsoft.OperationalInsights; do
+for PROVIDER in Microsoft.Storage Microsoft.App Microsoft.ContainerService Microsoft.OperationalInsights Microsoft.KeyVault Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Search Microsoft.Web; do
   STATE=$(az provider show --namespace "$PROVIDER" --subscription "$SUBSCRIPTION_ID" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
   if [[ "$STATE" == "Registered" ]]; then
     ok "$PROVIDER already registered"
@@ -150,17 +150,32 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
   fi
 
   # Create storage account if it doesn't exist
+  # Retry up to 4 times with 20s wait — new subscriptions have a propagation delay
+  # where the Storage API doesn't recognise the subscription for ~60s after creation.
   if ! az storage account show --name "$TFSTATE_SA" --resource-group "$TFSTATE_RG" \
        --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
     log "Creating storage account: $TFSTATE_SA"
-    az storage account create \
-      --name "$TFSTATE_SA" \
-      --resource-group "$TFSTATE_RG" \
-      --location "$TFSTATE_LOCATION" \
-      --subscription "$SUBSCRIPTION_ID" \
-      --sku Standard_LRS \
-      --allow-blob-public-access false \
-      --output none
+    SA_CREATED=false
+    for attempt in 1 2 3 4; do
+      if az storage account create \
+           --name "$TFSTATE_SA" \
+           --resource-group "$TFSTATE_RG" \
+           --location "$TFSTATE_LOCATION" \
+           --subscription "$SUBSCRIPTION_ID" \
+           --sku Standard_LRS \
+           --allow-blob-public-access false \
+           --min-tls-version TLS1_2 \
+           --output none 2>/dev/null; then
+        SA_CREATED=true
+        break
+      fi
+      if [[ "$attempt" -lt 4 ]]; then
+        warn "Storage account creation failed (attempt $attempt/4) — waiting 20s for subscription to propagate..."
+        sleep 20
+      fi
+    done
+    [[ "$SA_CREATED" == true ]] \
+      || die "Could not create storage account after 4 attempts.\n   Check: az storage account create --name $TFSTATE_SA --resource-group $TFSTATE_RG --subscription $SUBSCRIPTION_ID"
     az storage container create \
       --name tfstate \
       --account-name "$TFSTATE_SA" \
