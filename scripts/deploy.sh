@@ -136,12 +136,32 @@ CREATE_DEPLOYMENT=${CREATE_DEPLOYMENT:-true}
 
 if [[ "$CREATE_DEPLOYMENT" == "true" && "$STAGE2_ONLY" == "false" ]]; then
   step "Pre-flight: checking Foundry quota"
+  # Azure quota key naming is inconsistent:
+  #   gpt-5.x series: key uses hyphen    → OpenAI.Standard.gpt-5-mini
+  #   gpt-4.x series: key drops hyphen   → OpenAI.Standard.gpt4.1-mini  (NOT gpt-4.1-mini)
+  # Try exact match first, then the gpt-4.x alternate (remove hyphen before version digit).
   QUOTA_KEY="OpenAI.${FOUNDRY_SCALE_TYPE}.${FOUNDRY_MODEL}"
+  QUOTA_KEY_ALT="OpenAI.${FOUNDRY_SCALE_TYPE}.$(echo "$FOUNDRY_MODEL" | sed 's/gpt-\([0-9]\)/gpt\1/')"
+
   QUOTA=$(az cognitiveservices usage list \
     --location "$FOUNDRY_LOCATION" \
     --subscription "$SUBSCRIPTION_ID" \
     --query "[?name.value=='${QUOTA_KEY}'].limit" \
     -o tsv 2>/dev/null | head -1)
+
+  # If exact key returned 0 or empty, try alternate key
+  if [[ -z "$QUOTA" || "${QUOTA%.*}" == "0" ]]; then
+    QUOTA_ALT=$(az cognitiveservices usage list \
+      --location "$FOUNDRY_LOCATION" \
+      --subscription "$SUBSCRIPTION_ID" \
+      --query "[?name.value=='${QUOTA_KEY_ALT}'].limit" \
+      -o tsv 2>/dev/null | head -1)
+    if [[ -n "$QUOTA_ALT" && "${QUOTA_ALT%.*}" -gt 0 ]]; then
+      QUOTA="$QUOTA_ALT"
+      QUOTA_KEY="$QUOTA_KEY_ALT"
+    fi
+  fi
+
   QUOTA=${QUOTA:-0}
   # Strip decimal (0.0 → 0)
   QUOTA_INT=${QUOTA%.*}
