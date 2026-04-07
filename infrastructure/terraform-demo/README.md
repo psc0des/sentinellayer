@@ -106,9 +106,6 @@ terraform plan
 # 5. Create the resources (takes ~5 minutes)
 terraform apply
 
-# 6. Copy real resource IDs into seed_resources.json
-terraform output seed_resources_ids
-
 # Optional: verify what IP rules were applied to NSG and Storage
 terraform output nsg_allowed_source_cidr   # e.g. 1.2.3.4/32 (NSG accepts /32)
 terraform output storage_allowed_ip        # e.g. 1.2.3.4   (Storage rejects /32)
@@ -116,16 +113,15 @@ terraform output storage_allowed_ip        # e.g. 1.2.3.4   (Storage rejects /32
 
 ---
 
-## After Deployment — Update seed_resources.json
+## After Deployment
 
-After `terraform apply`, run:
+In live mode (`USE_LOCAL_MOCKS=false`, `USE_LIVE_TOPOLOGY=true`), RuriSkry discovers
+these resources automatically via Azure Resource Graph — no manual configuration needed.
+Just point `target_subscription_id` in terraform-core at the subscription this demo
+environment is in and RuriSkry will find and govern everything here.
 
-```bash
-terraform output seed_resources_ids
-```
-
-Copy the real Azure resource IDs into `data/seed_resources.json`. This makes RuriSkry's
-mock Azure Resource Graph point to the actual resources, so the dashboard shows real IDs.
+> `seed_resources.json` is only used in mock mode (local development without Azure).
+> You do not need to update it for a real deployment.
 
 ---
 

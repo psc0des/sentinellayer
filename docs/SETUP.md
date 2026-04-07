@@ -174,31 +174,28 @@ python demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 
 ## Optional: Deploy Mini Production Environment
 
-`infrastructure/terraform-demo/` creates 5 real Azure resources that RuriSkry governs
-in live demos — turning mock IDs into actual Azure resource IDs on the dashboard.
+`infrastructure/terraform-demo/` creates real Azure resources in a separate subscription
+that RuriSkry governs. In live mode (`USE_LOCAL_MOCKS=false`, `USE_LIVE_TOPOLOGY=true`),
+RuriSkry discovers these resources automatically via Azure Resource Graph — no manual
+resource lists needed.
 
-> **Deploy terraform-core first** (Path A above). You need the backend URL from
-> `terraform -chdir=infrastructure/terraform-core output -raw backend_url`
-> to fill in `alert_webhook_url` below.
+> **Deploy order:** terraform-demo can be deployed any time. Wire `alert_webhook_url`
+> after terraform-core is deployed and you have the backend URL.
 
 ```bash
 cd infrastructure/terraform-demo
 cp terraform.tfvars.example terraform.tfvars
 
 # Fill in terraform.tfvars — required fields:
-#   subscription_id   = "<prod-sub-id>"       # can be a different sub from terraform-core
-#   suffix            = "<same-suffix>"        # same short suffix you used for terraform-core
-#   vm_admin_password = "<strong-password>"
+#   subscription_id   = "<demo-sub-id>"
+#   suffix            = "<short-unique-suffix>"   # lowercase alphanumeric, max 8 chars
+#   vm_admin_password = "<strong-password>"       # 12+ chars, upper+lower+digit+symbol
 #   alert_email       = "<your-email>"
-#   alert_webhook_url = "<backend_url>/api/alert-trigger"
-#     → wires Azure Monitor alerts directly into RuriSkry; leave empty to disable
+#   alert_webhook_url = ""   # fill after core is deployed: "<backend_url>/api/alert-trigger"
 
-# Local state — no remote backend needed for a demo environment
+# Local state — no remote backend needed
 terraform init
 terraform apply
-
-# After apply — paste real IDs into data/seed_resources.json:
-terraform output seed_resources_ids
 
 # Before each demo — start the VMs (auto-shutdown stops them at 22:00 UTC):
 az vm start --resource-group ruriskry-prod-rg --name vm-dr-01
