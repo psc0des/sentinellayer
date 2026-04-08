@@ -640,7 +640,11 @@ async def _run_agent_scan(
         )
 
         # --- Evaluate every proposal through the full governance pipeline ---
-        pipeline = RuriSkryPipeline()
+        # Pass the inventory so the pipeline can resolve REAL Azure resource
+        # tags for tag-based policies (POL-DR-001, POL-CRIT-001, POL-PROD-001).
+        # Without this, _find_resource only sees seed_resources.json (mock data)
+        # and tags={} reaches the policy agent → tag-based policies cannot fire.
+        pipeline = RuriSkryPipeline(inventory=inventory)
         tracker = _get_tracker()
         evaluations: list[dict] = []
         approved = escalated = denied = 0

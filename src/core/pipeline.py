@@ -108,7 +108,7 @@ class RuriSkryPipeline:
         print(verdict.decision.value, verdict.skry_risk_index.sri_composite)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, inventory: list[dict] | None = None) -> None:
         # ── Governance agents (the governors) ──────────────────────────────
         # Each loads its data file (JSON) once here and keeps it in memory.
         # In live mode each is backed by a Microsoft Agent Framework agent.
@@ -125,10 +125,28 @@ class RuriSkryPipeline:
         self._deploy = DeployAgent()
 
         # Load the resource graph for policy metadata enrichment.
-        # The PolicyComplianceAgent needs resource tags (e.g. purpose=disaster-recovery)
-        # to evaluate tag-based policies correctly.  Since those tags live in
-        # seed_resources.json, we load them here and pass them per-call.
+        # The PolicyComplianceAgent needs resource tags (e.g. disaster-recovery=true)
+        # to evaluate tag-based policies correctly.
         self._resources: dict[str, dict] = self._load_resource_graph()
+
+        # ── Inventory merge (live Azure tags) ─────────────────────────────
+        # When the dashboard runs a live scan it passes the Cosmos inventory
+        # snapshot here so _find_resource() can locate REAL Azure resources
+        # by ARM ID. Without this, _find_resource only sees the static seed
+        # topology and tag-based policies (POL-DR-001, POL-CRIT-001,
+        # POL-PROD-001) silently fail to fire on live resources because
+        # tags={} reaches the policy agent.
+        seed_count = len(self._resources)
+        inventory_count = len(inventory) if inventory else 0
+        if inventory:
+            for r in inventory:
+                arm_id = r.get("id", "")
+                name = r.get("name") or (arm_id.split("/")[-1] if arm_id else "")
+                if arm_id:
+                    self._resources[arm_id] = r
+                    self._resources[arm_id.lower()] = r
+                if name:
+                    self._resources.setdefault(name, r)
 
         # ── Org context (Phase 26 — Risk Triage) ──────────────────────────
         # Built once from config and reused for every evaluate() call.
@@ -137,9 +155,10 @@ class RuriSkryPipeline:
         self._org_context = build_org_context()
 
         logger.info(
-            "RuriSkryPipeline initialised — %d resources in topology graph | "
+            "RuriSkryPipeline initialised — %d seed + %d inventory resources | "
             "org=%s frameworks=%s tolerance=%s",
-            len(self._resources),
+            seed_count,
+            inventory_count,
             self._org_context.org_name,
             self._org_context.compliance_frameworks or "none",
             self._org_context.risk_tolerance,
@@ -349,6 +368,10 @@ class RuriSkryPipeline:
         """
         if resource_id in self._resources:
             return self._resources[resource_id]
+        # Live inventory ARM IDs may differ in case (Microsoft.Compute vs microsoft.compute)
+        rid_lower = resource_id.lower()
+        if rid_lower in self._resources:
+            return self._resources[rid_lower]
         name = resource_id.split("/")[-1]
         return self._resources.get(name)
 
