@@ -775,16 +775,37 @@ else
     [[ -z "$ag_name" ]] && continue
     log "Wiring webhook on action group: $ag_name (rg: $ag_rg)"
 
-    # Inject/update a webhook receiver pointing at the RuriSkry alert endpoint.
-    # --add-action with 'webhook NAME URI' is idempotent — if the receiver name
-    # already exists Azure replaces it; if not it creates it.
+    WEBHOOK_TARGET="${BACKEND_URL}/api/alert-trigger"
+
+    # Check if this action group already has our webhook pointing at the correct URL.
+    # Azure throws DuplicateWebhookServiceUri if we try to --add-action the same URI twice.
+    EXISTING=$(az monitor action-group show \
+      --name "$ag_name" --resource-group "$ag_rg" \
+      --subscription "$ALERT_SUB" \
+      --query "webhookReceivers[?serviceUri=='${WEBHOOK_TARGET}'] | length(@)" \
+      -o tsv 2>/dev/null || echo "0")
+
+    if [[ "$EXISTING" != "0" && -n "$EXISTING" ]]; then
+      ok "Already wired: $ag_name → ${WEBHOOK_TARGET}"
+      (( WIRED++ )) || true
+      continue
+    fi
+
+    # Remove any stale ruriskry-webhook receiver (different URL) before adding new one.
+    az monitor action-group update \
+      --name "$ag_name" --resource-group "$ag_rg" \
+      --subscription "$ALERT_SUB" \
+      --remove-receiver ruriskry-webhook \
+      --output none 2>/dev/null || true
+
+    # Add the webhook receiver pointing at the current backend URL.
     if az monitor action-group update \
          --name "$ag_name" \
          --resource-group "$ag_rg" \
          --subscription "$ALERT_SUB" \
-         --add-action webhook ruriskry-webhook "${BACKEND_URL}/api/alert-trigger" \
+         --add-action webhook ruriskry-webhook "${WEBHOOK_TARGET}" \
          --output none 2>/dev/null; then
-      ok "Wired: $ag_name → ${BACKEND_URL}/api/alert-trigger"
+      ok "Wired: $ag_name → ${WEBHOOK_TARGET}"
       (( WIRED++ )) || true
     else
       warn "Failed to wire webhook on: $ag_name (rg: $ag_rg)"
