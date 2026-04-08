@@ -633,7 +633,7 @@ try:
         print(json.load(r).get('status', '?'))
 except Exception:
     pass
-" 2>/dev/null)
+" 2>/dev/null || true)
   if [[ -n "$RESULT" ]]; then
     HEALTH="$RESULT"
     break
