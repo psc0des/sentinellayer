@@ -247,15 +247,23 @@ Notifications fire for DENIED/ESCALATED verdicts and Azure Monitor alerts.
 
 **Automatic (deploy.sh Step 9)** — the recommended path:
 
-`deploy.sh` Step 9 handles this automatically after the backend is deployed. It:
-1. Finds all action groups named `ag-ruriskry-*` in the target subscription
-2. Checks if a `ruriskry-webhook` receiver already points at `BACKEND_URL/api/alert-trigger` — skips if already correct
-3. Removes any stale receiver (different URL) then calls `az monitor action-group update --add-action webhook ruriskry-webhook <BACKEND_URL>/api/alert-trigger`
-4. Handles `DuplicateWebhookServiceUri` gracefully
+`deploy.sh` Step 9 creates one **Alert Processing Rule (APR)** scoped to the entire target subscription:
 
-This is idempotent — re-running `deploy.sh --stage2` is safe.
+```
+All alert rules in target subscription
+    └── APR "apr-ruriskry-governance-fanout"
+            └── Action Group "ag-ruriskry-*-alert-handler-*"  (in infra sub)
+                    └── Webhook → POST /api/alert-trigger
+```
 
-> **Cross-subscription note**: Step 9 uses `TARGET_SUBSCRIPTION` (set via `target_subscription_id` in tfvars). If omitted, it defaults to the same subscription as `terraform-core`. The `az monitor action-group update --add-action` CLI pattern works correctly cross-subscription; the old `--add-action <ARM-ID>` approach failed with "Value of --add-action is invalid".
+- **Non-invasive** — does not modify any existing alert rules or action groups
+- **Future-proof** — new alert rules created by any team auto-route to RuriSkry without any re-run
+- **Idempotent** — re-running `deploy.sh --stage2` is safe; skips if APR already correct
+- **Requires** `Monitoring Contributor` on the target subscription
+
+> **Fallback**: If APR creation fails (insufficient permissions), Step 9 falls back to ARM PUT injection into existing `ruriskry-*` action groups. This covers existing rules only — new rules will not auto-route. Grant `Monitoring Contributor` and re-run to upgrade to full APR coverage.
+>
+> **Why not `az monitor action-group update --add-action webhook`?** That CLI shorthand triggers a URL blocklist check that rejects Container Apps FQDNs with `WebhookServiceUriBlocked`. Step 9 uses `az rest --method put` (the same ARM path Terraform uses) to bypass this.
 
 **If you use `infrastructure/terraform-demo`** (manual / CI path):
 
@@ -277,14 +285,6 @@ This is idempotent — re-running `deploy.sh --stage2` is safe.
    ```
 
 > Every alert rule in `terraform-demo` references `azurerm_monitor_action_group.prod`, so setting `alert_webhook_url` once wires all of them — no per-rule steps.
-
-**If you have alert rules outside `terraform-demo`** (manually created rules or rules in other RGs):
-
-Attach them to the `ag-ruriskry-*` action group — Action Groups are subscription-scoped, so they work cross-RG:
-
-```bash
-# Portal: Monitor → Alerts → Alert rules → Edit rule → Actions tab → Add action group → ag-ruriskry-*
-```
 
 The `alert_webhook_url` output from `terraform-core` shows the exact URL being used:
 ```bash
