@@ -164,15 +164,15 @@ class ScanRunTracker:
     def is_mock(self) -> bool:
         return self._is_mock
 
-    def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return up to *limit* scan-run records, newest-first."""
+    def get_recent(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        """Return up to *limit* scan-run records, newest-first, skipping *offset* records."""
         if self._is_mock:
             records = self._load_local_all()
             records.sort(key=lambda r: r.get("started_at", ""), reverse=True)
-            return records[:limit]
+            return records[offset:offset + limit]
 
         query = (
-            f"SELECT TOP {limit} * FROM c ORDER BY c.started_at DESC"
+            f"SELECT * FROM c ORDER BY c.started_at DESC OFFSET {offset} LIMIT {limit}"
         )
         return list(
             self._container.query_items(

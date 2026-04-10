@@ -2,6 +2,11 @@
 
 Endpoints
 ---------
+GET  /api/auth/status              Check if admin account has been created.
+POST /api/auth/setup               Create the initial admin account (first-time only).
+POST /api/auth/login               Authenticate with username + password; returns session token.
+GET  /api/auth/me                  Validate current session token; returns username.
+POST /api/auth/logout              Revoke current session token.
 GET  /api/evaluations              Recent governance decisions (newest-first).
 GET  /api/evaluations/{id}         Full detail for one evaluation.
 GET  /api/metrics                  Aggregate stats across all evaluations.
@@ -41,19 +46,24 @@ Run
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
+import secrets
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.a2a.agent_registry import AgentRegistry
 from src.config import settings
@@ -77,6 +87,156 @@ from src.notifications.slack_notifier import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# L4 — X-Request-ID: per-request correlation ID propagated through all logs
+# and returned in the response header so callers can trace distributed calls.
+# ---------------------------------------------------------------------------
+_request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+
+
+class _RequestIDLogFilter(logging.Filter):
+    """Inject the current request_id into every log record."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id_var.get("-")  # type: ignore[attr-defined]
+        return True
+
+
+# Attach to the root handler so ALL loggers in this process pick it up.
+for _h in logging.root.handlers:
+    _h.addFilter(_RequestIDLogFilter())
+
+# ---------------------------------------------------------------------------
+# Simple in-memory rate limiter — protects LLM-heavy endpoints from abuse.
+# Tracks request timestamps per client IP with a sliding window.
+# Not distributed (per-replica) — sufficient for single-node and small
+# multi-replica deployments where sticky sessions are already in use.
+# ---------------------------------------------------------------------------
+import time as _time
+from collections import defaultdict as _defaultdict
+
+_rate_store: dict[str, list[float]] = _defaultdict(list)
+_SCAN_RATE_LIMIT = 10       # requests per window
+_SCAN_RATE_WINDOW = 60      # seconds
+
+
+def _check_rate_limit(client_ip: str) -> None:
+    """Raise 429 if the client has exceeded the scan rate limit."""
+    now = _time.monotonic()
+    window_start = now - _SCAN_RATE_WINDOW
+    hits = _rate_store[client_ip]
+    # Prune expired entries
+    hits[:] = [t for t in hits if t > window_start]
+    if len(hits) >= _SCAN_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded: max {_SCAN_RATE_LIMIT} scan/alert requests "
+                   f"per {_SCAN_RATE_WINDOW}s per client.",
+        )
+    hits.append(now)
+
+
+# ---------------------------------------------------------------------------
+# C3 — reviewed_by validation
+# Rejects empty strings and the generic default in live mode so the audit
+# trail always contains a real reviewer identity on production deployments.
+# ---------------------------------------------------------------------------
+_GENERIC_REVIEWER = "dashboard-user"
+
+
+def _validate_reviewed_by(raw: str) -> str:
+    """Return a clean reviewed_by string or raise HTTP 400."""
+    value = (raw or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="reviewed_by is required and must not be empty.")
+    if not settings.use_local_mocks and value == _GENERIC_REVIEWER:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"reviewed_by '{_GENERIC_REVIEWER}' is not accepted in live mode. "
+                "Supply the reviewer's name or email address."
+            ),
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Auth — admin account + browser session tokens
+#
+# The admin account is created once via POST /api/auth/setup (first-time flow).
+# Subsequent access uses POST /api/auth/login → session token stored in the
+# browser's localStorage. Session tokens are 32-byte URL-safe random strings
+# stored in memory; they expire after SESSION_TTL hours.
+#
+# Password is hashed with PBKDF2-HMAC-SHA256 (260 000 iterations) + random
+# salt — equivalent to bcrypt strength without an external dependency.
+#
+# The middleware accepts EITHER a valid session token (browser dashboard) OR a
+# valid API key (machine-to-machine / CI-CD) on POST/PATCH endpoints.
+# ---------------------------------------------------------------------------
+
+_AUTH_FILE = Path("data") / "admin_auth.json"
+_SESSION_TTL = 8 * 3600          # seconds a browser session stays valid
+_PBKDF2_ITERS = 260_000          # NIST SP 800-132 recommended minimum
+
+# Cached admin record — "unloaded" sentinel means not yet read from disk.
+_admin_cache: dict | None | str = "unloaded"
+
+
+def _get_admin() -> dict | None:
+    """Return the admin record dict, or None if no admin has been created."""
+    global _admin_cache
+    if _admin_cache == "unloaded":
+        if _AUTH_FILE.exists():
+            try:
+                _admin_cache = json.loads(_AUTH_FILE.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                _admin_cache = None
+        else:
+            _admin_cache = None
+    return _admin_cache  # type: ignore[return-value]
+
+
+def _save_admin(username: str, password: str) -> None:
+    """Hash password and persist admin record to disk."""
+    global _admin_cache
+    salt = secrets.token_hex(32)
+    pw_hash = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), _PBKDF2_ITERS
+    ).hex()
+    record: dict = {"username": username, "salt": salt, "pw_hash": pw_hash}
+    _AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _AUTH_FILE.write_text(json.dumps(record), encoding="utf-8")
+    _admin_cache = record
+
+
+def _verify_password(password: str, salt: str, pw_hash: str) -> bool:
+    candidate = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), _PBKDF2_ITERS
+    ).hex()
+    return secrets.compare_digest(candidate, pw_hash)
+
+
+# In-memory session store: {token: {"username": str, "expires_at": float}}
+_sessions: dict[str, dict] = {}
+
+
+def _create_session(username: str) -> str:
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = {"username": username, "expires_at": _time.time() + _SESSION_TTL}
+    return token
+
+
+def _validate_session(token: str) -> str | None:
+    """Return username if the session token is valid and unexpired, else None."""
+    rec = _sessions.get(token)
+    if not rec:
+        return None
+    if _time.time() > rec["expires_at"]:
+        del _sessions[token]
+        return None
+    return rec["username"]
+
 
 # ---------------------------------------------------------------------------
 # Resource tag lookup helper (Fix 1 — pass real tags to ExecutionGateway)
@@ -177,6 +337,14 @@ async def lifespan(app: FastAPI):
             logger.warning("Startup: marked orphaned scan %s as error (was running)", sid[:8])
     except Exception as exc:
         logger.warning("Startup: could not clean up orphaned scans: %s", exc)
+
+    if settings.use_local_mocks:
+        logger.warning(
+            "⚠ MOCK MODE ACTIVE (USE_LOCAL_MOCKS=true) — all agents return canned "
+            "data. No real Azure calls will be made. Set USE_LOCAL_MOCKS=false in "
+            ".env to connect to live Azure resources."
+        )
+
     yield  # application runs
 
 
@@ -208,6 +376,67 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# C2 + Auth — combined auth middleware (mutating endpoints only)
+#
+# Accepts EITHER a valid API key (machine-to-machine) OR a valid browser
+# session token. Enforcement kicks in when:
+#   • API_KEY env var is set (existing machine-to-machine gate), OR
+#   • An admin account has been created (browser login flow).
+#
+# Exempt paths: /api/alert-trigger (own ALERT_WEBHOOK_SECRET) and all
+# /api/auth/* endpoints (public by design).
+# GET endpoints remain open — reads are low-risk and used by the browser
+# without credentials. secrets.compare_digest prevents timing attacks.
+# ---------------------------------------------------------------------------
+class _APIKeyMiddleware(BaseHTTPMiddleware):
+    _EXEMPT_PATHS = {"/api/alert-trigger"}
+    _AUTH_EXEMPT_PREFIX = "/api/auth/"
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if request.method in ("POST", "PATCH"):
+            if path not in self._EXEMPT_PATHS and not path.startswith(self._AUTH_EXEMPT_PREFIX):
+                need_api_key = bool(settings.api_key)
+                need_session = _get_admin() is not None
+
+                if need_api_key or need_session:
+                    # Check API key (X-API-Key header)
+                    api_key_ok = need_api_key and secrets.compare_digest(
+                        request.headers.get("X-API-Key", ""), settings.api_key
+                    )
+                    # Check session token (Authorization: Bearer <token>)
+                    auth_hdr = request.headers.get("Authorization", "")
+                    raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
+                    session_ok = bool(raw_token and _validate_session(raw_token))
+
+                    if not api_key_ok and not session_ok:
+                        return JSONResponse(
+                            {"detail": "Authentication required. Log in via the dashboard or supply X-API-Key."},
+                            status_code=401,
+                        )
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# L4 — X-Request-ID middleware
+# Reads incoming X-Request-ID or generates a UUID. Sets the context var so
+# all log lines within the request carry it, then echoes it in the response.
+# ---------------------------------------------------------------------------
+class _RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        _request_id_var.set(request_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+# Middleware order: last add_middleware call = outermost (first to process request).
+# Request path: RequestID → APIKey → CORS → App
+app.add_middleware(_APIKeyMiddleware)
+app.add_middleware(_RequestIDMiddleware)
 
 # ---------------------------------------------------------------------------
 # Tracker singleton — created once, reused on every request.
@@ -978,6 +1207,7 @@ def _get_scan_record(scan_id: str) -> dict | None:
 @app.get("/api/evaluations")
 async def list_evaluations(
     limit: int = Query(default=20, ge=1, le=500, description="Max records to return"),
+    offset: int = Query(default=0, ge=0, description="Records to skip (for pagination)"),
     resource_id: str | None = Query(
         default=None, description="Filter by resource ID substring"
     ),
@@ -986,13 +1216,14 @@ async def list_evaluations(
 
     Query parameters:
     - **limit**: 1–500, default 20
+    - **offset**: records to skip, default 0 (use with limit for pagination)
     - **resource_id**: optional substring filter on the resource ID field
     """
     tracker = _get_tracker()
     if resource_id:
         records = tracker.get_by_resource(resource_id, limit=limit)
     else:
-        records = tracker.get_recent(limit=limit)
+        records = tracker.get_recent(limit=limit, offset=offset)
     return {"count": len(records), "evaluations": records}
 
 
@@ -1650,6 +1881,7 @@ def _normalize_azure_alert_payload(raw: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/alert-trigger")
 async def trigger_alert(
     alert: dict[str, Any],
+    authorization: str | None = Header(default=None),
 ) -> dict:
     """Receive an Azure Monitor alert and create a pending alert record.
 
@@ -1676,6 +1908,14 @@ async def trigger_alert(
     Returns:
         ``{"status": "pending", "alert_id": "<uuid>"}`` — immediately.
     """
+    # Webhook secret verification — only enforced when ALERT_WEBHOOK_SECRET is set.
+    # Azure Monitor Action Group sends the value in the Authorization header as
+    # "Bearer <secret>".  Callers that know the URL but not the secret get 401.
+    if settings.alert_webhook_secret:
+        expected = f"Bearer {settings.alert_webhook_secret}"
+        if authorization != expected:
+            raise HTTPException(status_code=401, detail="Invalid or missing webhook secret")
+
     alert = _normalize_azure_alert_payload(alert)
     now = datetime.now(timezone.utc).isoformat()
     alert_id = str(uuid.uuid4())
@@ -1761,7 +2001,10 @@ async def alert_active_count() -> dict:
 
 
 @app.get("/api/alerts")
-async def list_alerts(limit: int = Query(default=50, ge=1, le=500)) -> dict:
+async def list_alerts(
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, description="Records to skip (for pagination)"),
+) -> dict:
     """List all alert records newest-first.
 
     Returns both in-memory (recent) and durable (historical) alerts,
@@ -1777,16 +2020,16 @@ async def list_alerts(limit: int = Query(default=50, ge=1, le=500)) -> dict:
         merged.append(entry)
         seen.add(aid)
 
-    # Durable records not yet in memory
-    for record in _get_alert_tracker().get_recent(limit):
+    # Durable records not yet in memory (fetch enough to cover offset+limit)
+    for record in _get_alert_tracker().get_recent(limit + offset):
         aid = record.get("alert_id") or record.get("id")
         if aid and aid not in seen:
             merged.append(record)
             seen.add(aid)
 
-    # Sort newest-first and limit
+    # Sort newest-first, apply offset and limit
     merged.sort(key=lambda r: r.get("received_at", ""), reverse=True)
-    result = merged[:limit]
+    result = merged[offset:offset + limit]
 
     # Strip Cosmos internal fields
     cleaned = []
@@ -1922,6 +2165,7 @@ def _make_scan_record(agent_type: str, resource_group: str | None) -> tuple[str,
 
 @app.post("/api/scan/cost")
 async def trigger_cost_scan(
+    request: Request,
     background_tasks: BackgroundTasks,
     body: ScanRequest = Body(default=ScanRequest()),
 ) -> dict:
@@ -1935,6 +2179,7 @@ async def trigger_cost_scan(
 
         {"resource_group": "ruriskry-prod-rg"}
     """
+    _check_rate_limit(request.client.host if request.client else "unknown")
     rg = body.resource_group or settings.default_resource_group or None
     sub = body.subscription_id or settings.azure_subscription_id or None
     scan_id, _ = _make_scan_record("cost", rg)
@@ -1950,6 +2195,7 @@ async def trigger_cost_scan(
 
 @app.post("/api/scan/monitoring")
 async def trigger_monitoring_scan(
+    request: Request,
     background_tasks: BackgroundTasks,
     body: ScanRequest = Body(default=ScanRequest()),
 ) -> dict:
@@ -1958,6 +2204,7 @@ async def trigger_monitoring_scan(
     Returns immediately with a ``scan_id``.  Poll
     ``GET /api/scan/{scan_id}/status`` to retrieve results.
     """
+    _check_rate_limit(request.client.host if request.client else "unknown")
     rg = body.resource_group or settings.default_resource_group or None
     sub = body.subscription_id or settings.azure_subscription_id or None
     scan_id, _ = _make_scan_record("monitoring", rg)
@@ -1973,6 +2220,7 @@ async def trigger_monitoring_scan(
 
 @app.post("/api/scan/deploy")
 async def trigger_deploy_scan(
+    request: Request,
     background_tasks: BackgroundTasks,
     body: ScanRequest = Body(default=ScanRequest()),
 ) -> dict:
@@ -1981,6 +2229,7 @@ async def trigger_deploy_scan(
     Returns immediately with a ``scan_id``.  Poll
     ``GET /api/scan/{scan_id}/status`` to retrieve results.
     """
+    _check_rate_limit(request.client.host if request.client else "unknown")
     rg = body.resource_group or settings.default_resource_group or None
     sub = body.subscription_id or settings.azure_subscription_id or None
     scan_id, _ = _make_scan_record("deploy", rg)
@@ -1996,6 +2245,7 @@ async def trigger_deploy_scan(
 
 @app.post("/api/scan/all")
 async def trigger_all_scans(
+    request: Request,
     background_tasks: BackgroundTasks,
     body: ScanRequest = Body(default=ScanRequest()),
 ) -> dict:
@@ -2008,6 +2258,7 @@ async def trigger_all_scans(
 
         {"resource_group": "ruriskry-prod-rg"}
     """
+    _check_rate_limit(request.client.host if request.client else "unknown")
     rg = body.resource_group or settings.default_resource_group or None
     sub = body.subscription_id or settings.azure_subscription_id or None
     scan_ids: list[str] = []
@@ -2161,6 +2412,7 @@ async def get_inventory_status(
 @app.get("/api/scan-history")
 async def list_scan_history(
     limit: int = Query(default=50, ge=1, le=500, description="Max records to return"),
+    offset: int = Query(default=0, ge=0, description="Records to skip (for pagination)"),
 ) -> dict:
     """Return recent scan runs newest-first — one record per scan execution.
 
@@ -2176,7 +2428,7 @@ async def list_scan_history(
     This powers the Audit Log tab (scan-level operational view).
     The ``/api/evaluations`` endpoint covers governance-verdict-level detail.
     """
-    records = _get_scan_tracker().get_recent(limit=limit)
+    records = _get_scan_tracker().get_recent(limit=limit, offset=offset)
     # Strip internal Cosmos/_id fields and add computed counts
     cleaned: list[dict] = []
     for r in records:
@@ -2592,7 +2844,7 @@ async def approve_execution(execution_id: str, body: dict = Body(default={})) ->
     Returns 400 if the record is not in ``awaiting_review`` state.
     """
     gateway = _get_execution_gateway()
-    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
     try:
         record = await gateway.approve_execution(execution_id, reviewed_by)
         return record.model_dump(mode="json")
@@ -2615,7 +2867,7 @@ async def dismiss_execution(execution_id: str, body: dict = Body(default={})) ->
     Returns 404 if execution_id is unknown.
     """
     gateway = _get_execution_gateway()
-    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
     reason = body.get("reason", "")
     try:
         record = await gateway.dismiss_execution(execution_id, reviewed_by, reason)
@@ -2646,7 +2898,7 @@ async def create_pr_from_manual(
     Returns 400 if the record is not ``manual_required`` or snapshot is missing.
     """
     gateway = _get_execution_gateway()
-    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
     try:
         record = await gateway.create_pr_from_manual(execution_id, reviewed_by)
         return record.model_dump(mode="json")
@@ -2692,7 +2944,7 @@ async def agent_fix_execute(
     Returns 400 if the record is not ``manual_required`` or snapshot is missing.
     """
     gateway = _get_execution_gateway()
-    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
     try:
         record = await gateway.execute_agent_fix(execution_id, reviewed_by)
         return record.model_dump(mode="json")
@@ -2719,7 +2971,7 @@ async def rollback_agent_fix(
     Returns 400 if the record is not in ``applied`` state or has no stored plan.
     """
     gateway = _get_execution_gateway()
-    reviewed_by = body.get("reviewed_by", "dashboard-user")
+    reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
     try:
         record = await gateway.rollback_agent_fix(execution_id, reviewed_by)
         return record.model_dump(mode="json")
@@ -2797,7 +3049,7 @@ async def get_config() -> dict:
 @app.get("/")
 async def root() -> dict:
     """Root route — satisfies Azure Container Apps default HTTP liveness probe."""
-    return {"status": "ok", "service": "ruriskry-backend"}
+    return {"status": "ok", "service": settings.service_name}
 
 
 @app.get("/health")
@@ -2807,12 +3059,105 @@ async def health_check() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Auth endpoints — public (no session required)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/auth/status")
+async def auth_status() -> dict:
+    """Check whether the initial admin account has been created.
+
+    The frontend calls this on first load to decide whether to show the
+    one-time setup form or the regular login form.
+    """
+    return {"setup_required": _get_admin() is None}
+
+
+@app.post("/api/auth/setup")
+async def auth_setup(body: dict = Body(default={})) -> dict:
+    """Create the initial admin account.
+
+    Only succeeds once — returns 409 if an admin already exists.
+    On success returns a session token so the user is logged in immediately
+    without a second round-trip.
+
+    Password requirements: ≥ 8 characters.
+    """
+    if _get_admin() is not None:
+        raise HTTPException(status_code=409, detail="Admin account already exists.")
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters.")
+    _save_admin(username, password)
+    token = _create_session(username)
+    logger.info("Admin account created for '%s'", username)
+    return {"token": token, "username": username}
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: dict = Body(default={})) -> dict:
+    """Authenticate with username + password.
+
+    Returns a session token valid for 8 hours. The frontend stores this in
+    localStorage and sends it as ``Authorization: Bearer <token>`` on every
+    mutating request.
+    """
+    admin = _get_admin()
+    if admin is None:
+        raise HTTPException(status_code=400, detail="Admin account not set up yet.")
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username and password are required.")
+    # constant-time comparison for both fields to prevent user enumeration
+    username_ok = secrets.compare_digest(username.lower(), admin["username"].lower())
+    pw_ok = _verify_password(password, admin["salt"], admin["pw_hash"])
+    if not username_ok or not pw_ok:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    token = _create_session(admin["username"])
+    logger.info("Successful login for '%s'", admin["username"])
+    return {"token": token, "username": admin["username"]}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> dict:
+    """Validate the current session token and return the logged-in username.
+
+    Called by the frontend on page load to check if a stored token is still
+    valid before deciding whether to show the app or the login screen.
+    """
+    auth_hdr = request.headers.get("Authorization", "")
+    raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
+    username = _validate_session(raw_token) if raw_token else None
+    if not username:
+        raise HTTPException(status_code=401, detail="Session expired or invalid. Please log in again.")
+    return {"username": username}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request) -> dict:
+    """Revoke the current session token.
+
+    Exempt from the auth middleware — a user should always be able to log out
+    even if they somehow hold an already-expired token.
+    """
+    auth_hdr = request.headers.get("Authorization", "")
+    raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
+    if raw_token and raw_token in _sessions:
+        del _sessions[raw_token]
+    return {"status": "logged out"}
+
+
+# ---------------------------------------------------------------------------
 # Endpoint — dev/test reset (local JSON mode only)
 # ---------------------------------------------------------------------------
 
 
 @app.post("/api/admin/reset")
-async def admin_reset() -> dict:
+async def admin_reset(request: Request) -> dict:
     """⚠ Development/testing only — wipe all local data and reset in-memory state.
 
     Deletes every JSON file in:
@@ -2825,11 +3170,19 @@ async def admin_reset() -> dict:
     shows a clean slate immediately without restarting the server.
 
     Only operates on local JSON files — Cosmos DB data is never touched.
-    Safe to call when ``USE_LOCAL_MOCKS=false`` (falls back to JSON anyway
-    unless a real Cosmos endpoint + key are configured).
+
+    Raises 403 in live mode (USE_LOCAL_MOCKS=false) to prevent accidental
+    state wipes in deployed environments.
 
     Returns a summary of how many files were deleted per store.
     """
+    if not settings.use_local_mocks:
+        raise HTTPException(
+            status_code=403,
+            detail="admin/reset is disabled in live mode (USE_LOCAL_MOCKS=false). "
+                   "Set USE_LOCAL_MOCKS=true or use your database console to clear data.",
+        )
+
     from src.infrastructure.cosmos_client import _DEFAULT_DECISIONS_DIR
     from src.core.execution_gateway import _DEFAULT_EXECUTIONS_DIR
     from src.core.scan_run_tracker import _DEFAULT_SCANS_DIR

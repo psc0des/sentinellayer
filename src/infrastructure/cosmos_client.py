@@ -115,19 +115,20 @@ class CosmosDecisionClient:
             self._container.upsert_item(record)
             logger.debug("CosmosDecisionClient: upserted %s", record.get("id"))
 
-    def get_recent(self, limit: int = 10) -> list[dict]:
+    def get_recent(self, limit: int = 10, offset: int = 0) -> list[dict]:
         """Return the most recent decisions, newest first.
 
         Args:
             limit: Maximum number of records to return (default 10).
+            offset: Number of records to skip for pagination (default 0).
 
         Returns:
             List of decision dicts ordered by ``timestamp`` descending.
         """
         if self._is_mock:
-            return self._mock_get_recent(limit)
+            return self._mock_get_recent(limit, offset)
 
-        query = f"SELECT TOP {limit} * FROM c ORDER BY c._ts DESC"
+        query = f"SELECT * FROM c ORDER BY c._ts DESC OFFSET {offset} LIMIT {limit}"
         return list(
             self._container.query_items(query, enable_cross_partition_query=True)
         )
@@ -169,10 +170,10 @@ class CosmosDecisionClient:
     # Mock helpers
     # ------------------------------------------------------------------
 
-    def _mock_get_recent(self, limit: int) -> list[dict]:
+    def _mock_get_recent(self, limit: int, offset: int = 0) -> list[dict]:
         records = self._load_local_all()
         records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-        return records[:limit]
+        return records[offset:offset + limit]
 
     def _mock_get_by_resource(self, resource_id: str, limit: int) -> list[dict]:
         all_records = self._load_local_all()

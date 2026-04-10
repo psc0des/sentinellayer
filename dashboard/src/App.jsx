@@ -27,6 +27,10 @@ import {
   fetchAlerts,
   fetchInventoryStatus,
   testSlackNotification,
+  authMe,
+  authStatus,
+  authLogout,
+  setToken,
 } from './api'
 import Sidebar   from './components/Sidebar'
 import Overview  from './pages/Overview'
@@ -36,7 +40,9 @@ import AuditLog  from './pages/AuditLog'
 import Alerts    from './pages/Alerts'
 import Admin     from './pages/Admin'
 import Inventory from './pages/Inventory'
-import { RefreshCw, Bell } from 'lucide-react'
+import Login     from './pages/Login'
+import Setup     from './pages/Setup'
+import { RefreshCw, Bell, LogOut } from 'lucide-react'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -75,9 +81,72 @@ function ErrorScreen({ message, onRetry }) {
   )
 }
 
+// ── Auth gate — shown before AppShell loads ────────────────────────────────
+//
+// Flow:
+//   1. On mount: call authMe() with the stored token.
+//      • Valid token  → show AppShell (state = "ok")
+//      • Invalid/none → call authStatus() to decide next screen
+//   2. authStatus() returns { setup_required: true }  → show Setup
+//      authStatus() returns { setup_required: false } → show Login
+//   3. After Setup/Login succeed, parent state transitions to "ok".
+//
+// The auth gate is outside BrowserRouter intentionally — the Login/Setup
+// pages don't need React Router routing.
+
+function AuthGate({ children }) {
+  const [authState, setAuthState] = useState('checking') // checking | setup | login | ok
+  const [loggedInUser, setLoggedInUser] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function check() {
+      try {
+        const me = await authMe()
+        if (!cancelled) {
+          setLoggedInUser(me.username)
+          setAuthState('ok')
+        }
+      } catch {
+        // Token missing or expired — check if setup is still needed
+        try {
+          const status = await authStatus()
+          if (!cancelled) {
+            setAuthState(status.setup_required ? 'setup' : 'login')
+          }
+        } catch {
+          // Backend unreachable — let AppShell's own error screen handle it
+          if (!cancelled) setAuthState('ok')
+        }
+      }
+    }
+    check()
+    return () => { cancelled = true }
+  }, [])
+
+  function handleLogin(token, username) {
+    setToken(token)
+    setLoggedInUser(username)
+    setAuthState('ok')
+  }
+
+  async function handleLogout() {
+    await authLogout()
+    setLoggedInUser(null)
+    setAuthState('login')
+  }
+
+  if (authState === 'checking') return <LoadingScreen />
+  if (authState === 'setup')    return <Setup onLogin={handleLogin} />
+  if (authState === 'login')    return <Login onLogin={handleLogin} />
+
+  // Pass username + logout handler into children via a context-style prop
+  return children({ loggedInUser, onLogout: handleLogout })
+}
+
 // ── App Shell (layout + data fetching) ───────────────────────────────────
 
-function AppShell() {
+function AppShell({ loggedInUser, onLogout }) {
   const [evaluations,     setEvaluations]     = useState([])
   const [scans,           setScans]           = useState([])
   const [alerts,          setAlerts]          = useState([])
@@ -216,6 +285,21 @@ function AppShell() {
             <RefreshCw className="w-4 h-4" />
           </button>
 
+          {/* User + logout */}
+          {loggedInUser && (
+            <div className="flex items-center gap-2 pl-1 border-l border-slate-700/50">
+              <span className="text-xs text-slate-400">{loggedInUser}</span>
+              <button
+                onClick={onLogout}
+                className="flex items-center gap-1 text-xs px-2 py-1 rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                title="Sign out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign out
+              </button>
+            </div>
+          )}
+
         </header>
 
         {/* ── Page content ── */}
@@ -231,22 +315,26 @@ function AppShell() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<AppShell />}>
-          <Route index element={<Navigate to="/overview" replace />} />
-          <Route path="overview"    element={<Overview />} />
-          <Route path="scans"       element={<Navigate to="/agents" replace />} />
-          <Route path="agents"      element={<Agents />} />
-          <Route path="inventory"   element={<Inventory />} />
-          <Route path="decisions"   element={<Decisions />} />
-          <Route path="decisions/:id" element={<Decisions />} />
-          <Route path="alerts"      element={<Alerts />} />
-          <Route path="audit"       element={<AuditLog />} />
-          <Route path="admin"       element={<Admin />} />
-          <Route path="*"           element={<Navigate to="/overview" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <AuthGate>
+      {({ loggedInUser, onLogout }) => (
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<AppShell loggedInUser={loggedInUser} onLogout={onLogout} />}>
+              <Route index element={<Navigate to="/overview" replace />} />
+              <Route path="overview"    element={<Overview />} />
+              <Route path="scans"       element={<Navigate to="/agents" replace />} />
+              <Route path="agents"      element={<Agents />} />
+              <Route path="inventory"   element={<Inventory />} />
+              <Route path="decisions"   element={<Decisions />} />
+              <Route path="decisions/:id" element={<Decisions />} />
+              <Route path="alerts"      element={<Alerts />} />
+              <Route path="audit"       element={<AuditLog />} />
+              <Route path="admin"       element={<Admin />} />
+              <Route path="*"           element={<Navigate to="/overview" replace />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      )}
+    </AuthGate>
   )
 }

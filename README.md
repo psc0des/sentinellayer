@@ -230,6 +230,17 @@ All 7 agents call Azure OpenAI through `run_with_throttle()` — an `asyncio.Sem
 exponential backoff wrapper. Governance agents fall back to deterministic rule-based scoring
 on 429s; operational agents return `[]` (no false positives from stale seed data).
 
+### Production Security Hardening
+The API layer is production-hardened for public OSS deployment:
+
+- **Dashboard Login** — First visit shows a one-time admin setup screen (create username + password). Every subsequent visit shows a login screen. Session tokens (256-bit random, 8-hour TTL) are stored in the browser's `localStorage` and sent as `Authorization: Bearer <token>` on all mutating requests. Logout button in the top bar.
+- **API Key Authentication** — `_APIKeyMiddleware` gates all `POST`/`PATCH` endpoints with either a session token (browser) or an `X-API-Key` header (machine-to-machine / CI-CD). Both credential types are accepted; neither blocks the other. Uses `secrets.compare_digest` (constant-time comparison) to prevent timing attacks. GET endpoints stay open so the browser dashboard works without credentials. Opt-in: set `API_KEY` env var; empty = disabled.
+- **Alert Webhook Secret** — `POST /api/alert-trigger` is exempt from the API key middleware (it has its own secret). The endpoint verifies `Authorization: Bearer <secret>` using constant-time comparison. Protects expensive LLM investigation calls from spoofed Azure Monitor payloads.
+- **X-Request-ID Tracing** — `_RequestIDMiddleware` generates (or echoes) a UUID per request, stores it in a `ContextVar` (safe under async concurrency), injects it into every log line via `logging.Filter`, and echoes it in the response header. Correlates frontend → backend → Cosmos → LLM log lines across distributed failures.
+- **Per-IP Rate Limiting** — 10 requests/60-second sliding window per client IP on all scan endpoints. In-memory `defaultdict(list)` with `time.monotonic()` — no Redis required for single-replica or sticky-session deployments.
+- **`reviewed_by` Validation** — all 5 HITL endpoints reject empty reviewer identities and the `dashboard-user` default in live mode. Prevents audit logs with meaningless system-default reviewer names.
+- **Admin Reset Guard** — `POST /api/admin/reset` returns 403 in live mode (`USE_LOCAL_MOCKS=false`). Prevents accidental wipe of production Cosmos state.
+
 ---
 
 ## Dashboard

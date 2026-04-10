@@ -75,16 +75,17 @@ class DecisionTracker:
             verdict.skry_risk_index.sri_composite,
         )
 
-    def get_recent(self, limit: int = 10) -> list[dict]:
+    def get_recent(self, limit: int = 10, offset: int = 0) -> list[dict]:
         """Return the most recent ``limit`` decisions, newest first.
 
         Args:
             limit: Maximum number of records to return.
+            offset: Number of records to skip for pagination.
 
         Returns:
             List of dicts, each representing one governance verdict.
         """
-        return self._cosmos.get_recent(limit)
+        return self._cosmos.get_recent(limit, offset)
 
     def get_by_resource(self, resource_id: str, limit: int = 10) -> list[dict]:
         """Return decisions for a specific resource, newest first.

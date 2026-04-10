@@ -197,6 +197,21 @@ When it finishes:
   Backend    →  https://ruriskry-core-backend-<suffix>.<hash>.eastus2.azurecontainerapps.io
 ```
 
+### First login
+
+Open the dashboard URL in your browser. You will see the **one-time admin setup screen**:
+
+1. Enter a username and password (minimum 8 characters)
+2. Click **Create account** — you are logged in immediately
+
+All future visits show a standard **Sign in** form instead. The setup screen never appears
+again once an admin account exists.
+
+> **Redeployment note:** The admin credentials (`data/admin_auth.json`) live on the Container
+> App's ephemeral filesystem. A new revision wipes it, so the setup screen reappears. To persist
+> credentials across revisions, mount an Azure File Share to `/app/data` via Container App
+> volume mounts. This is a known limitation documented in `docs/oss-readiness.md`.
+
 ### GitHub PAT (Execution Gateway)
 
 If `use_github_pat = true` in `terraform.tfvars`, the script will prompt for the PAT and store it in Key Vault automatically. To skip the prompt, export it before running:

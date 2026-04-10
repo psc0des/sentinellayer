@@ -56,7 +56,11 @@ def pipeline():
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    """Return a TestClient wired to a fresh temp-dir tracker."""
+    """Return a TestClient wired to a fresh temp-dir tracker.
+
+    Auth state is reset to "no admin set up" so tests never require
+    login credentials, even on machines where data/admin_auth.json exists.
+    """
     tracker = DecisionTracker(decisions_dir=tmp_path / "decisions")
     scan_tracker = ScanRunTracker(scans_dir=tmp_path / "scans")
 
@@ -67,6 +71,11 @@ def client(tmp_path, monkeypatch):
     api_module._scans.clear()
     api_module._scan_events.clear()
     api_module._scan_cancelled.clear()
+
+    # Reset auth state: _admin_cache=None means no admin set up → no auth
+    # enforcement. _sessions cleared so session tokens from prior tests don't leak.
+    monkeypatch.setattr(api_module, "_admin_cache", None)
+    api_module._sessions.clear()
 
     return TestClient(app)
 
@@ -636,26 +645,21 @@ class TestRollbackEndpoint:
     """POST /api/execution/{id}/rollback endpoint."""
 
     def test_rollback_nonexistent_returns_404(self, client):
-        res = client.post("/api/execution/nonexistent-id/rollback", json={})
+        res = client.post("/api/execution/nonexistent-id/rollback", json={"reviewed_by": "ops@example.com"})
         assert res.status_code == 404
 
     def test_rollback_non_applied_returns_400(self, client):
-        import asyncio
-        from src.core.execution_gateway import ExecutionGateway
-        from src.core.models import SRIVerdict
-
-        gw = client.app.state.execution_gateway if hasattr(client.app.state, "execution_gateway") else None
-        # Create a verdict and check it returns 400 (not applied yet)
-        # We can't easily get an exec_id here without the gateway, so just confirm
-        # the route exists and rejects unknown ids with 404
-        res = client.post("/api/execution/00000000-0000-0000-0000-000000000000/rollback", json={})
+        # Can't easily get a real exec_id here, so confirm the route rejects unknown ids.
+        res = client.post(
+            "/api/execution/00000000-0000-0000-0000-000000000000/rollback",
+            json={"reviewed_by": "ops@example.com"},
+        )
         assert res.status_code in (400, 404)
 
-    def test_rollback_invalid_body_still_processed(self, client):
-        """Empty body should use default reviewed_by — route must not 422."""
-        res = client.post("/api/execution/nonexistent-id/rollback")
-        # Should 404 (not found), not 422 (validation error)
-        assert res.status_code == 404
+    def test_rollback_missing_reviewed_by_returns_400(self, client):
+        """reviewed_by is now required — empty body must return 400, not 422."""
+        res = client.post("/api/execution/nonexistent-id/rollback", json={})
+        assert res.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -717,3 +721,112 @@ class TestCrossAgentContamination:
             assert agent_type in api_module._AGENT_REGISTRY_NAMES
             agent_id = api_module._AGENT_REGISTRY_NAMES[agent_type]
             assert agent_id.endswith("-agent"), f"{agent_type} → {agent_id} missing '-agent' suffix"
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuthEndpoints:
+    """Tests for /api/auth/* — setup, login, me, logout, status."""
+
+    @pytest.fixture()
+    def auth_client(self, tmp_path, monkeypatch):
+        """Client with a clean auth state (no admin set up, no sessions)."""
+        import src.api.dashboard_api as api_module
+        monkeypatch.setattr(api_module, "_admin_cache", "unloaded")
+        monkeypatch.setattr(api_module, "_AUTH_FILE", tmp_path / "admin_auth.json")
+        api_module._sessions.clear()
+        return TestClient(app)
+
+    def test_status_setup_required_when_no_admin(self, auth_client):
+        res = auth_client.get("/api/auth/status")
+        assert res.status_code == 200
+        assert res.json()["setup_required"] is True
+
+    def test_setup_creates_admin_and_returns_token(self, auth_client):
+        res = auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        assert res.status_code == 200
+        data = res.json()
+        assert "token" in data
+        assert data["username"] == "admin"
+
+    def test_setup_rejects_short_password(self, auth_client):
+        res = auth_client.post("/api/auth/setup", json={"username": "admin", "password": "short"})
+        assert res.status_code == 400
+
+    def test_setup_rejects_empty_username(self, auth_client):
+        res = auth_client.post("/api/auth/setup", json={"username": "", "password": "securepass1"})
+        assert res.status_code == 400
+
+    def test_setup_second_call_returns_409(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.post("/api/auth/setup", json={"username": "other", "password": "securepass1"})
+        assert res.status_code == 409
+
+    def test_status_not_required_after_setup(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.get("/api/auth/status")
+        assert res.json()["setup_required"] is False
+
+    def test_login_returns_token(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.post("/api/auth/login", json={"username": "admin", "password": "securepass1"})
+        assert res.status_code == 200
+        assert "token" in res.json()
+
+    def test_login_wrong_password_returns_401(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.post("/api/auth/login", json={"username": "admin", "password": "wrongpassword"})
+        assert res.status_code == 401
+
+    def test_login_wrong_username_returns_401(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.post("/api/auth/login", json={"username": "hacker", "password": "securepass1"})
+        assert res.status_code == 401
+
+    def test_me_returns_username_with_valid_token(self, auth_client):
+        setup = auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        token = setup.json()["token"]
+        res = auth_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 200
+        assert res.json()["username"] == "admin"
+
+    def test_me_returns_401_with_no_token(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.get("/api/auth/me")
+        assert res.status_code == 401
+
+    def test_me_returns_401_with_invalid_token(self, auth_client):
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.get("/api/auth/me", headers={"Authorization": "Bearer invalid-token"})
+        assert res.status_code == 401
+
+    def test_logout_revokes_session(self, auth_client):
+        setup = auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        token = setup.json()["token"]
+        auth_client.post("/api/auth/logout", headers={"Authorization": f"Bearer {token}"})
+        # Token should now be invalid
+        res = auth_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 401
+
+    def test_session_token_grants_post_access(self, auth_client):
+        """With admin set up, a valid session token must be accepted on POST endpoints."""
+        import src.api.dashboard_api as api_module
+        setup = auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        token = setup.json()["token"]
+        # test-notification is a POST endpoint — should succeed with session token
+        res = auth_client.post(
+            "/api/test-notification",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # 200 (sent) or 400 (no webhook configured) are both valid — either means auth passed
+        assert res.status_code in (200, 400)
+
+    def test_post_without_token_rejected_when_admin_exists(self, auth_client):
+        """After admin is set up, POST requests without auth must return 401."""
+        auth_client.post("/api/auth/setup", json={"username": "admin", "password": "securepass1"})
+        res = auth_client.post("/api/test-notification")
+        assert res.status_code == 401
+

@@ -131,11 +131,30 @@ Start with: `uvicorn src.api.dashboard_api:app --reload`
 
 All endpoints are `async def` (FastAPI manages the event loop).
 
+### Authentication
+
+**Browser dashboard** — first visit shows a one-time admin setup screen; every subsequent visit shows a login form. The backend returns a session token (256-bit random, 8-hour TTL) on setup/login. The frontend stores it in `localStorage` and sends `Authorization: Bearer <token>` on all mutating requests.
+
+**Machine-to-machine (CI/CD)** — set `API_KEY` env var and send `X-API-Key: <value>` header. The middleware accepts either a session token OR an API key; both work simultaneously.
+
+**GET endpoints** are open — dashboard reads work in the browser without credentials.
+
+**POST / PATCH endpoints** require one of: valid session token (browser) OR valid API key (`API_KEY` env var set). Auth only enforces when an admin account exists or `API_KEY` is set; neither configured = pass-through (local dev).
+
+**Alert webhook** — `POST /api/alert-trigger` is exempt from the above; it verifies `Authorization: Bearer <secret>` from `ALERT_WEBHOOK_SECRET`.
+
+**X-Request-ID** — every response includes an `X-Request-ID` header (UUID). Supply your own to correlate frontend errors with backend logs.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/auth/status` | Check if admin account exists. Returns `{"setup_required": bool}`. Always public. |
+| POST | `/api/auth/setup` | Create the initial admin account (first-time only; 409 if already exists). Body: `{username, password (≥8 chars)}`. Returns `{token, username}`. |
+| POST | `/api/auth/login` | Authenticate with username + password. Returns `{token, username}`. |
+| GET | `/api/auth/me` | Validate the current session token. Returns `{username}` or 401. |
+| POST | `/api/auth/logout` | Revoke the current session token. Always exempt from auth check. |
 | GET | `/` | Root — returns `{"status":"ok","service":"ruriskry-backend"}`. Satisfies Azure Container Apps default HTTP liveness probe (hits `GET /` when no custom probe is configured). |
 | GET | `/health` | Liveness probe used by `deploy.sh` health check and explicit probe configs. Returns `{"status":"ok"}`. |
-| GET | `/api/evaluations` | List recent governance decisions (newest-first) |
+| GET | `/api/evaluations` | List recent governance decisions (newest-first). Query: `limit` (1–500, default 20), `offset` (default 0), `resource_id` (substring filter) |
 | GET | `/api/evaluations/{evaluation_id}` | Full record for one evaluation by UUID |
 | GET | `/api/metrics` | Aggregate stats: decision counts, SRI avg/min/max, top violations, triage tier distribution |
 | GET | `/api/resources/{resource_id}/risk` | Risk profile for one resource |
@@ -146,7 +165,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/test-notification` | Send a test notification to the configured Slack webhook |
 | POST | `/api/alert-trigger` | Webhook — receive Azure Monitor alert, create pending record (no auto-investigation) |
 | POST | `/api/alerts/{alert_id}/investigate` | Manually trigger investigation for a pending alert |
-| GET | `/api/alerts` | List all alert records newest-first |
+| GET | `/api/alerts` | List all alert records newest-first. Query: `limit` (1–500, default 50), `offset` (default 0) |
 | GET | `/api/alerts/active-count` | Count of currently pending/investigating alerts |
 | GET | `/api/alerts/{alert_id}/status` | Full detail for one alert |
 | GET | `/api/alerts/{alert_id}/stream` | SSE stream of real-time investigation progress |
@@ -154,7 +173,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/scan/monitoring` | Start a background monitoring agent scan |
 | POST | `/api/scan/deploy` | Start a background deploy agent scan |
 | POST | `/api/scan/all` | Start background scans for all three agents |
-| GET | `/api/scan-history` | List all scan runs newest-first — operational audit log (one record per scan execution) |
+| GET | `/api/scan-history` | List all scan runs newest-first — operational audit log (one record per scan execution). Query: `limit` (1–500, default 50), `offset` (default 0) |
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
@@ -834,9 +853,12 @@ IaC PR path (if managed) or manual path.
 { "reviewed_by": "admin@example.com" }
 ```
 
+`reviewed_by` is **required** and must not be empty. In live mode (`USE_LOCAL_MOCKS=false`),
+the value `"dashboard-user"` is also rejected — supply the reviewer's name or email.
+
 **Response:** Updated `ExecutionRecord` JSON.
 
-Returns **400** if the execution is not in `awaiting_review` status.
+Returns **400** if `reviewed_by` is missing/invalid, or if the execution is not in `awaiting_review` status.
 
 ---
 

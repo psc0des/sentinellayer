@@ -5,6 +5,22 @@
 # Never commit terraform.tfvars - it is in .gitignore.
 # =============================================================================
 
+variable "project_name" {
+  description = <<-EOT
+    Short project identifier used as a prefix for all Azure resource names.
+    Changing this renames every resource — only set it on initial deployment.
+    Must be 3–12 lowercase alphanumeric characters (no hyphens — ACR names
+    are alphanumeric-only and derived from this value).
+  EOT
+  type        = string
+  default     = "ruriskry"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{3,12}$", var.project_name))
+    error_message = "project_name must be 3–12 lowercase alphanumeric characters."
+  }
+}
+
 variable "subscription_id" {
   description = "Azure Subscription ID where RuriSkry infrastructure is deployed. Find it with: az account show --query id -o tsv"
   type        = string
@@ -65,6 +81,8 @@ variable "search_sku" {
   description = <<-EOT
     Azure AI Search pricing tier.
     "free"  - 50 MB index, 3 indexes max, no SLA. Only 1 free per subscription.
+              DEV-ONLY: 50 MB fills quickly in active deployments. Use "basic"
+              or higher for any environment with real governance data volume.
     "basic" - 2 GB index, 15 indexes, SLA. ~$73/month.
     If you already have a free Search service, use "basic".
   EOT
@@ -177,10 +195,14 @@ variable "cosmos_free_tier" {
   description = <<-EOT
     Enable Cosmos DB free tier (400 RU/s + 25 GB free).
     Only 1 free-tier Cosmos account is allowed per Azure subscription.
-    Set to false if your subscription already uses the free tier elsewhere.
+    IMPORTANT: Set to false (the default) if your subscription already uses the
+    free tier elsewhere — attempting to create a second free-tier account causes
+    a hard deployment failure with a non-obvious error message.
+    Set to true only when you are certain no other free-tier Cosmos account
+    exists in this subscription.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 # ---------------------------------------------------------------------------
@@ -350,8 +372,43 @@ variable "iac_terraform_path" {
 }
 
 # ---------------------------------------------------------------------------
+# Container Registry
+# ---------------------------------------------------------------------------
+
+variable "acr_sku" {
+  description = <<-EOT
+    Azure Container Registry pricing tier.
+    "Basic"    - 10 GB storage, no geo-replication, no content trust. DEV-ONLY default.
+    "Standard" - 100 GB storage, webhooks, content trust. Suitable for most production use.
+    "Premium"  - Geo-replication, private endpoints, customer-managed keys. Enterprise use.
+  EOT
+  type        = string
+  default     = "Basic"
+
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.acr_sku)
+    error_message = "acr_sku must be Basic, Standard, or Premium."
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Static Web App
 # ---------------------------------------------------------------------------
+
+variable "swa_sku" {
+  description = <<-EOT
+    Azure Static Web Apps pricing tier.
+    "Free"     - 100 GB bandwidth/month, no SLA, no custom auth. DEV-ONLY default.
+    "Standard" - Unlimited bandwidth, SLA, Azure AD auth, private endpoints. ~$9/month.
+  EOT
+  type        = string
+  default     = "Free"
+
+  validation {
+    condition     = contains(["Free", "Standard"], var.swa_sku)
+    error_message = "swa_sku must be Free or Standard."
+  }
+}
 
 variable "static_web_app_location" {
   description = <<-EOT

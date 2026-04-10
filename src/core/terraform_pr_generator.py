@@ -93,9 +93,9 @@ class TerraformPRGenerator:
             gh = Github(self._token)
             repo = gh.get_repo(self._repo_name)
 
-            # Build branch name: ruriskry/approved/{resource}-{short-action-id}
+            # Build branch name: <pr_branch_prefix>/{resource}-{short-action-id}
             branch_name = (
-                f"ruriskry/approved/{resource_short}-{verdict.action_id[:8]}"
+                f"{settings.pr_branch_prefix}/{resource_short}-{verdict.action_id[:8]}"
             )
 
             # Get default branch SHA for the new branch base

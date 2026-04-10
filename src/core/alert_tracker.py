@@ -144,14 +144,14 @@ class AlertTracker:
         )
         return items[0] if items else None
 
-    def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return up to *limit* alert records, newest-first."""
+    def get_recent(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        """Return up to *limit* alert records, newest-first, skipping *offset* records."""
         if self._is_mock:
             records = self._load_local_all()
             records.sort(key=lambda r: r.get("received_at", ""), reverse=True)
-            return records[:limit]
+            return records[offset:offset + limit]
 
-        query = f"SELECT TOP {limit} * FROM c ORDER BY c.received_at DESC"
+        query = f"SELECT * FROM c ORDER BY c.received_at DESC OFFSET {offset} LIMIT {limit}"
         return list(
             self._container.query_items(
                 query=query,

@@ -134,6 +134,25 @@ Backend    →  https://ruriskry-core-backend-<suffix>.<hash>.eastus2.azureconta
 Terraform injects all environment variables into the Container App automatically — no `.env`
 file is needed for cloud deployment.
 
+### Step 4 — First login
+
+Open the dashboard URL. Because no admin account exists yet, you will see the **one-time setup screen**:
+
+1. Choose a username and password (minimum 8 characters)
+2. Click **Create account** — you are logged in immediately; no second step
+3. All future visits show a standard **login screen** instead
+
+The admin credentials are stored server-side (PBKDF2-SHA256 hashed) in `data/admin_auth.json`
+on the Container App's filesystem. Sessions expire after 8 hours.
+
+> **If you redeploy the Container App** (new revision), `data/admin_auth.json` is on the
+> ephemeral container filesystem and will be lost. You will see the setup screen again.
+> To avoid this, mount an Azure File Share to `/app/data` via the Container App volume mount
+> feature, or store the admin record in Cosmos DB (future improvement).
+
+No additional environment variables are needed for auth — it is always enabled once an
+admin account has been created.
+
 **Get URLs after deployment:**
 ```bash
 terraform -chdir=infrastructure/terraform-core output backend_url
@@ -261,7 +280,7 @@ pip install -r requirements.txt
 
 # 2. Run tests — no Azure credentials needed (mock mode)
 pytest tests/ -v
-# Expected: 816 passed, 0 failed
+# Expected: 831 passed, 0 failed
 
 # 3a. Mock mode (no Azure needed) — set in .env
 echo "USE_LOCAL_MOCKS=true" > .env
@@ -279,6 +298,10 @@ uvicorn src.api.dashboard_api:app --reload
 # 5. Start the React dashboard (separate terminal)
 cd dashboard && npm install && npm run dev
 # → http://localhost:5173
+#
+# First visit: one-time admin setup screen (pick username + password ≥8 chars)
+# Subsequent visits: standard login screen
+# Logout: "Sign out" button in the top-right of the header
 
 # 6. Optional: run as MCP server (for Claude Desktop)
 python -m src.mcp_server.server
@@ -651,7 +674,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `USE_LOCAL_MOCKS` | No | `true` | `true` = JSON files; `false` = live Azure |
+| `USE_LOCAL_MOCKS` | No | `false` | `false` = live Azure (production default). `true` = local JSON files for offline dev. Startup logs a prominent `⚠ MOCK MODE ACTIVE` warning when true. |
 | `USE_LIVE_TOPOLOGY` | No | `false` | `true` = governance agents query Azure Resource Graph for real dependency topology and SKU cost (Phase 19). Only effective when `USE_LOCAL_MOCKS=false` and `AZURE_SUBSCRIPTION_ID` is set. |
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-4.1-mini` | Model deployment name (set via `foundry_deployment_name` in terraform.tfvars) |
@@ -678,6 +701,10 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `your-org/ruriskry`). |
 | `IAC_TERRAFORM_PATH` | Phase 21 | `infrastructure/terraform-demo` | Path within the repo to the Terraform config directory. |
 | `EXECUTION_GATEWAY_ENABLED` | No | `false` | Enable the Execution Gateway. When `false`, verdicts are informational only (no PRs created). |
+| `API_KEY` | No | `""` | When set, all mutating POST/PATCH endpoints (except `/api/alert-trigger`) require `X-API-Key: <value>` header. GET endpoints stay open. Generate: `python -c "import secrets; print(secrets.token_hex(32))"`. |
+| `ALERT_WEBHOOK_SECRET` | No | `""` | When set, `POST /api/alert-trigger` requires `Authorization: Bearer <value>` header. Set the same value in the Azure Monitor Action Group "Secure Webhook" field. |
+| `PR_BRANCH_PREFIX` | No | `ruriskry/approved` | Branch name prefix for governance-approved Terraform PRs. Full branch: `<prefix>/<resource>-<action_id[:8]>`. |
+| `SERVICE_NAME` | No | `ruriskry-backend` | Value returned in the `GET /` health check `service` field. Override for multi-tenant or renamed deployments. |
 | `LLM_TIMEOUT` | No | `600` | Hard timeout (seconds) for any single agentic LLM call. Applied at two layers: (1) each individual HTTP request to Azure OpenAI, (2) the entire `agent.run()` agentic loop via `asyncio.wait_for`. Multi-step agent loops need >300s; 600s is the production-tested minimum. Scans that exceed this limit set `scan_error` and show a red Error badge. |
 | `LLM_CONCURRENCY_LIMIT` | No | `6` | Maximum simultaneous LLM calls across all agents (3 operational + 4 governance + execution share one semaphore). `6` is safe at 150K TPM (default gpt-4.1-mini Standard allocation). Set lower only if hitting 429 errors. |
 | `ORG_NAME` | No | `Contoso` | Display name for your organisation — used in triage context and future reporting. |

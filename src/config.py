@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     # --- Dashboard API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    # Env var: SERVICE_NAME (used in health check response)
+    service_name: str = "ruriskry-backend"
 
     # --- Default scan scope ---
     # When POST /api/scan/* body omits resource_group, this value is used.
@@ -78,10 +80,11 @@ class Settings(BaseSettings):
     default_resource_group: str = ""
 
     # --- Mock vs Azure mode ---
-    # True  → all infrastructure clients use local JSON files (default, safe offline)
     # False → clients use real Azure SDKs (requires credentials set above)
+    # True  → all infrastructure clients use local JSON files (offline/dev)
     # If False but credentials are missing, each client falls back to mock automatically.
-    use_local_mocks: bool = True
+    # Env var: USE_LOCAL_MOCKS=true
+    use_local_mocks: bool = False
 
     # --- Live topology queries (Phase 19) ---
     # True  → BlastRadiusAgent and FinancialImpactAgent query Azure Resource Graph for
@@ -138,6 +141,11 @@ class Settings(BaseSettings):
     # Env var: IAC_TERRAFORM_PATH
     iac_terraform_path: str = "infrastructure/terraform-demo"
 
+    # Branch name prefix for governance-approved Terraform PRs.
+    # Full branch name: <pr_branch_prefix>/<resource>-<action_id[:8]>
+    # Env var: PR_BRANCH_PREFIX
+    pr_branch_prefix: str = "ruriskry/approved"
+
     # Master on/off switch for the Execution Gateway.
     # False (default) = verdicts are informational only; no PRs are created.
     # Set to true to enable PR generation for APPROVED + IaC-managed verdicts.
@@ -154,6 +162,23 @@ class Settings(BaseSettings):
     org_compliance_frameworks: str = ""   # e.g. "HIPAA,PCI-DSS,SOC2" → split on ","
     org_risk_tolerance: str = "moderate"  # "conservative" | "moderate" | "aggressive"
     org_business_critical_rgs: str = ""   # e.g. "rg-prod-payments,rg-prod-identity"
+
+    # --- API Key (C2 auth) ---
+    # When set, all mutating endpoints (POST/PATCH except /api/alert-trigger,
+    # which has its own ALERT_WEBHOOK_SECRET) require the header:
+    #   X-API-Key: <value>
+    # GET endpoints remain open (read-only, safe for dashboard browsers).
+    # The dashboard sends this key from a value stored in localStorage.
+    # Generate a strong key: python -c "import secrets; print(secrets.token_hex(32))"
+    # Env var: API_KEY
+    api_key: str = ""
+
+    # --- Alert Webhook ---
+    # When set, POST /api/alert-trigger requires this value in the
+    # Authorization header as "Bearer <secret>".  Leave empty to disable
+    # the check (open webhook — only acceptable behind a private network).
+    # Env var: ALERT_WEBHOOK_SECRET
+    alert_webhook_secret: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

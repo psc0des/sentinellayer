@@ -68,13 +68,12 @@ locals {
   # when target_subscription_id is not set (same-subscription case).
   scan_subscription_id = var.target_subscription_id != "" ? var.target_subscription_id : var.subscription_id
 
-  # Consistent name prefix for all hyphenated resources.
-  # "ruriskry-core" is the longest prefix that satisfies every Azure name
-  # length constraint, including Key Vault (max 24 chars):
-  #   ruriskry-core-kv-<suffix> → 24 chars with a 7-char suffix.
+  # Consistent name prefix for all hyphenated resources, derived from var.project_name.
+  # Key Vault max 24 chars: <project_name>-core-kv-<suffix> must fit.
+  # With the 12-char project_name limit: "xxxxxxxxxxxx-core-kv-abc" = 24 chars ✓
   # ACR names are alphanumeric-only (no hyphens) — use acr_prefix instead.
-  name_prefix = "ruriskry-core"
-  acr_prefix  = "ruriskrycore"
+  name_prefix = "${var.project_name}-core"
+  acr_prefix  = "${var.project_name}core"
 
   common_tags = {
     project     = "ruriskry"
@@ -518,7 +517,7 @@ resource "azurerm_container_registry" "ruriskry" {
   name                = "${local.acr_prefix}${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = azurerm_resource_group.ruriskry.location
-  sku                 = "Basic"
+  sku                 = var.acr_sku
   # SEC-02: Admin auth disabled — shared password would appear in tfstate in
   # plaintext. The Container App pulls images using the User-Assigned Managed
   # Identity (azurerm_user_assigned_identity.acr_pull) via the AcrPull role.
@@ -896,8 +895,8 @@ resource "azurerm_static_web_app" "dashboard" {
   name                = "${local.name_prefix}-dashboard-${local.name_suffix}"
   resource_group_name = azurerm_resource_group.ruriskry.name
   location            = var.static_web_app_location
-  sku_tier            = "Free"
-  sku_size            = "Free"
+  sku_tier            = var.swa_sku
+  sku_size            = var.swa_sku
   tags                = local.common_tags
 }
 

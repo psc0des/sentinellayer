@@ -7,7 +7,7 @@ Usage::
     from src.infrastructure.inventory_builder import build_inventory
 
     doc = await build_inventory(
-        subscription_id="e7e0ed80-...",
+        subscription_id="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         resource_group="rg-prod",            # optional scope
         on_progress=lambda msg: print(msg),  # optional progress callback
     )
