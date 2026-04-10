@@ -25,7 +25,14 @@
   --accent-emerald: #10b981;
   --accent-rose:    #f43f5e;
 
+  /* Card surface */
+  --bg-card: rgba(10, 17, 36, 0.95);
+
   /* Typography */
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted:     #64748b;
+
   --font-ui:   'DM Sans', system-ui, sans-serif;
   --font-data: 'JetBrains Mono', ui-monospace, monospace;
 }
