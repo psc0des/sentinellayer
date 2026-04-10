@@ -336,6 +336,7 @@ export default function ScanLogViewer({
   isOpen,
   onClose,
   startedAt,
+  isComplete,  // true when live scan has finished
 }) {
   const [elapsed, setElapsed] = useState('')
 
@@ -389,10 +390,16 @@ export default function ScanLogViewer({
             <p className="text-xs text-slate-500 font-mono mt-0.5">{subtitle}</p>
           </div>
           <div className="flex items-center gap-3">
-            {mode === 'live' && (
+            {mode === 'live' && !isComplete && (
               <span className="flex items-center gap-1.5 text-xs text-yellow-400 font-mono">
                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
                 {elapsed || 'Scanning\u2026'}
+              </span>
+            )}
+            {mode === 'live' && isComplete && (
+              <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {elapsed || 'Complete'}
               </span>
             )}
             {mode === 'historical' && (

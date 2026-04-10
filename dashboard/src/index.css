@@ -58,6 +58,15 @@ code, pre, kbd, samp,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   FORMS — suppress browser-native password reveal / clear buttons so only
+   our custom eye-icon toggle is visible (Edge on Windows shows ::-ms-reveal)
+───────────────────────────────────────────────────────────────────────────── */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    SCROLLBAR
 ───────────────────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar            { width: 4px; height: 4px; }

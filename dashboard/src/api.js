@@ -403,7 +403,11 @@ export async function createPRFromManual(executionId, reviewedBy = 'dashboard-us
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reviewed_by: reviewedBy }),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: failed to create PR`)
+  if (!res.ok) {
+    let detail = `API error ${res.status}: failed to create PR`
+    try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
   return res.json()
 }
 

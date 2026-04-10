@@ -9,6 +9,7 @@
 #   bash scripts/deploy.sh                      # full first-time deploy
 #   bash scripts/deploy.sh --stage2             # skip Stage 1 + Docker; use if Stage 1 succeeded but Stage 2 failed
 #   bash scripts/deploy.sh --upgrade-providers  # re-resolve Terraform providers within version constraints
+#   bash scripts/deploy.sh --reset-admin        # delete admin_auth.json from the Container App (lost password recovery)
 #
 # NOTE: This script is for FIRST-TIME deploys only.
 # For subsequent code or infra changes, use the "Redeploy Workflows" section
@@ -37,10 +38,12 @@ DASHBOARD_DIR="$REPO_ROOT/dashboard"
 # ── Flags ─────────────────────────────────────────────────────────────────────
 STAGE2_ONLY=false
 UPGRADE_PROVIDERS=false
+RESET_ADMIN=false
 for arg in "$@"; do
   case "$arg" in
     --stage2)            STAGE2_ONLY=true ;;
     --upgrade-providers) UPGRADE_PROVIDERS=true ;;
+    --reset-admin)       RESET_ADMIN=true ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
@@ -58,6 +61,37 @@ ok()   { echo -e "${GREEN}✓  $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
 step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
+
+# =============================================================================
+# --reset-admin: delete admin_auth.json from the running Container App so the
+# setup screen reappears on next dashboard visit (lost-password recovery).
+# =============================================================================
+if [[ "$RESET_ADMIN" == "true" ]]; then
+  step "Admin password reset"
+  cd "$TF_DIR"
+  APP_NAME=$(terraform output -raw backend_container_app_name 2>/dev/null \
+    || { die "Could not read backend_container_app_name from Terraform state. Run from the repo root after a successful deploy."; })
+  RG_NAME=$(terraform output -raw resource_group_name 2>/dev/null \
+    || die "Could not read resource_group_name from Terraform state.")
+  log "Deleting data/admin_auth.json from Container App: $APP_NAME"
+  az containerapp exec \
+    --name "$APP_NAME" \
+    --resource-group "$RG_NAME" \
+    --command "rm -f /app/data/admin_auth.json" \
+    --output none 2>/dev/null \
+  || warn "exec failed — trying az containerapp revision restart instead"
+  # Restart forces a fresh filesystem; admin_auth.json is gone on the new revision
+  az containerapp revision restart \
+    --name "$APP_NAME" \
+    --resource-group "$RG_NAME" \
+    --revision "$(az containerapp revision list \
+        --name "$APP_NAME" \
+        --resource-group "$RG_NAME" \
+        --query "[?properties.active].name | [0]" -o tsv)" \
+    --output none
+  ok "Admin account reset. Visit the dashboard — you will see the first-time setup screen again."
+  exit 0
+fi
 
 # =============================================================================
 # 0. Prerequisites
@@ -795,6 +829,33 @@ else
     fi
   fi
 
+  # ── Ensure this identity has Monitoring Contributor on the target sub ────────
+  # Required to create the Alert Processing Rule. Idempotent — safe to re-run.
+  CURRENT_USER=$(az account show --query user.name -o tsv 2>/dev/null || true)
+  if [[ -n "$CURRENT_USER" ]]; then
+    ALREADY_MC=$(az role assignment list \
+      --assignee "$CURRENT_USER" \
+      --role "Monitoring Contributor" \
+      --scope "/subscriptions/${ALERT_SUB}" \
+      --query "length(@)" -o tsv 2>/dev/null || echo "0")
+    if [[ "${ALREADY_MC:-0}" -eq 0 ]]; then
+      log "Granting Monitoring Contributor on sub $ALERT_SUB to $CURRENT_USER..."
+      if az role assignment create \
+           --assignee "$CURRENT_USER" \
+           --role "Monitoring Contributor" \
+           --scope "/subscriptions/${ALERT_SUB}" \
+           --output none 2>/dev/null; then
+        ok "Monitoring Contributor granted — proceeding with APR creation"
+      else
+        warn "Could not grant Monitoring Contributor (may need Owner/UAA on $ALERT_SUB)."
+        warn "Ask a subscription Owner to run:"
+        warn "  az role assignment create --assignee \"$CURRENT_USER\" --role \"Monitoring Contributor\" --scope \"/subscriptions/${ALERT_SUB}\""
+      fi
+    else
+      log "Monitoring Contributor already assigned on $ALERT_SUB — skipping role assignment"
+    fi
+  fi
+
   # Idempotent check: APR already exists and points at our action group?
   EXISTING_APR_AG=$(az monitor alert-processing-rule show \
     --name "$APR_NAME" \
@@ -872,17 +933,20 @@ for r in (ag.get('properties') or {}).get('webhookReceivers') or []:
           fi
 
           # Merge webhook receiver and write to scratch file
-          if ! printf '%s' "$CURRENT" | WEBHOOK_TARGET="$WEBHOOK_TARGET" python -c "
+          if ! printf '%s' "$CURRENT" | \
+               RURISKRY_WEBHOOK_TARGET="$WEBHOOK_TARGET" \
+               RURISKRY_AG_TMP_FILE="$AG_TMP_FILE" \
+               python -c "
 import json, os, sys
 ag = json.load(sys.stdin)
 props = ag.setdefault('properties', {})
 rcv = [r for r in (props.get('webhookReceivers') or []) if r.get('name') != 'ruriskry-webhook']
-rcv.append({'name': 'ruriskry-webhook', 'serviceUri': os.environ['WEBHOOK_TARGET'],
+rcv.append({'name': 'ruriskry-webhook', 'serviceUri': os.environ['RURISKRY_WEBHOOK_TARGET'],
             'useCommonAlertSchema': False, 'useAadAuth': False})
 props['webhookReceivers'] = rcv
 ag.pop('systemData', None)
-with open(os.environ['AG_TMP_FILE'], 'w', encoding='utf-8') as f: json.dump(ag, f)
-" AG_TMP_FILE="$AG_TMP_FILE" 2>/dev/null; then
+with open(os.environ['RURISKRY_AG_TMP_FILE'], 'w', encoding='utf-8') as f: json.dump(ag, f)
+" 2>/dev/null; then
             warn "Failed to build request body for: $ag_name"; (( FAILED++ )) || true; continue
           fi
 

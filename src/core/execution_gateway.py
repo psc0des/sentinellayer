@@ -412,13 +412,23 @@ class ExecutionGateway:
         record = self._records.get(execution_id)
         if not record:
             raise KeyError(f"Execution record not found: {execution_id!r}")
-        _pr_allowed = {ExecutionStatus.manual_required, ExecutionStatus.awaiting_review}
+        _pr_allowed = {
+            ExecutionStatus.manual_required,
+            ExecutionStatus.awaiting_review,
+            ExecutionStatus.failed,  # allow retry after a transient failure
+        }
         if record.status not in _pr_allowed:
             raise ValueError(
                 f"Cannot create PR for {execution_id!r}: "
                 f"status is '{record.status.value}' "
-                f"(must be 'manual_required' or 'awaiting_review')"
+                f"(must be 'manual_required', 'awaiting_review', or 'failed')"
             )
+        # On retry from failed, reset back to manual_required so the rest of
+        # the flow treats it as a fresh attempt.
+        if record.status == ExecutionStatus.failed:
+            record.status = ExecutionStatus.manual_required
+            record.notes = None
+            record.updated_at = datetime.now(timezone.utc)
         # Auto-approve escalated records when user picks a remediation action
         if record.status == ExecutionStatus.awaiting_review:
             record.status = ExecutionStatus.manual_required

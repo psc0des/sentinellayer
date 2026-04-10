@@ -79,6 +79,13 @@ export default function Agents() {
         mode={logViewer.mode}
         isOpen={logViewer.open}
         onClose={closeLogs}
+        isComplete={
+          logViewer.mode === 'live' && (
+            logViewer.agentType === 'all'
+              ? !anyScanning
+              : scanState[logViewer.agentType]?.status !== 'running'
+          )
+        }
         startedAt={
           logViewer.mode === 'live' && logViewer.agentType !== 'all'
             ? scanState[logViewer.agentType]?.startedAt
