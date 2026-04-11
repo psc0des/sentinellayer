@@ -139,19 +139,17 @@ file is needed for cloud deployment.
 Open the dashboard URL. Because no admin account exists yet, you will see the **one-time setup screen**:
 
 1. Choose a username and password (minimum 8 characters)
-2. Click **Create account** — you are logged in immediately; no second step
-3. All future visits show a standard **login screen** instead
+2. Click **Create account** — you are logged in immediately
+3. A two-step **onboarding guide** appears: Step 1 scans your Azure inventory, Step 2 navigates to the Agents page to run your first governance scan. You can skip it at any time by clicking X.
+4. All future visits show a standard **login screen** instead
 
-The admin credentials are stored server-side (PBKDF2-SHA256 hashed) in `data/admin_auth.json`
-on the Container App's filesystem. Sessions expire after 8 hours.
+Admin credentials are stored in two durable layers:
+- **Cosmos DB** (`governance-agents` container, document `_admin_auth`) — survives container restarts and revision deployments
+- **`/app/data/admin_auth.json`** — local cache for fast startup reads
 
-> **If you redeploy the Container App** (new revision), `data/admin_auth.json` is on the
-> ephemeral container filesystem and will be lost. You will see the setup screen again.
-> To avoid this, mount an Azure File Share to `/app/data` via the Container App volume mount
-> feature, or store the admin record in Cosmos DB (future improvement).
+Sessions expire after 8 hours.
 
-**Forgot the admin password?** Use the `--reset-admin` flag to delete `admin_auth.json`
-from the running Container App, which forces the setup screen to reappear:
+**Forgot the admin password?** Use the `--reset-admin` flag. This clears both the Cosmos record and the local file, then restarts the container so the setup screen reappears:
 ```bash
 bash scripts/deploy.sh --reset-admin
 ```
@@ -166,7 +164,7 @@ terraform -chdir=infrastructure/terraform-core output backend_url
 terraform -chdir=infrastructure/terraform-core output dashboard_url
 ```
 
-### Step 4 — Wire your workload infrastructure to RuriSkry
+### Step 5 — Wire your workload infrastructure to RuriSkry
 
 RuriSkry receives Azure Monitor alerts via a webhook endpoint:
 
@@ -209,7 +207,7 @@ cd infrastructure/terraform-demo
 terraform apply -target=azurerm_monitor_action_group.prod
 ```
 
-#### Option B — Terraform-managed production infrastructure
+#### Option C — Terraform-managed production infrastructure
 
 Add the backend URL to your existing Terraform action group resource:
 
@@ -362,7 +360,7 @@ Resources created and their governance roles:
 | Resource | Demo Scenario | Expected Verdict |
 |---|---|---|
 | `vm-dr-01` (B2ls_v2) | Cost agent proposes DELETE (idle DR VM) | DENIED — `disaster-recovery=true` policy |
-| `vm-web-01` (B2ls_v2) | SRE agent proposes SCALE UP (CPU >80%) — cloud-init stress cron fires automatically | APPROVED — safe action |
+| `vm-web-01` (B2ls_v2) | Monitoring agent proposes SCALE UP (CPU >80%) — cloud-init stress cron fires automatically | APPROVED — safe action |
 | `payment-api-prod` (App Service F1, free) | Critical dependency of vm-web-01 | Raises blast radius score |
 | `nsg-east-prod` (NSG) | Deploy agent proposes open port 8080 | ESCALATED — affects all governed workloads |
 | `ruriskryprod{suffix}` (Storage) | Shared dependency of all three above | Deletion → high blast radius |
@@ -688,6 +686,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `COSMOS_CONTAINER_ALERTS` | Live only | `governance-alerts` | Container for alert investigation records (Terraform-managed) |
 | `COSMOS_CONTAINER_EXECUTIONS` | Live only | `governance-executions` | Container for HITL execution records — survives deployments (Terraform-managed) |
 | `COSMOS_CONTAINER_INVENTORY` | Live only | `resource-inventory` | Container for resource inventory snapshots — partition key `/subscription_id` (Terraform-managed) |
+| `COSMOS_CONTAINER_AGENTS` | Live only | `governance-agents` | Container for agent registration records and admin auth backup (Terraform-managed) |
 | `INVENTORY_STALE_HOURS` | No | `24` | Hours after which an inventory snapshot is considered stale. Dashboard shows an amber warning and recommends refreshing before scans. |
 | `AZURE_SUBSCRIPTION_ID_DISPLAY` | No | `""` | Optional human-friendly label shown next to the subscription ID in the Inventory page header. |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
@@ -696,7 +695,6 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `SLACK_TIMEOUT` | No | `10` | HTTP timeout (seconds) for each Slack webhook POST. Covers connect + read. Increase only if your network to Slack is consistently slow. |
 | `DASHBOARD_URL` | No | `http://localhost:5173` | URL embedded in the "View in Dashboard" button on Slack Block Kit messages. In production this is set automatically from Terraform output. |
 | `AZURE_KEYVAULT_URL` | Live only | — | Key Vault URL for secret resolution |
-| `A2A_SERVER_URL` | No | `http://localhost:8000` | Base URL advertised in the A2A Agent Card |
 | `DEFAULT_RESOURCE_GROUP` | No | `""` | Default Azure resource group for dashboard scan endpoints. Empty = scan whole subscription. Body `resource_group` overrides this. |
 | `GITHUB_TOKEN` | Phase 21 | `""` | GitHub PAT with repo write access (Contents + Pull requests). Required for Terraform PR generation. |
 | `IAC_GITHUB_REPO` | Phase 21 | `""` | GitHub repo for IaC PRs (e.g. `your-org/ruriskry`). |

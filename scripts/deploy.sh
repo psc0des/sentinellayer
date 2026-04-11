@@ -63,8 +63,15 @@ die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
 step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
 
 # =============================================================================
-# --reset-admin: delete admin_auth.json from the running Container App so the
-# setup screen reappears on next dashboard visit (lost-password recovery).
+# --reset-admin: wipe the admin account from both the local filesystem file
+# AND the Cosmos DB backup record, so the setup screen reappears on the next
+# dashboard visit (lost-password recovery).
+#
+# Admin credentials are stored in two layers (three-layer read on startup):
+#   1. In-memory cache (cleared on restart)
+#   2. /app/data/admin_auth.json (ephemeral — cleared by container revision)
+#   3. Cosmos DB governance-agents container (durable — must be deleted explicitly)
+# Both layers must be cleared for the setup screen to reappear.
 # =============================================================================
 if [[ "$RESET_ADMIN" == "true" ]]; then
   step "Admin password reset"
@@ -73,14 +80,35 @@ if [[ "$RESET_ADMIN" == "true" ]]; then
     || { die "Could not read backend_container_app_name from Terraform state. Run from the repo root after a successful deploy."; })
   RG_NAME=$(terraform output -raw resource_group_name 2>/dev/null \
     || die "Could not read resource_group_name from Terraform state.")
-  log "Deleting data/admin_auth.json from Container App: $APP_NAME"
+
+  log "Clearing admin auth from filesystem + Cosmos on Container App: $APP_NAME"
+
+  # Step 1 — delete the local file AND the Cosmos record in one exec call
   az containerapp exec \
     --name "$APP_NAME" \
     --resource-group "$RG_NAME" \
-    --command "rm -f /app/data/admin_auth.json" \
+    --command "python -c \"
+import os, sys
+sys.path.insert(0, '/app')
+# Delete local file
+try:
+    os.remove('/app/data/admin_auth.json')
+    print('Deleted admin_auth.json')
+except FileNotFoundError:
+    print('admin_auth.json not found (already gone)')
+
+# Delete Cosmos record
+try:
+    from src.infrastructure.cosmos_client import CosmosAdminClient
+    CosmosAdminClient().delete()
+    print('Deleted Cosmos admin record')
+except Exception as e:
+    print(f'Cosmos delete failed (may be offline): {e}')
+\"" \
     --output none 2>/dev/null \
-  || warn "exec failed — trying az containerapp revision restart instead"
-  # Restart forces a fresh filesystem; admin_auth.json is gone on the new revision
+  || warn "exec failed — the Container App may be stopped. Attempting revision restart to clear the file layer."
+
+  # Step 2 — restart forces a fresh in-memory state (clears memory cache)
   az containerapp revision restart \
     --name "$APP_NAME" \
     --resource-group "$RG_NAME" \

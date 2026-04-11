@@ -514,3 +514,15 @@ class CosmosAdminClient:
             logger.info("CosmosAdminClient: admin auth saved to Cosmos")
         except Exception as exc:  # noqa: BLE001
             logger.warning("CosmosAdminClient: save failed — %s", exc)
+
+    def delete(self) -> None:
+        """Delete the admin record from Cosmos (used by --reset-admin)."""
+        if self._container is None:
+            return
+        try:
+            self._container.delete_item(
+                item=self._ADMIN_ID, partition_key=self._ADMIN_PARTITION
+            )
+            logger.info("CosmosAdminClient: admin auth deleted from Cosmos")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("CosmosAdminClient: delete failed — %s", exc)
