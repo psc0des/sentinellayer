@@ -5,6 +5,13 @@
  *   1. fetchAgentLastRun() — fast, per-agent, may use in-memory backend state
  *   2. fetchScanHistory()  — Cosmos-backed fallback; survives backend restarts
  *      and container revision swaps. Used when layer 1 doesn't return running.
+ *
+ * Stopping resilience:
+ *   When Stop is clicked, the scan_id is written to localStorage under
+ *   'ruriskry-stopping-scans'. On page refresh, if the backend still reports
+ *   the scan as 'running' AND it's in that localStorage set, we restore it as
+ *   'stopping' and re-send the cancel request. The set is cleaned up as soon as
+ *   the backend confirms a terminal state.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'
@@ -27,7 +34,36 @@ const AGENT_NAME = {
   deploy:     'deploy-agent',
 }
 
-// Normalize API agent_type values → our internal types
+const LS_STOPPING_KEY = 'ruriskry-stopping-scans'
+
+// ── localStorage helpers ─────────────────────────────────────────────────────
+
+function getStoppingSet() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(LS_STOPPING_KEY) ?? '[]'))
+  } catch { return new Set() }
+}
+
+function addStopping(scanId) {
+  if (!scanId) return
+  try {
+    const s = getStoppingSet()
+    s.add(scanId)
+    localStorage.setItem(LS_STOPPING_KEY, JSON.stringify([...s]))
+  } catch { /* ignore storage errors */ }
+}
+
+function removeStopping(scanId) {
+  if (!scanId) return
+  try {
+    const s = getStoppingSet()
+    s.delete(scanId)
+    localStorage.setItem(LS_STOPPING_KEY, JSON.stringify([...s]))
+  } catch { /* ignore storage errors */ }
+}
+
+// ── Normalize API agent_type values → our internal types ─────────────────────
+
 function normalizeType(t) {
   if (!t) return null
   if (t === 'cost-optimization') return 'cost'
@@ -79,6 +115,8 @@ export default function useScanManager({ onScanComplete } = {}) {
         if (result.status !== 'running') {
           clearInterval(pollRefs.current[agentType])
           pollRefs.current[agentType] = null
+          // Clean up localStorage stopping set when scan reaches terminal state
+          removeStopping(scanId)
           let resolvedStatus
           if (result.status === 'error') resolvedStatus = 'error'
           else if (result.status === 'cancelled') resolvedStatus = 'cancelled'
@@ -101,16 +139,26 @@ export default function useScanManager({ onScanComplete } = {}) {
     if (restoredRef.current) return
     restoredRef.current = true
 
+    const stoppingSet = getStoppingSet()
+
     const restoreAgent = (agentType, scanId, startedAt) => {
+      // If this scan_id was in localStorage stopping set, it means the user
+      // clicked Stop before the last page refresh. Restore as 'stopping' and
+      // re-send the cancel request so the backend processes it.
+      const wasStopping = stoppingSet.has(scanId)
       setScanState(prev => ({
         ...prev,
         [agentType]: {
-          status: 'running',
+          status: wasStopping ? 'stopping' : 'running',
           scanId,
           startedAt: startedAt ?? new Date().toISOString(),
         },
       }))
       startPolling(scanId, agentType)
+      if (wasStopping) {
+        // Re-send cancel — backend will ignore it if the scan is already done
+        cancelScan(scanId).catch(() => { /* scan may already be terminal */ })
+      }
     }
 
     // Layer 1: fetchAgentLastRun (fast, per-agent)
@@ -214,21 +262,20 @@ export default function useScanManager({ onScanComplete } = {}) {
   const stopScan = useCallback(async (agentType) => {
     const scanId = scanState[agentType]?.scanId
     // Immediately show "stopping" — keep polling so we catch the real terminal state.
-    // Do NOT kill the poll here: the backend cancel check runs between evaluations
-    // (up to ~30s). Polling will update the status once the backend confirms.
+    // Persist to localStorage so page refresh also restores as 'stopping'.
     setScanState(prev => ({
       ...prev,
       [agentType]: { ...prev[agentType], status: 'stopping' },
     }))
     if (scanId) {
+      addStopping(scanId)
       try { await cancelScan(scanId) } catch { /* may already be complete */ }
-      // Keep polling — startPolling was already running; this just signals intent.
-      // If the poll was never started (edge case), start it now.
+      // Keep the poll running; if it was never started (edge case), start it now.
       if (!pollRefs.current[agentType]) {
         startPolling(scanId, agentType)
       }
     } else {
-      // No scan_id (scan started but ID not yet received) — nothing to cancel, clear manually.
+      // No scan_id yet — nothing to cancel, clear immediately.
       setScanState(prev => ({
         ...prev,
         [agentType]: { status: 'cancelled', scanId: null, startedAt: null },
