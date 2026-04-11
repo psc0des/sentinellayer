@@ -399,6 +399,12 @@ See [`docs/slack-setup.md`](docs/slack-setup.md) — create a Slack app, enable 
 
 ---
 
+## Use Cases
+
+See [`docs/use_cases.md`](docs/use_cases.md) for 18 real-world scenarios across all 3 agents — cost right-sizing, VM crash recovery, NSG security violations, IaC-managed Terraform PRs, and more.
+
+---
+
 ## Project Structure
 
 ```
@@ -466,7 +472,8 @@ ruriskry/
 │   ├── SERVICES.md                  # Azure service dependency map
 │   ├── FAQ.md                       # Common post-deploy questions and answers
 │   ├── slack-setup.md               # Slack webhook setup guide for contributors
-│   └── alert-wiring.md              # Azure Monitor → RuriSkry wiring guide
+│   ├── alert-wiring.md              # Azure Monitor → RuriSkry wiring guide
+│   └── use_cases.md                 # Real-world scenarios for all 3 agents (end-to-end flows)
 └── scripts/
     ├── deploy.sh                    # One-command full deploy (Terraform + Docker + dashboard)
     ├── cleanup.sh                   # Wipe Azure resources for a clean re-deploy
