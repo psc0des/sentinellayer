@@ -305,12 +305,21 @@ function HistoricalLogBody({ scanId }) {
       {/* Evaluations list */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
         {evaluations.length === 0 ? (
-          <div className="text-center py-8 space-y-2">
-            <p className="text-sm font-medium text-green-400">Scan completed — no issues found</p>
-            <p className="text-xs text-slate-500">
-              {proposals} proposal{proposals !== 1 ? 's' : ''} checked, 0 issues
-            </p>
-          </div>
+          data.status === 'cancelled' ? (
+            <div className="text-center py-8 space-y-2">
+              <p className="text-sm font-medium text-slate-400">Scan was cancelled</p>
+              <p className="text-xs text-slate-500">
+                {proposals} proposal{proposals !== 1 ? 's' : ''} queued · stopped before completion
+              </p>
+            </div>
+          ) : (
+            <div className="text-center py-8 space-y-2">
+              <p className="text-sm font-medium text-green-400">Scan completed — no issues found</p>
+              <p className="text-xs text-slate-500">
+                {proposals} proposal{proposals !== 1 ? 's' : ''} checked, 0 issues
+              </p>
+            </div>
+          )
         ) : (
           evaluations.map((ev, i) => <EvaluationRow key={i} ev={ev} />)
         )}
@@ -319,7 +328,7 @@ function HistoricalLogBody({ scanId }) {
       {/* Footer */}
       <div className="px-4 py-3 border-t border-slate-700 shrink-0">
         <p className="text-xs text-slate-600">
-          {'Status: '}{data.status}{' · '}{evaluations.length} evaluation{evaluations.length !== 1 ? 's' : ''}
+          {'Status: '}{data.status === 'cancelled' ? 'Cancelled' : data.status}{' · '}{evaluations.length} evaluation{evaluations.length !== 1 ? 's' : ''}
         </p>
       </div>
     </>

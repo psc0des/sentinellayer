@@ -440,3 +440,77 @@ class CosmosInventoryClient:
                 logger.warning(
                     "CosmosInventoryClient: delete %s failed — %s", doc_id, exc
                 )
+
+
+class CosmosAdminClient:
+    """Persist the admin auth record in Cosmos DB (governance-agents container).
+
+    Uses a single document with id="_admin_auth" and name="_system" (partition key).
+    Falls back silently to no-op in mock mode or when Cosmos is unavailable —
+    callers always check the local file first; Cosmos is the durable backup.
+
+    Partition key: /name   (existing governance-agents container)
+    Document ID:   _admin_auth
+    """
+
+    _ADMIN_ID = "_admin_auth"
+    _ADMIN_PARTITION = "_system"
+
+    def __init__(self, cfg=None) -> None:
+        self._cfg = cfg or _default_settings
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = self._secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
+        self._is_mock: bool = (
+            self._cfg.use_local_mocks
+            or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
+        )
+        self._container = None
+        if not self._is_mock:
+            try:
+                from azure.cosmos import CosmosClient  # type: ignore[import]
+
+                client = CosmosClient(
+                    url=self._cfg.cosmos_endpoint,
+                    credential=self._cosmos_key,
+                )
+                db = client.get_database_client(self._cfg.cosmos_database)
+                self._container = db.get_container_client(
+                    self._cfg.cosmos_container_agents
+                )
+                logger.info("CosmosAdminClient: connected to %s / %s",
+                            self._cfg.cosmos_database, self._cfg.cosmos_container_agents)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("CosmosAdminClient: init failed — %s; no Cosmos backup for admin auth", exc)
+                self._container = None
+
+    def load(self) -> dict | None:
+        """Return the stored admin record, or None if not found."""
+        if self._container is None:
+            return None
+        try:
+            doc = self._container.read_item(
+                item=self._ADMIN_ID, partition_key=self._ADMIN_PARTITION
+            )
+            # Strip Cosmos metadata before returning
+            return {k: v for k, v in doc.items() if not k.startswith("_") and k != "name"}
+        except Exception:  # noqa: BLE001
+            return None
+
+    def save(self, record: dict) -> None:
+        """Upsert the admin record to Cosmos."""
+        if self._container is None:
+            return
+        try:
+            self._container.upsert_item({
+                "id": self._ADMIN_ID,
+                "name": self._ADMIN_PARTITION,
+                **record,
+            })
+            logger.info("CosmosAdminClient: admin auth saved to Cosmos")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("CosmosAdminClient: save failed — %s", exc)

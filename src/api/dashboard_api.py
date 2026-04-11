@@ -182,31 +182,79 @@ _PBKDF2_ITERS = 260_000          # NIST SP 800-132 recommended minimum
 # Cached admin record — "unloaded" sentinel means not yet read from disk.
 _admin_cache: dict | None | str = "unloaded"
 
+# Lazy-initialised Cosmos admin client for durable admin auth storage.
+_cosmos_admin = None
+
+
+def _get_cosmos_admin():
+    """Return the CosmosAdminClient singleton (lazy-init, never raises)."""
+    global _cosmos_admin
+    if _cosmos_admin is None:
+        try:
+            from src.infrastructure.cosmos_client import CosmosAdminClient  # noqa: PLC0415
+            _cosmos_admin = CosmosAdminClient()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("_get_cosmos_admin: init failed — %s", exc)
+    return _cosmos_admin
+
 
 def _get_admin() -> dict | None:
-    """Return the admin record dict, or None if no admin has been created."""
+    """Return the admin record dict, or None if no admin has been created.
+
+    Load order:
+    1. In-memory cache (fastest)
+    2. Local file data/admin_auth.json (survives process restarts on same container)
+    3. Cosmos DB governance-agents container (survives new container revisions)
+    """
     global _admin_cache
-    if _admin_cache == "unloaded":
-        if _AUTH_FILE.exists():
+    if _admin_cache != "unloaded":
+        return _admin_cache  # type: ignore[return-value]
+
+    # Layer 1: local file
+    if _AUTH_FILE.exists():
+        try:
+            _admin_cache = json.loads(_AUTH_FILE.read_text(encoding="utf-8"))
+            return _admin_cache  # type: ignore[return-value]
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Layer 2: Cosmos DB (survives container revision rotation)
+    cosmos = _get_cosmos_admin()
+    if cosmos is not None:
+        record = cosmos.load()
+        if record:
+            logger.info("_get_admin: restored from Cosmos DB")
+            _admin_cache = record
+            # Write back to local file so subsequent reads are fast
             try:
-                _admin_cache = json.loads(_AUTH_FILE.read_text(encoding="utf-8"))
+                _AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _AUTH_FILE.write_text(json.dumps(record), encoding="utf-8")
             except Exception:  # noqa: BLE001
-                _admin_cache = None
-        else:
-            _admin_cache = None
-    return _admin_cache  # type: ignore[return-value]
+                pass
+            return _admin_cache  # type: ignore[return-value]
+
+    _admin_cache = None
+    return None
 
 
 def _save_admin(username: str, password: str) -> None:
-    """Hash password and persist admin record to disk."""
+    """Hash password and persist admin record to local file + Cosmos DB."""
     global _admin_cache
     salt = secrets.token_hex(32)
     pw_hash = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt.encode("utf-8"), _PBKDF2_ITERS
     ).hex()
     record: dict = {"username": username, "salt": salt, "pw_hash": pw_hash}
-    _AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _AUTH_FILE.write_text(json.dumps(record), encoding="utf-8")
+    # Local file (fast path for same-container reads)
+    try:
+        _AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _AUTH_FILE.write_text(json.dumps(record), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_save_admin: could not write local file — %s", exc)
+    # Cosmos DB (durable across container revisions)
+    cosmos = _get_cosmos_admin()
+    if cosmos is not None:
+        cosmos.save(record)
     _admin_cache = record
 
 

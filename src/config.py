@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     cosmos_container_alerts: str = "governance-alerts"
     cosmos_container_executions: str = "governance-executions"
     cosmos_container_inventory: str = "resource-inventory"
+    cosmos_container_agents: str = "governance-agents"
     inventory_stale_hours: int = 24          # warn in UI if older than this
     azure_subscription_id_display: str = ""  # human-friendly label (optional)
 
