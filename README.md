@@ -284,7 +284,7 @@ A 6-page React governance UI with real-time SSE streaming, custom design tokens,
 
 ### Resource Inventory Browser
 
-> Full Azure resource inventory: summary cards (total resources, VMs, App Services, types), stale-age warning, refresh button with live progress, type filter + name search, expandable resource rows with per-resource detail, VM power-state dot (green=running, red=deallocated, gray=unknown). Scan modal lets you choose inventory mode (existing / refresh / skip) before each scan.
+> Full Azure resource inventory: summary cards (total resources, VMs, App Services, types), stale-age warning, refresh button with live progress, **subscription filter** (auto-shown when resources span >1 subscription), type filter, resource group filter, name search, expandable resource rows with per-resource detail, VM power-state dot (green=running, red=deallocated, gray=unknown). Scan modal lets you choose inventory mode (existing / refresh / skip) before each scan.
 
 ### Admin Panel
 <p align="center">

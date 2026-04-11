@@ -501,6 +501,8 @@ Empty body `{}` is also accepted.
 
 Poll a background scan started by one of the scan trigger endpoints.
 
+> **Cancellation behaviour**: if `PATCH /api/scan/{id}/cancel` has been called but the background task hasn't processed the flag yet (can take up to ~30s while the current evaluation finishes), this endpoint returns `"status": "cancelled"` immediately — overriding the Cosmos record. This prevents the two-layer restore in `useScanManager` from re-adding the scan as running.
+
 **Response (in progress):**
 ```json
 {
