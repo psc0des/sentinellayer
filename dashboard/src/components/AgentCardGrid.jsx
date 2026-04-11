@@ -290,29 +290,33 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
 
   if (!meta) return null
 
-  const online    = isOnline(agent.last_seen)
-  const isRunning = scan.status === 'running'
+  const online      = isOnline(agent.last_seen)
+  const isRunning   = scan.status === 'running'
+  const isStopping  = scan.status === 'stopping'
   const total     = agent.total_actions_proposed ?? 0
   const approved  = agent.approval_count ?? 0
   const denied    = agent.denial_count ?? 0
   const escalated = agent.escalation_count ?? 0
   const pct       = (n) => (total > 0 ? (n / total) * 100 : 0)
-  const elapsed   = useElapsed(isRunning ? scan.startedAt : null)
+  const elapsed   = useElapsed((isRunning || isStopping) ? scan.startedAt : null)
   const { Icon }  = meta
 
   return (
     <>
     <GlowCard
-      color={isRunning ? 'amber' : online ? 'green' : 'slate'}
-      intensity={online || isRunning ? 'medium' : 'low'}
-      beam={online || isRunning}
-      beamDuration={isRunning ? 1.5 : 4}
+      color={isStopping ? 'amber' : isRunning ? 'amber' : online ? 'green' : 'slate'}
+      intensity={online || isRunning || isStopping ? 'medium' : 'low'}
+      beam={online || isRunning || isStopping}
+      beamDuration={isRunning || isStopping ? 1.5 : 4}
       className="p-4 flex flex-col gap-3"
     >
       {/* Name + icon + ··· menu */}
       <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full shrink-0 ${
-          isRunning ? 'bg-amber-400 animate-pulse' : online ? 'bg-green-500 animate-pulse' : 'bg-slate-600'
+          isStopping ? 'bg-orange-400 animate-pulse'
+          : isRunning ? 'bg-amber-400 animate-pulse'
+          : online ? 'bg-green-500 animate-pulse'
+          : 'bg-slate-600'
         }`} />
         <Icon className="w-4 h-4 text-slate-400 shrink-0" />
         <span className="text-sm font-medium text-slate-200 truncate flex-1" title={agent.name}>
@@ -365,7 +369,12 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
 
       {/* Status line */}
       <p className="text-xs text-slate-500">
-        {isRunning ? (
+        {isStopping ? (
+          <span className="text-orange-400 font-mono flex items-center gap-1.5">
+            <Clock className="w-3 h-3" />
+            Stopping… {elapsed}
+          </span>
+        ) : isRunning ? (
           <span className="text-amber-400 font-mono flex items-center gap-1.5">
             <Clock className="w-3 h-3" />
             Scanning… {elapsed}
@@ -377,7 +386,11 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
 
       {/* Action buttons */}
       <div className="flex gap-2 mt-auto">
-        {isRunning ? (
+        {isStopping ? (
+          <div className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium border border-orange-500/30 bg-orange-500/10 text-orange-400 cursor-not-allowed opacity-75 select-none">
+            <Spinner /> Stopping…
+          </div>
+        ) : isRunning ? (
           <>
             <button
               onClick={() => onStop(agentType)}
@@ -642,13 +655,16 @@ export default function AgentCardGrid({
             <Spinner />
             {allScanning ? 'Running all agents…' : 'Scan in progress…'}
           </div>
-          <button
-            onClick={onStopAll}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold border border-rose-500/50 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
-            title="Stop all running scans"
-          >
-            <Square className="w-3.5 h-3.5" /> Stop All
-          </button>
+          {/* Only show Stop All when there are actually running (not just stopping) scans */}
+          {agentTypes.some(t => scanState[t]?.status === 'running') && (
+            <button
+              onClick={onStopAll}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold border border-rose-500/50 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition-all cursor-pointer"
+              title="Stop all running scans"
+            >
+              <Square className="w-3.5 h-3.5" /> Stop All
+            </button>
+          )}
         </div>
       ) : (
         <button

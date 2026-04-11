@@ -13,6 +13,7 @@
  */
 
 import React from 'react'
+import { AlertTriangle } from 'lucide-react'
 import { useOutletContext } from 'react-router-dom'
 import useScanManager from '../hooks/useScanManager'
 import AgentCardGrid from '../components/AgentCardGrid'
@@ -31,6 +32,7 @@ export default function Agents() {
     setSubscriptionId,
     anyScanning,
     allScanning,
+    anyStopping,
     startScan,
     startAllScans,
     stopScan,
@@ -50,6 +52,18 @@ export default function Agents() {
           Connected agents — trigger scans, view live logs, and review run history
         </p>
       </div>
+
+      {/* Stopping banner — shown while cancellation is pending */}
+      {anyStopping && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            <strong>Cancellation requested</strong> — the scan will stop after its current
+            evaluation finishes (may take up to 30 seconds).{' '}
+            <strong>Please wait before starting a new scan.</strong>
+          </span>
+        </div>
+      )}
 
       {/* Agent cards with inline controls */}
       <AgentCardGrid

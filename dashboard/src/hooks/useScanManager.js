@@ -79,13 +79,13 @@ export default function useScanManager({ onScanComplete } = {}) {
         if (result.status !== 'running') {
           clearInterval(pollRefs.current[agentType])
           pollRefs.current[agentType] = null
+          let resolvedStatus
+          if (result.status === 'error') resolvedStatus = 'error'
+          else if (result.status === 'cancelled') resolvedStatus = 'cancelled'
+          else resolvedStatus = 'complete'
           setScanState(prev => ({
             ...prev,
-            [agentType]: {
-              status: result.status === 'error' ? 'error' : 'complete',
-              scanId,
-              startedAt: null,
-            },
+            [agentType]: { status: resolvedStatus, scanId, startedAt: null },
           }))
           onScanCompleteRef.current?.()
         }
@@ -213,18 +213,28 @@ export default function useScanManager({ onScanComplete } = {}) {
 
   const stopScan = useCallback(async (agentType) => {
     const scanId = scanState[agentType]?.scanId
-    if (scanId) {
-      try { await cancelScan(scanId) } catch { /* may already be done */ }
-    }
-    if (pollRefs.current[agentType]) {
-      clearInterval(pollRefs.current[agentType])
-      pollRefs.current[agentType] = null
-    }
+    // Immediately show "stopping" — keep polling so we catch the real terminal state.
+    // Do NOT kill the poll here: the backend cancel check runs between evaluations
+    // (up to ~30s). Polling will update the status once the backend confirms.
     setScanState(prev => ({
       ...prev,
-      [agentType]: { status: 'cancelled', scanId, startedAt: null },
+      [agentType]: { ...prev[agentType], status: 'stopping' },
     }))
-  }, [scanState])
+    if (scanId) {
+      try { await cancelScan(scanId) } catch { /* may already be complete */ }
+      // Keep polling — startPolling was already running; this just signals intent.
+      // If the poll was never started (edge case), start it now.
+      if (!pollRefs.current[agentType]) {
+        startPolling(scanId, agentType)
+      }
+    } else {
+      // No scan_id (scan started but ID not yet received) — nothing to cancel, clear manually.
+      setScanState(prev => ({
+        ...prev,
+        [agentType]: { status: 'cancelled', scanId: null, startedAt: null },
+      }))
+    }
+  }, [scanState, startPolling])
 
   const stopAllScans = useCallback(async () => {
     await Promise.allSettled(
@@ -260,8 +270,9 @@ export default function useScanManager({ onScanComplete } = {}) {
 
   // ── Derived ──────────────────────────────────────────────────────────────
 
-  const anyScanning = AGENT_TYPES.some(t => scanState[t]?.status === 'running')
+  const anyScanning = AGENT_TYPES.some(t => ['running', 'stopping'].includes(scanState[t]?.status))
   const allScanning = AGENT_TYPES.every(t => scanState[t]?.status === 'running')
+  const anyStopping = AGENT_TYPES.some(t => scanState[t]?.status === 'stopping')
 
   return {
     scanState,
@@ -272,6 +283,7 @@ export default function useScanManager({ onScanComplete } = {}) {
     setSubscriptionId,
     anyScanning,
     allScanning,
+    anyStopping,
     startScan,
     startAllScans,
     stopScan,
