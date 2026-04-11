@@ -307,7 +307,7 @@ fi
 # =============================================================================
 step "Registering Azure providers"
 
-for PROVIDER in Microsoft.Storage Microsoft.App Microsoft.ContainerService Microsoft.OperationalInsights Microsoft.KeyVault Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Search Microsoft.Web; do
+for PROVIDER in Microsoft.Storage Microsoft.App Microsoft.ContainerService Microsoft.OperationalInsights Microsoft.KeyVault Microsoft.DocumentDB Microsoft.CognitiveServices Microsoft.Search Microsoft.Web Microsoft.AlertsManagement; do
   STATE=$(az provider show --namespace "$PROVIDER" --subscription "$SUBSCRIPTION_ID" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
   if [[ "$STATE" == "Registered" ]]; then
     ok "$PROVIDER already registered"
