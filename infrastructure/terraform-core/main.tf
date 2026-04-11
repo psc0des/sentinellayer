@@ -700,6 +700,10 @@ resource "azurerm_container_app" "backend" {
         name  = "AZURE_SUBSCRIPTION_ID"
         value = local.scan_subscription_id
       }
+      env {
+        name  = "LOG_ANALYTICS_WORKSPACE_ID"
+        value = azurerm_log_analytics_workspace.ruriskry.workspace_id
+      }
 
       # ── LLM tuning ────────────────────────────────────────────────────────
       env {
