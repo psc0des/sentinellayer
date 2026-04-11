@@ -62,6 +62,11 @@ SUBSCRIPTION_ID=$(grep -E '^subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/d
   | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
 [[ -n "$SUBSCRIPTION_ID" ]] || die "subscription_id is not set in terraform.tfvars."
 
+# target_subscription_id is optional — empty means same-subscription deployment
+TARGET_SUBSCRIPTION_ID=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+TARGET_SUBSCRIPTION_ID=${TARGET_SUBSCRIPTION_ID:-$SUBSCRIPTION_ID}
+
 az account set --subscription "$SUBSCRIPTION_ID" \
   || die "Could not select subscription $SUBSCRIPTION_ID. Run: az login"
 ok "Active subscription: $SUBSCRIPTION_ID"
@@ -84,17 +89,22 @@ FOUNDRY_LOCATION=$(grep -E '^foundry_location\s*=' "$TF_DIR/terraform.tfvars" 2>
 FOUNDRY_LOCATION=${FOUNDRY_LOCATION:-eastus2}
 
 KV_NAME="ruriskry-${ENV_VAL}-kv-${SUFFIX}"
+MONITOR_RG="ruriskry-monitor-rg-${SUFFIX}"
 TFSTATE_RG="ruriskry-tfstate-rg"
 TFSTATE_SA="ruriskrytf${SUFFIX}"
 
 echo ""
 echo -e "${BOLD}Operating on:${NC}"
-echo "  Subscription : $SUBSCRIPTION_ID"
+echo "  Subscription        : $SUBSCRIPTION_ID"
+if [[ "$TARGET_SUBSCRIPTION_ID" != "$SUBSCRIPTION_ID" ]]; then
+  echo "  Target subscription : $TARGET_SUBSCRIPTION_ID  (monitor RG lives here)"
+fi
 echo ""
 echo -e "${BOLD}Resources to delete / purge:${NC}"
-echo "  Resource group   : $RESOURCE_GROUP"
-echo "  Foundry account  : $FOUNDRY_ACCOUNT_NAME  (purge soft-delete if present)"
-echo "  Key Vault        : $KV_NAME  (purge soft-delete if present)"
+echo "  Resource group      : $RESOURCE_GROUP  (subscription: $SUBSCRIPTION_ID)"
+echo "  Monitor RG          : $MONITOR_RG  (subscription: $TARGET_SUBSCRIPTION_ID)"
+echo "  Foundry account     : $FOUNDRY_ACCOUNT_NAME  (purge soft-delete if present)"
+echo "  Key Vault           : $KV_NAME  (purge soft-delete if present)"
 if [[ "$DELETE_TFSTATE" == true ]]; then
   echo "  tfstate RG       : $TFSTATE_RG"
   echo "  tfstate SA       : $TFSTATE_SA"
@@ -139,7 +149,26 @@ else
 fi
 
 # =============================================================================
-# 3. Purge soft-deleted Cognitive Services / Foundry account
+# 3. Delete monitor resource group in target subscription
+# =============================================================================
+# Terraform creates ruriskry-monitor-rg-<suffix> in the TARGET subscription
+# (azurerm.target provider) to host the Alert Processing Rule.
+# cleanup.sh must delete it separately — it is never inside the main RG.
+step "Deleting monitor resource group in target subscription"
+
+if az group show --name "$MONITOR_RG" --subscription "$TARGET_SUBSCRIPTION_ID" &>/dev/null; then
+  log "Deleting resource group: $MONITOR_RG (subscription: $TARGET_SUBSCRIPTION_ID)..."
+  az group delete \
+    --name "$MONITOR_RG" \
+    --subscription "$TARGET_SUBSCRIPTION_ID" \
+    --yes
+  ok "Monitor resource group deleted."
+else
+  ok "Monitor resource group '$MONITOR_RG' does not exist in $TARGET_SUBSCRIPTION_ID — nothing to delete."
+fi
+
+# =============================================================================
+# 5. Purge soft-deleted Cognitive Services / Foundry account
 # =============================================================================
 step "Purging soft-deleted Foundry account"
 
@@ -182,7 +211,7 @@ else
 fi
 
 # =============================================================================
-# 5. Delete tfstate storage (only with --all)
+# 6. Delete tfstate storage (only with --all)
 # =============================================================================
 if [[ "$DELETE_TFSTATE" == true ]]; then
   step "Deleting Terraform remote state"
@@ -200,7 +229,7 @@ if [[ "$DELETE_TFSTATE" == true ]]; then
 fi
 
 # =============================================================================
-# 6. Clean up local Terraform state
+# 7. Clean up local Terraform state
 # =============================================================================
 step "Cleaning local Terraform state"
 
