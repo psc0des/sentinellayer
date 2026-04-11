@@ -318,6 +318,25 @@ for PROVIDER in Microsoft.Storage Microsoft.App Microsoft.ContainerService Micro
   fi
 done
 
+# The APR and its resource group are created in the TARGET subscription (azurerm.target
+# provider alias). If target_subscription_id differs from subscription_id, that sub also
+# needs Microsoft.AlertsManagement registered — otherwise Terraform gets a 409 Conflict.
+TARGET_SUB_EARLY=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+if [[ -n "$TARGET_SUB_EARLY" && "$TARGET_SUB_EARLY" != "$SUBSCRIPTION_ID" ]]; then
+  log "target_subscription_id ($TARGET_SUB_EARLY) differs from infra sub — registering Microsoft.AlertsManagement there too"
+  for PROVIDER in Microsoft.AlertsManagement Microsoft.Insights; do
+    STATE=$(az provider show --namespace "$PROVIDER" --subscription "$TARGET_SUB_EARLY" --query "registrationState" -o tsv 2>/dev/null || echo "NotRegistered")
+    if [[ "$STATE" == "Registered" ]]; then
+      ok "$PROVIDER already registered in target sub"
+    else
+      log "Registering $PROVIDER in target sub (this may take a minute)..."
+      az provider register --namespace "$PROVIDER" --subscription "$TARGET_SUB_EARLY" --wait
+      ok "$PROVIDER registered in target sub"
+    fi
+  done
+fi
+
 # =============================================================================
 # 0b. Terraform remote state — auto-create if missing
 # =============================================================================
