@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom'
 import { fetchScanHistory } from '../api'
 import {
   RefreshCw, CheckCircle, AlertTriangle, ChevronRight,
-  ScrollText, Filter,
+  ScrollText, Filter, XCircle,
 } from 'lucide-react'
 import TableSkeleton from './magicui/TableSkeleton'
 
@@ -39,10 +39,11 @@ const AGENT_FILTER_OPTIONS = [
 ]
 
 const STATUS_FILTER_OPTIONS = [
-  { value: '',         label: 'All Statuses' },
-  { value: 'complete', label: 'Complete' },
-  { value: 'running',  label: 'Running' },
-  { value: 'error',    label: 'Error' },
+  { value: '',          label: 'All Statuses' },
+  { value: 'complete',  label: 'Complete' },
+  { value: 'running',   label: 'Running' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'error',     label: 'Error' },
 ]
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -210,6 +211,10 @@ export default function ScanHistoryTable({ onViewLog }) {
                         <span className="text-xs text-yellow-400 flex items-center gap-1.5">
                           <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
                           Running
+                        </span>
+                      ) : scan.status === 'cancelled' ? (
+                        <span className="text-xs text-slate-400 flex items-center gap-1">
+                          <XCircle className="w-3 h-3" /> Cancelled
                         </span>
                       ) : (
                         <span className="text-xs text-slate-500">{scan.status ?? '\u2014'}</span>

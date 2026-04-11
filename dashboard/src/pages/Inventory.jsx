@@ -146,6 +146,7 @@ export default function Inventory() {
   const [filter,          setFilter]          = useState('')
   const [typeFilter,      setTypeFilter]      = useState('')
   const [rgFilter,        setRgFilter]        = useState('')
+  const [subFilter,       setSubFilter]       = useState('')
   const [expandedRows,    setExpandedRows]    = useState(new Set())
   const [loading,         setLoading]         = useState(true)
 
@@ -215,13 +216,22 @@ export default function Inventory() {
   const allTypes = [...new Set(resources.map(r => (r.type || '').toLowerCase()))].sort()
   const allRGs = [...new Set(resources.map(r => r.resourceGroup || '').filter(Boolean))].sort()
 
+  // Extract subscription IDs from ARM resource IDs (/subscriptions/{id}/...)
+  function extractSubId(id) {
+    if (!id) return null
+    const m = id.match(/\/subscriptions\/([^/]+)\//i)
+    return m ? m[1].toLowerCase() : null
+  }
+  const allSubs = [...new Set(resources.map(r => extractSubId(r.id)).filter(Boolean))].sort()
+
   const filtered = resources.filter(r => {
     const matchType = !typeFilter || (r.type || '').toLowerCase() === typeFilter
     const matchRg   = !rgFilter   || (r.resourceGroup || '').toLowerCase() === rgFilter.toLowerCase()
+    const matchSub  = !subFilter  || extractSubId(r.id) === subFilter.toLowerCase()
     const matchSearch = !filter
       || (r.name || '').toLowerCase().includes(filter.toLowerCase())
       || (r.resourceGroup || '').toLowerCase().includes(filter.toLowerCase())
-    return matchType && matchRg && matchSearch
+    return matchType && matchRg && matchSub && matchSearch
   })
 
   const vmCount = resources.filter(r => (r.type || '').toLowerCase() === 'microsoft.compute/virtualmachines').length
@@ -351,6 +361,18 @@ export default function Inventory() {
               <option key={rg} value={rg}>{rg}</option>
             ))}
           </select>
+          {allSubs.length > 1 && (
+            <select
+              value={subFilter}
+              onChange={e => setSubFilter(e.target.value)}
+              className="px-3 py-2 rounded-lg text-sm bg-slate-800/60 border border-slate-700 text-slate-300 focus:outline-none focus:border-blue-500/50"
+            >
+              <option value="">All subscriptions ({allSubs.length})</option>
+              {allSubs.map(sub => (
+                <option key={sub} value={sub}>{sub}</option>
+              ))}
+            </select>
+          )}
           <input
             type="text"
             placeholder="Search by name or resource group…"

@@ -2475,9 +2475,16 @@ async def get_scan_status(scan_id: str) -> dict:
             status_code=404,
             detail=f"Scan '{scan_id}' not found.",
         )
+    # If cancellation has been requested but the background task hasn't
+    # processed it yet (still mid-evaluation), report cancelled immediately.
+    # This prevents the two-layer restore in the UI from re-adding it as running.
+    effective_status = (
+        "cancelled" if scan_id in _scan_cancelled else record.get("status")
+    )
     return {
         "scan_id": scan_id,
         **record,
+        "status": effective_status,
         "proposals_count": len(record.get("proposed_actions", [])),
         "evaluations_count": len(record.get("evaluations", [])),
     }

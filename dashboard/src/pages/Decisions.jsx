@@ -13,7 +13,7 @@ import DecisionTable from '../components/DecisionTable'
 import { ChevronRight } from 'lucide-react'
 
 export default function Decisions() {
-  const { evaluations, pendingReviews, fetchAll } = useOutletContext()
+  const { evaluations, pendingReviews, fetchAll, loggedInUser } = useOutletContext()
   const [drilldownEval, setDrilldownEval] = useState(null)
   const navigate  = useNavigate()
   const location  = useLocation()
@@ -68,6 +68,7 @@ export default function Decisions() {
           <EvaluationDrilldown
             evaluation={drilldownEval}
             onBack={handleBack}
+            reviewedBy={loggedInUser}
           />
         </>
       ) : (

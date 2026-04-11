@@ -226,7 +226,7 @@ function AppShell({ loggedInUser, onLogout }) {
   if (error)   return <ErrorScreen message={error} onRetry={load} />
 
   const alertCount = alerts.filter(a => a.status === 'firing' || a.status === 'investigating').length
-  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll }
+  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll, loggedInUser }
 
   return (
     <div className="min-h-screen text-slate-100 flex font-sans" style={{ background: 'var(--bg-base)', fontFamily: 'var(--font-ui)' }}>

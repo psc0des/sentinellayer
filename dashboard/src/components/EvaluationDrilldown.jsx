@@ -219,7 +219,7 @@ function AgentTerminal({ lines, running }) {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
-export default function EvaluationDrilldown({ evaluation, onBack }) {
+export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) {
     const [explanation, setExplanation] = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
@@ -282,7 +282,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
 
     async function handleApprove(executionId) {
         try {
-            const updated = await approveExecution(executionId)
+            const updated = await approveExecution(executionId, reviewedBy || 'dashboard-user')
             setExecutionStatus(updated)
         } catch (err) {
             alert(`Approve failed: ${err.message}`)
@@ -292,7 +292,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
     async function handleDismiss(executionId, prefillReason = '') {
         const reason = window.prompt('Reason for dismissal (optional):', prefillReason) ?? ''
         try {
-            const updated = await dismissExecution(executionId, 'dashboard-user', reason)
+            const updated = await dismissExecution(executionId, reviewedBy || 'dashboard-user', reason)
             setExecutionStatus(updated)
         } catch (err) {
             alert(`Dismiss failed: ${err.message}`)
@@ -317,7 +317,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
         setCreatePrLoading(true)
         setCreatePrError(null)
         try {
-            const updated = await createPRFromManual(executionId)
+            const updated = await createPRFromManual(executionId, reviewedBy || 'dashboard-user')
             setExecutionStatus(updated)
         } catch (err) {
             setCreatePrError(err.message)
@@ -367,7 +367,7 @@ export default function EvaluationDrilldown({ evaluation, onBack }) {
 
         let updated
         try {
-            updated = await executeAgentFix(executionId)
+            updated = await executeAgentFix(executionId, reviewedBy || 'dashboard-user')
             clearInterval(progressInterval)
             setExecutionStatus(updated)
             setAgentFixResult(updated)

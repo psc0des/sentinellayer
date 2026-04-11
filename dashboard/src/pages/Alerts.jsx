@@ -302,7 +302,7 @@ function AgentTerminal({ lines, running }) {
 // Action buttons for a single governance finding within an alert.
 // Mirrors the execution panel in EvaluationDrilldown.jsx.
 
-function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType }) {
+function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType, reviewedBy }) {
   const [execStatus, setExecStatus] = useState(execStatusInitial)
   const [createPrLoading, setCreatePrLoading] = useState(false)
   const [agentFixLoading, setAgentFixLoading] = useState(false)
@@ -341,7 +341,7 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType
     setCreatePrLoading(true)
     setError(null)
     try {
-      const updated = await createPRFromManual(execId)
+      const updated = await createPRFromManual(execId, reviewedBy || 'dashboard-user')
       setExecStatus(updated.status)
       if (updated.pr_url) setPrUrl(updated.pr_url)
     } catch (err) {
@@ -392,7 +392,7 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType
 
     let updated
     try {
-      updated = await executeAgentFix(execId)
+      updated = await executeAgentFix(execId, reviewedBy || 'dashboard-user')
       clearInterval(progressInterval)
       setExecStatus(updated.status)
       setAgentFixResult(updated)
@@ -455,7 +455,7 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType
   async function handleDismiss() {
     const reason = window.prompt('Reason for dismissal (optional):', 'Alert finding dismissed') ?? ''
     try {
-      const updated = await dismissExecution(execId, 'dashboard-user', reason)
+      const updated = await dismissExecution(execId, reviewedBy || 'dashboard-user', reason)
       setExecStatus(updated.status)
     } catch (err) {
       setError(`Dismiss failed: ${err.message}`)
@@ -702,7 +702,7 @@ function eventToLogLine(ev) {
 
 // ── Alert drilldown panel ────────────────────────────────────────────────────
 
-function AlertPanel({ alert, onClose, fetchAll }) {
+function AlertPanel({ alert, onClose, fetchAll, reviewedBy }) {
   const [localAlert, setLocalAlert] = useState(alert)
   const [investigatingPanel, setInvestigatingPanel] = useState(false)
 
@@ -934,6 +934,7 @@ function AlertPanel({ alert, onClose, fetchAll }) {
                         execStatusInitial={execStatus}
                         resourceId={resourceId}
                         actionType={actionType}
+                        reviewedBy={reviewedBy}
                       />
                     </div>
                   )
@@ -1031,7 +1032,7 @@ function TimelineRow({ label, time, icon }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Alerts() {
-  const { alerts = [], fetchAll } = useOutletContext()
+  const { alerts = [], fetchAll, loggedInUser } = useOutletContext()
 
   const [searchText,    setSearchText]    = useState('')
   const [filterStatus,  setFilterStatus]  = useState('all')
@@ -1307,7 +1308,7 @@ export default function Alerts() {
 
       {/* Drilldown panel */}
       {selectedAlert && (
-        <AlertPanel alert={selectedAlert} onClose={() => setSelectedAlert(null)} fetchAll={fetchAll} />
+        <AlertPanel alert={selectedAlert} onClose={() => setSelectedAlert(null)} fetchAll={fetchAll} reviewedBy={loggedInUser} />
       )}
     </div>
   )
