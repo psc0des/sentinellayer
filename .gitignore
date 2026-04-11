@@ -87,9 +87,16 @@ data/executions/
 data/agents/
 data/alerts/
 
-# Playwright perf results
+# Playwright perf results and screenshots
 dashboard/tests/results/
 dashboard/screenshots/
+dashboard/tests/screenshots/
+
+# Live E2E test that requires deployed credentials — keep locally, never publish
+dashboard/tests/cancel-flow-test.spec.js
+
+# Playwright MCP browser session files
+.playwright-mcp/
 
 # AI Agent Context (private)
 CLAUDE.md
