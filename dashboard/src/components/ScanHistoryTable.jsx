@@ -8,12 +8,31 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchScanHistory } from '../api'
+import { fetchScanHistory, cancelScan } from '../api'
 import {
   RefreshCw, CheckCircle, AlertTriangle, ChevronRight,
-  ScrollText, Filter, XCircle,
+  ScrollText, Filter, XCircle, Square,
 } from 'lucide-react'
 import TableSkeleton from './magicui/TableSkeleton'
+
+// ── localStorage helpers (mirrors useScanManager) ───────────────────────────
+
+const LS_STOPPING_KEY = 'ruriskry-stopping-scans'
+
+function getStoppingIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(LS_STOPPING_KEY) ?? '[]'))
+  } catch { return new Set() }
+}
+
+function addStoppingId(scanId) {
+  if (!scanId) return
+  try {
+    const s = getStoppingIds()
+    s.add(scanId)
+    localStorage.setItem(LS_STOPPING_KEY, JSON.stringify([...s]))
+  } catch { /* ignore */ }
+}
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -70,15 +89,31 @@ function normalizeAgentType(scan) {
   return scan.agent_type || scan.source || ''
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Map a scan row's agent_type back to the useScanManager state key.
+ * Needed so we can cross-reference local "stopping" state with the table row.
+ */
+function toScanStateKey(agentType) {
+  if (!agentType) return null
+  if (agentType === 'cost' || agentType === 'cost-optimization') return 'cost'
+  if (agentType === 'deploy') return 'deploy'
+  if (agentType === 'monitoring') return 'monitoring'
+  return null
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
-export default function ScanHistoryTable({ onViewLog }) {
+export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey = 0 }) {
   const navigate = useNavigate()
 
   const [scans, setScans]           = useState([])
   const [loading, setLoading]       = useState(true)
   const [agentFilter, setAgentFilter]   = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  // Track scan IDs cancelled directly from this table (for immediate "Cancelling" display)
+  const [tableCancelling, setTableCancelling] = useState(new Set())
 
   const loadScans = useCallback(() => {
     setLoading(true)
@@ -94,6 +129,9 @@ export default function ScanHistoryTable({ onViewLog }) {
   }, [])
 
   useEffect(() => { loadScans() }, [loadScans])
+
+  // Re-fetch whenever the parent bumps refreshKey (scan completes or cancel requested)
+  useEffect(() => { if (refreshKey > 0) loadScans() }, [refreshKey, loadScans])
 
   // Apply filters
   const filtered = scans.filter(scan => {
@@ -195,30 +233,84 @@ export default function ScanHistoryTable({ onViewLog }) {
 
                     {/* Status */}
                     <td className="py-3 pr-4">
-                      {scan.status === 'error' ? (
-                        <span className="text-xs text-red-400 flex items-center gap-1" title={scan.scan_error ?? 'Error'}>
-                          <AlertTriangle className="w-3 h-3" /> Error
-                        </span>
-                      ) : isClean ? (
-                        <span className="text-xs text-green-400 flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3" /> Clean
-                        </span>
-                      ) : scan.status === 'complete' ? (
-                        <span className="text-xs text-blue-400 flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3" /> Complete
-                        </span>
-                      ) : scan.status === 'running' ? (
-                        <span className="text-xs text-yellow-400 flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                          Running
-                        </span>
-                      ) : scan.status === 'cancelled' ? (
-                        <span className="text-xs text-slate-400 flex items-center gap-1">
-                          <XCircle className="w-3 h-3" /> Cancelled
-                        </span>
-                      ) : (
-                        <span className="text-xs text-slate-500">{scan.status ?? '\u2014'}</span>
-                      )}
+                      {(() => {
+                        // Three sources for "this scan is being cancelled":
+                        //   1. useScanManager local state is 'stopping' (live, same session)
+                        //   2. localStorage stopping set (survives page refresh)
+                        //   3. tableCancelling — user clicked Stop directly from this table
+                        const stateKey = toScanStateKey(agentType)
+                        const localEntry = stateKey ? scanState[stateKey] : null
+                        const stoppingIds = getStoppingIds()
+                        const isCancelling =
+                          scan.status === 'running' && (
+                            localEntry?.status === 'stopping' ||
+                            stoppingIds.has(scan.scan_id) ||
+                            tableCancelling.has(scan.scan_id)
+                          )
+
+                        // Detect phantom/stalled scans: backend reported 'running' but
+                        // the local state has no active scan for this agent (backend
+                        // restart orphan). Flag after 20 minutes.
+                        const isStale =
+                          scan.status === 'running' &&
+                          !isCancelling &&
+                          !localEntry?.scanId &&
+                          scan.started_at &&
+                          Date.now() - new Date(scan.started_at).getTime() > 20 * 60 * 1000
+
+                        if (isCancelling) {
+                          return (
+                            <span className="text-xs text-orange-400 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
+                              Cancelling…
+                            </span>
+                          )
+                        }
+                        if (isStale) {
+                          return (
+                            <span className="text-xs text-slate-500 flex items-center gap-1" title="Scan may have been interrupted (backend restarted)">
+                              <AlertTriangle className="w-3 h-3 text-amber-600" /> Stalled
+                            </span>
+                          )
+                        }
+                        if (scan.status === 'error') {
+                          return (
+                            <span className="text-xs text-red-400 flex items-center gap-1" title={scan.scan_error ?? 'Error'}>
+                              <AlertTriangle className="w-3 h-3" /> Error
+                            </span>
+                          )
+                        }
+                        if (isClean) {
+                          return (
+                            <span className="text-xs text-green-400 flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" /> Clean
+                            </span>
+                          )
+                        }
+                        if (scan.status === 'complete') {
+                          return (
+                            <span className="text-xs text-blue-400 flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" /> Complete
+                            </span>
+                          )
+                        }
+                        if (scan.status === 'running') {
+                          return (
+                            <span className="text-xs text-yellow-400 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                              Running
+                            </span>
+                          )
+                        }
+                        if (scan.status === 'cancelled') {
+                          return (
+                            <span className="text-xs text-slate-400 flex items-center gap-1">
+                              <XCircle className="w-3 h-3" /> Cancelled
+                            </span>
+                          )
+                        }
+                        return <span className="text-xs text-slate-500">{scan.status ?? '\u2014'}</span>
+                      })()}
                     </td>
 
                     {/* Proposals */}
@@ -253,7 +345,7 @@ export default function ScanHistoryTable({ onViewLog }) {
                       )}
                     </td>
 
-                    {/* View Log action */}
+                    {/* Actions: View Log (completed) or Stop (running) */}
                     <td className="py-3 text-center">
                       {scan.scan_id && scan.status !== 'running' && (
                         <button
@@ -263,6 +355,24 @@ export default function ScanHistoryTable({ onViewLog }) {
                         >
                           <ScrollText className="w-3 h-3" />
                           <span>View Log</span>
+                        </button>
+                      )}
+                      {scan.scan_id && scan.status === 'running' &&
+                       !tableCancelling.has(scan.scan_id) && (
+                        <button
+                          onClick={async () => {
+                            // Immediately show "Cancelling" in this row
+                            setTableCancelling(prev => new Set([...prev, scan.scan_id]))
+                            addStoppingId(scan.scan_id)
+                            try { await cancelScan(scan.scan_id) } catch { /* already done */ }
+                            // Refresh the table after backend processes cancel
+                            setTimeout(loadScans, 3000)
+                          }}
+                          className="inline-flex items-center gap-1 text-xs text-red-500 hover:text-red-300 transition-colors"
+                          title="Stop this scan"
+                        >
+                          <Square className="w-3 h-3" />
+                          <span>Stop</span>
                         </button>
                       )}
                     </td>

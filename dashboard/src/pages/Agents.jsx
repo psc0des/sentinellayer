@@ -12,7 +12,7 @@
  *   <ScanLogViewer />    — portal overlay (live or historical mode)
  */
 
-import React from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useOutletContext } from 'react-router-dom'
 import useScanManager from '../hooks/useScanManager'
@@ -22,6 +22,13 @@ import ScanLogViewer from '../components/ScanLogViewer'
 
 export default function Agents() {
   const { agents, inventoryStatus, fetchAll } = useOutletContext()
+
+  // Bumped whenever we want ScanHistoryTable to reload:
+  //   • immediately when stop is clicked (shows "Cancelling" row)
+  //   • again when scan reaches terminal state (shows final status)
+  const [histRefreshKey, setHistRefreshKey] = useState(0)
+
+  const bumpHistory = useCallback(() => setHistRefreshKey(k => k + 1), [])
 
   const {
     scanState,
@@ -40,7 +47,61 @@ export default function Agents() {
     openLiveLog,
     openHistoricalLog,
     closeLogs,
-  } = useScanManager({ onScanComplete: fetchAll })
+  } = useScanManager({
+    onScanComplete: useCallback(() => {
+      fetchAll()
+      bumpHistory()
+    }, [fetchAll, bumpHistory]),
+  })
+
+  // Banner persistence: show the amber "Cancellation requested" banner for at
+  // least 8 seconds after any stop action, even if the scan resolves instantly.
+  const [bannerUntil, setBannerUntil] = useState(0)
+  const bannerTimerRef = useRef(null)
+  const showStoppingBanner = anyStopping || Date.now() < bannerUntil
+
+  useEffect(() => {
+    if (!bannerUntil || Date.now() >= bannerUntil) return
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current)
+    bannerTimerRef.current = setTimeout(
+      () => setBannerUntil(0),
+      bannerUntil - Date.now(),
+    )
+    return () => clearTimeout(bannerTimerRef.current)
+  }, [bannerUntil])
+
+  const extendBanner = useCallback(() => setBannerUntil(Date.now() + 8000), [])
+
+  // Wrappers that refresh history at the right moments:
+  //   • On START: delay 1.5 s so the backend has time to write the running
+  //     record, then show it in the table (so "Cancelling" has a row to update)
+  //   • On STOP : immediately refresh so the row transitions to "Cancelling"
+  //   • On COMPLETE: refresh again to show final status (via onScanComplete above)
+
+  const handleStartScan = useCallback((agentType, mode) => {
+    startScan(agentType, mode)
+    setTimeout(bumpHistory, 1500)
+  }, [startScan, bumpHistory])
+
+  const handleStartAll = useCallback((mode) => {
+    startAllScans(mode)
+    setTimeout(bumpHistory, 1500)
+  }, [startAllScans, bumpHistory])
+
+  const handleStopScan = useCallback((agentType) => {
+    stopScan(agentType)
+    extendBanner()
+    // Don't bump history immediately — the cross-reference logic already shows
+    // "Cancelling" for the existing Running row without a reload. Delay the
+    // reload so the backend has time to write the final "cancelled" status.
+    setTimeout(bumpHistory, 6000)
+  }, [stopScan, bumpHistory, extendBanner])
+
+  const handleStopAll = useCallback(() => {
+    stopAllScans()
+    extendBanner()
+    setTimeout(bumpHistory, 6000)
+  }, [stopAllScans, bumpHistory, extendBanner])
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -53,8 +114,8 @@ export default function Agents() {
         </p>
       </div>
 
-      {/* Stopping banner — shown while cancellation is pending */}
-      {anyStopping && (
+      {/* Stopping banner — shown while cancellation is pending, or for 8s after stop */}
+      {showStoppingBanner && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>
@@ -71,10 +132,10 @@ export default function Agents() {
         scanState={scanState}
         anyScanning={anyScanning}
         allScanning={allScanning}
-        onStartScan={startScan}
-        onStartAll={startAllScans}
-        onStopAll={stopAllScans}
-        onStopScan={stopScan}
+        onStartScan={handleStartScan}
+        onStartAll={handleStartAll}
+        onStopAll={handleStopAll}
+        onStopScan={handleStopScan}
         onOpenLiveLog={openLiveLog}
         onOpenHistoricalLog={openHistoricalLog}
         resourceGroup={resourceGroup}
@@ -84,8 +145,12 @@ export default function Agents() {
         onSubscriptionIdChange={setSubscriptionId}
       />
 
-      {/* Cosmos-backed scan history */}
-      <ScanHistoryTable onViewLog={openHistoricalLog} />
+      {/* Cosmos-backed scan history — refreshKey triggers reload on stop/complete */}
+      <ScanHistoryTable
+        onViewLog={openHistoricalLog}
+        scanState={scanState}
+        refreshKey={histRefreshKey}
+      />
 
       {/* Log viewer overlay (live or historical) */}
       <ScanLogViewer

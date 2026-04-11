@@ -32,7 +32,8 @@ import {
   authLogout,
   setToken,
 } from './api'
-import Sidebar   from './components/Sidebar'
+import Sidebar          from './components/Sidebar'
+import OnboardingModal  from './components/OnboardingModal'
 import Overview  from './pages/Overview'
 import Agents    from './pages/Agents'
 import Decisions from './pages/Decisions'
@@ -97,6 +98,8 @@ function ErrorScreen({ message, onRetry }) {
 function AuthGate({ children }) {
   const [authState, setAuthState] = useState('checking') // checking | setup | login | ok
   const [loggedInUser, setLoggedInUser] = useState(null)
+  // isNewSetup: true when login came from the Setup page (first-time admin creation)
+  const [isNewSetup, setIsNewSetup] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -127,12 +130,16 @@ function AuthGate({ children }) {
   function handleLogin(token, username) {
     setToken(token)
     setLoggedInUser(username)
+    // Capture whether this login came from the Setup page so AppShell can
+    // show the onboarding modal exactly once after a fresh installation.
+    setIsNewSetup(authState === 'setup')
     setAuthState('ok')
   }
 
   async function handleLogout() {
     await authLogout()
     setLoggedInUser(null)
+    setIsNewSetup(false)
     setAuthState('login')
   }
 
@@ -140,13 +147,13 @@ function AuthGate({ children }) {
   if (authState === 'setup')    return <Setup onLogin={handleLogin} />
   if (authState === 'login')    return <Login onLogin={handleLogin} />
 
-  // Pass username + logout handler into children via a context-style prop
-  return children({ loggedInUser, onLogout: handleLogout })
+  // Pass username + logout handler + isNewSetup into children
+  return children({ loggedInUser, onLogout: handleLogout, isNewSetup })
 }
 
 // ── App Shell (layout + data fetching) ───────────────────────────────────
 
-function AppShell({ loggedInUser, onLogout }) {
+function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   const [evaluations,     setEvaluations]     = useState([])
   const [scans,           setScans]           = useState([])
   const [alerts,          setAlerts]          = useState([])
@@ -158,6 +165,16 @@ function AppShell({ loggedInUser, onLogout }) {
   const [error,           setError]           = useState(null)
   const [slackStatus,     setSlackStatus]     = useState(null)
   const [slackBtnLabel,   setSlackBtnLabel]   = useState('Slack Connected')
+
+  // Onboarding modal: shown once after fresh Setup → login flow.
+  // Dismissed state is persisted to localStorage so it never appears again.
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => isNewSetup && !localStorage.getItem('ruriskry-onboarding-done')
+  )
+  const closeOnboarding = useCallback(() => {
+    localStorage.setItem('ruriskry-onboarding-done', '1')
+    setShowOnboarding(false)
+  }, [])
 
   /**
    * fetchAll — fetch all shared data in parallel.
@@ -230,6 +247,9 @@ function AppShell({ loggedInUser, onLogout }) {
 
   return (
     <div className="min-h-screen text-slate-100 flex font-sans" style={{ background: 'var(--bg-base)', fontFamily: 'var(--font-ui)' }}>
+      {/* Onboarding guide — shown once after first-time admin setup */}
+      {showOnboarding && <OnboardingModal onClose={closeOnboarding} />}
+
       <Sidebar pendingCount={pendingReviews.length} alertCount={alertCount} />
 
       <div className="flex-1 flex flex-col min-w-0 bg-dots">
@@ -316,10 +336,10 @@ function AppShell({ loggedInUser, onLogout }) {
 export default function App() {
   return (
     <AuthGate>
-      {({ loggedInUser, onLogout }) => (
+      {({ loggedInUser, onLogout, isNewSetup }) => (
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<AppShell loggedInUser={loggedInUser} onLogout={onLogout} />}>
+            <Route path="/" element={<AppShell loggedInUser={loggedInUser} onLogout={onLogout} isNewSetup={isNewSetup} />}>
               <Route index element={<Navigate to="/overview" replace />} />
               <Route path="overview"    element={<Overview />} />
               <Route path="scans"       element={<Navigate to="/agents" replace />} />

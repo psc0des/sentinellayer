@@ -803,7 +803,7 @@ dashboard/
     │   ├── Sidebar.jsx           # Left nav: teal breathe logo, animated active indicator, amber urgency pulse on Decisions, red alert count badge, Settings gear + Admin link at bottom
     │   ├── DecisionTable.jsx     # Sortable/filterable/paginated verdict table + CSV/JSON export
     │   ├── AgentCardGrid.jsx     # Agent cards with inline scan/stop/live log/last run buttons (replaces ConnectedAgents + AgentControls)
-    │   ├── ScanHistoryTable.jsx  # Cosmos-backed scan history table with agent/status filters + "View Log" action
+    │   ├── ScanHistoryTable.jsx  # Cosmos-backed scan history table with agent/status filters + "View Log"/"Stop" actions; three-source isCancelling logic (scanState, localStorage, table-local); stale detection (>20 min running + no local state = "Stalled")
     │   ├── ScanLogViewer.jsx     # Dual-mode log viewer: live SSE (running scans) + historical structured display (completed scans)
     │   ├── ConnectedAgents.jsx   # [Legacy] Agent card grid — retained, no longer imported by Agents.jsx
     │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge)

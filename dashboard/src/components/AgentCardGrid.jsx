@@ -618,35 +618,34 @@ export default function AgentCardGrid({
         />
       </div>
 
-      {/* Cards */}
-      {agents.length === 0 ? (
-        <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 text-center">
-          <p className="text-sm text-slate-500">No agents registered yet.</p>
-          <p className="text-xs text-slate-600 mt-1">
-            Agents appear here after their first scan. Go to the{' '}
-            <span className="text-slate-400">Scans</span> tab and trigger a scan to get started.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {agentTypes.map(type => {
-            const agent = agentMap[agentNameMap[type]]
-            if (!agent) return null
-            return (
-              <AgentCard
-                key={type}
-                agent={agent}
-                agentType={type}
-                scan={scanState[type]}
-                onStart={handleStartWithModal}
-                onStop={onStopScan}
-                onViewLive={onOpenLiveLog}
-                onViewHistory={onOpenHistoricalLog}
-              />
-            )
-          })}
-        </div>
-      )}
+      {/* Cards — always show all 3 regardless of registration status */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {agentTypes.map(type => {
+          // Use registered agent data if available; fall back to a placeholder so
+          // the card always renders. The placeholder shows "never run" state and
+          // lets the user trigger a scan directly without having to run it first.
+          const agent = agentMap[agentNameMap[type]] ?? {
+            name: agentNameMap[type],
+            last_seen: null,
+            total_actions_proposed: 0,
+            approval_count: 0,
+            escalation_count: 0,
+            denial_count: 0,
+          }
+          return (
+            <AgentCard
+              key={type}
+              agent={agent}
+              agentType={type}
+              scan={scanState[type]}
+              onStart={handleStartWithModal}
+              onStop={onStopScan}
+              onViewLive={onOpenLiveLog}
+              onViewHistory={onOpenHistoricalLog}
+            />
+          )
+        })}
+      </div>
 
       {/* Run All / Stop All */}
       {anyScanning ? (

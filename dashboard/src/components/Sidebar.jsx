@@ -15,11 +15,11 @@ import { LayoutDashboard, ScanLine, Bot, ShieldCheck, FileText, Activity, Zap, S
 
 const NAV = [
   { to: '/overview',   icon: LayoutDashboard, label: 'Overview' },
-  { to: '/alerts',     icon: Zap,             label: 'Alerts' },
-  { to: '/agents',     icon: Bot,             label: 'Agents' },
   { to: '/inventory',  icon: Server,          label: 'Inventory' },
+  { to: '/agents',     icon: Bot,             label: 'Agents' },
   { to: '/decisions',  icon: ShieldCheck,     label: 'Decisions' },
   { to: '/audit',      icon: FileText,        label: 'Audit Log' },
+  { to: '/alerts',     icon: Zap,             label: 'Alerts' },
 ]
 
 export default function Sidebar({ pendingCount = 0, alertCount = 0 }) {
