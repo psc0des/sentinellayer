@@ -2955,12 +2955,11 @@ async def list_github_repos() -> dict:
         )
     try:
         from github import Github, GithubException  # noqa: PLC0415
-        gh = Github(token)
+        gh = Github(token, per_page=100)  # per_page on constructor, not get_repos()
         user = gh.get_user()
         # Omit `type` — passing type="all" raises 422 for fine-grained PATs.
-        # Default behaviour already returns all accessible repos.
         repos = sorted(
-            [r.full_name for r in user.get_repos(sort="updated", per_page=100)],
+            [r.full_name for r in user.get_repos(sort="updated")],
             key=str.lower,
         )
         return {"repos": repos}

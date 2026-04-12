@@ -574,8 +574,12 @@ export async function fetchConfig() {
  * @param {string} executionId
  * @returns {Promise<object>} Updated ExecutionRecord
  */
-export async function rollbackAgentFix(executionId) {
-  const res = await apiFetch(`${BASE}/execution/${executionId}/rollback`, { method: 'POST' })
+export async function rollbackAgentFix(executionId, reviewedBy = 'dashboard-user') {
+  const res = await apiFetch(`${BASE}/execution/${executionId}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reviewed_by: reviewedBy }),
+  })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(`API error ${res.status}: ${body.detail ?? 'rollback failed'}`)

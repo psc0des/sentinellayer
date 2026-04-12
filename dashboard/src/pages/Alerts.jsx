@@ -442,7 +442,7 @@ function AlertFindingActions({ execId, execStatusInitial, resourceId, actionType
     setRollbackExecuting(true)
     setRollbackResult(null)
     try {
-      const updated = await rollbackAgentFix(execId)
+      const updated = await rollbackAgentFix(execId, reviewedBy || 'dashboard-user')
       setExecStatus(updated.status)
       setRollbackResult(updated)
     } catch (err) {

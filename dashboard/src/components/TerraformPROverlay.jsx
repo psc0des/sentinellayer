@@ -113,21 +113,38 @@ export default function TerraformPROverlay({
           </button>
         </div>
 
-        {/* Detection note */}
-        {detectedRepo ? (
-          <div className="flex items-start gap-2 text-xs text-emerald-300/80 bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2">
-            <span className="mt-0.5">✓</span>
-            <span>
-              Detected <code className="font-mono text-emerald-200">{detectedRepo}</code> from resource tags.
-              Confirm or select a different repo below.
-            </span>
-          </div>
-        ) : (
-          <div className="flex items-start gap-2 text-xs text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
-            <span className="mt-0.5">⚠</span>
-            <span>No repo detected from resource tags. Select the repo that manages this resource.</span>
-          </div>
-        )}
+        {/* Detection note — green only when detected repo is confirmed in the loaded list */}
+        {(() => {
+          const confirmedInList = repos.length > 0 && repos.includes(detectedRepo)
+          if (detectedRepo && confirmedInList) {
+            return (
+              <div className="flex items-start gap-2 text-xs text-emerald-300/80 bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2">
+                <span className="mt-0.5">✓</span>
+                <span>
+                  Detected <code className="font-mono text-emerald-200">{detectedRepo}</code> from resource tags.
+                  Confirm or select a different repo below.
+                </span>
+              </div>
+            )
+          }
+          if (detectedRepo && !confirmedInList) {
+            return (
+              <div className="flex items-start gap-2 text-xs text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+                <span className="mt-0.5">⚠</span>
+                <span>
+                  Detected <code className="font-mono text-amber-200">{detectedRepo}</code> from resource tags,
+                  but this repo isn't in your GitHub account. Select the correct repo below.
+                </span>
+              </div>
+            )
+          }
+          return (
+            <div className="flex items-start gap-2 text-xs text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+              <span className="mt-0.5">⚠</span>
+              <span>No repo detected from resource tags. Select the repo that manages this resource.</span>
+            </div>
+          )
+        })()}
 
         {/* Repo search / combobox */}
         <div className="space-y-1.5">

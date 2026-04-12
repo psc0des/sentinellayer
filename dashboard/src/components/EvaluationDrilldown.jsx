@@ -427,7 +427,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
         setRollbackExecuting(true)
         setRollbackResult(null)
         try {
-            const updated = await rollbackAgentFix(executionId)
+            const updated = await rollbackAgentFix(executionId, reviewedBy || 'dashboard-user')
             setExecutionStatus(updated)
             setRollbackResult(updated)
         } catch (err) {
