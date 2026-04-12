@@ -405,24 +405,31 @@ class ExecutionAgent:
         commands: list[str] = []
 
         if action.action_type == ActionType.MODIFY_NSG:
-            rule_match = re.search(
-                r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
-            ) or re.search(
-                r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE
-            )
-            rule_name = rule_match.group(1) if rule_match else "<RULE_NAME>"
-            steps.append({
-                "operation": "delete_nsg_rule",
-                "target": action.target.resource_id,
-                "params": {"resource_group": rg, "nsg_name": name, "rule_name": rule_name},
-                "reason": f"Remove insecure NSG rule '{rule_name}'",
-            })
-            commands.append(
-                f"az network nsg rule delete"
-                f" --resource-group {rg}"
-                f" --nsg-name {name}"
-                f" --name {rule_name}"
-            )
+            # Use structured rule names stored by the deploy agent (primary source).
+            # Fall back to regex-parsed reason string only when nsg_rule_names is absent
+            # (e.g. older records created before this field was added).
+            if action.nsg_rule_names:
+                rule_names_list = action.nsg_rule_names
+            else:
+                rule_match = re.search(
+                    r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
+                ) or re.search(
+                    r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE
+                )
+                rule_names_list = [rule_match.group(1) if rule_match else "<RULE_NAME>"]
+            for rule_name in rule_names_list:
+                steps.append({
+                    "operation": "delete_nsg_rule",
+                    "target": action.target.resource_id,
+                    "params": {"resource_group": rg, "nsg_name": name, "rule_name": rule_name},
+                    "reason": f"Remove insecure NSG rule '{rule_name}'",
+                })
+                commands.append(
+                    f"az network nsg rule delete"
+                    f" --resource-group {rg}"
+                    f" --nsg-name {name}"
+                    f" --name {rule_name}"
+                )
 
         elif action.action_type in (ActionType.SCALE_DOWN, ActionType.SCALE_UP):
             proposed = action.target.proposed_sku or "<NEW_SKU>"
@@ -759,6 +766,7 @@ class ExecutionAgent:
             "proposed_sku": action.target.proposed_sku,
             "reason": action.reason,
             "urgency": action.urgency.value,
+            "nsg_rule_names": action.nsg_rule_names or [],
         }, indent=2)
 
         verdict_summary = json.dumps({

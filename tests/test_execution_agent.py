@@ -42,6 +42,7 @@ def _make_action(
     proposed_sku: str | None = None,
     current_sku: str | None = None,
     resource_type: str = "Microsoft.Compute/virtualMachines",
+    nsg_rule_names: list[str] | None = None,
 ) -> ProposedAction:
     """Build a minimal ProposedAction for tests."""
     return ProposedAction(
@@ -55,6 +56,7 @@ def _make_action(
         ),
         reason=reason,
         urgency=Urgency.HIGH,
+        nsg_rule_names=nsg_rule_names,
     )
 
 
@@ -128,6 +130,49 @@ class TestPlanMockMode:
 
         assert plan["steps"][0]["operation"] == "delete_nsg_rule"
         assert plan["steps"][0]["params"]["rule_name"] == "<RULE_NAME>"
+
+    @pytest.mark.asyncio
+    async def test_plan_modify_nsg_rule_names_field_beats_regex(self, agent):
+        """nsg_rule_names takes priority over reason-string regex parsing."""
+        action = _make_action(
+            ActionType.MODIFY_NSG,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Network/networkSecurityGroups/nsg-east-prod"
+            ),
+            reason=(
+                "CRITICAL: 1 internet-exposed management port rule(s) on NSG "
+                "'nsg-east-prod': 'allow-ssh-anywhere' port=22 src=*."
+            ),
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            nsg_rule_names=["allow-ssh-anywhere"],
+        )
+        plan = await agent.plan(action, {})
+
+        assert len(plan["steps"]) == 1
+        assert plan["steps"][0]["operation"] == "delete_nsg_rule"
+        assert plan["steps"][0]["params"]["rule_name"] == "allow-ssh-anywhere"
+        assert "allow-ssh-anywhere" in plan["commands"][0]
+
+    @pytest.mark.asyncio
+    async def test_plan_modify_nsg_multiple_rule_names(self, agent):
+        """Multiple entries in nsg_rule_names generate one step per rule."""
+        action = _make_action(
+            ActionType.MODIFY_NSG,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Network/networkSecurityGroups/nsg-east-prod"
+            ),
+            reason="CRITICAL: 2 internet-exposed rules on NSG 'nsg-east-prod'.",
+            resource_type="Microsoft.Network/networkSecurityGroups",
+            nsg_rule_names=["allow-ssh-anywhere", "allow-rdp-anywhere"],
+        )
+        plan = await agent.plan(action, {})
+
+        assert len(plan["steps"]) == 2
+        rule_names = [s["params"]["rule_name"] for s in plan["steps"]]
+        assert "allow-ssh-anywhere" in rule_names
+        assert "allow-rdp-anywhere" in rule_names
 
     @pytest.mark.asyncio
     async def test_plan_scale_down(self, agent):

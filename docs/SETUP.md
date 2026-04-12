@@ -286,7 +286,7 @@ pip install -r requirements.txt
 
 # 2. Run tests — no Azure credentials needed (mock mode)
 pytest tests/ -v
-# Expected: 962 passed, 0 failed
+# Expected: 965 passed, 0 failed
 
 # 3a. Mock mode (no Azure needed) — set in .env
 echo "USE_LOCAL_MOCKS=true" > .env
