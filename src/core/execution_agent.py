@@ -107,6 +107,12 @@ CONSTRAINTS:
 - Never guess api_version — always call fetch_azure_docs first for update_resource_property.
 - If the resource has already been fixed, submit a plan with empty steps[] and explain why.
 - Always include a rollback_hint — how to reverse the operation if needed.
+  For delete_nsg_rule steps: the rollback_hint MUST include the full original rule properties
+  as a JSON object (priority, protocol, port, sourceAddressPrefix, destinationAddressPrefix,
+  access, direction) captured from list_nsg_rules BEFORE the delete — these cannot be
+  recovered after deletion. Example: "Recreate rule 'allow-ssh' with: {priority: 100,
+  protocol: Tcp, destinationPortRange: '22', sourceAddressPrefix: '*', access: Allow,
+  direction: Inbound, destinationAddressPrefix: '*'}"
 - Always include equivalent az CLI commands in the commands[] array (one per step).
 """
 
@@ -403,6 +409,7 @@ class ExecutionAgent:
         name = arm["name"] or action.target.resource_id
         steps: list[dict] = []
         commands: list[str] = []
+        rollback_hint: str = "Reverse the operation manually via Azure Portal if needed"
 
         if action.action_type == ActionType.MODIFY_NSG:
             # Use structured rule names stored by the deploy agent (primary source).
@@ -430,20 +437,38 @@ class ExecutionAgent:
                     f" --nsg-name {name}"
                     f" --name {rule_name}"
                 )
+            quoted = ", ".join(f"'{r}'" for r in rule_names_list)
+            rollback_hint = (
+                f"Recreate the deleted NSG rule(s) {quoted} on NSG '{name}' "
+                f"(resource group: {rg}) using the create_nsg_rule tool. "
+                "Retrieve the original rule properties (priority, port, protocol, "
+                "sourceAddressPrefix, destinationAddressPrefix, access, direction) "
+                "from the Azure Activity Log: "
+                f"az monitor activity-log list --resource-group {rg} "
+                f"--resource-id {action.target.resource_id} "
+                "--status Succeeded --caller-object-id '*' "
+                "--query \"[?operationName.value=='Microsoft.Network/networkSecurityGroups/securityRules/write']\" "
+                "-o json"
+            )
 
         elif action.action_type in (ActionType.SCALE_DOWN, ActionType.SCALE_UP):
             proposed = action.target.proposed_sku or "<NEW_SKU>"
+            original = action.target.current_sku or "<ORIGINAL_SKU>"
             steps.append({
                 "operation": "resize_vm",
                 "target": action.target.resource_id,
                 "params": {"resource_group": rg, "vm_name": name, "new_size": proposed},
-                "reason": f"Resize VM from {action.target.current_sku or 'current'} to {proposed}",
+                "reason": f"Resize VM from {original} to {proposed}",
             })
             commands.append(
                 f"az vm resize"
                 f" --resource-group {rg}"
                 f" --name {name}"
                 f" --size {proposed}"
+            )
+            rollback_hint = (
+                f"Resize VM '{name}' back to {original} using resize_vm "
+                f"(resource group: {rg}, vm_name: {name}, new_size: {original})."
             )
 
         elif action.action_type == ActionType.DELETE_RESOURCE:
@@ -462,6 +487,10 @@ class ExecutionAgent:
                     f" --name {name}"
                     f" --resource-type {arm['provider'] or '<PROVIDER/TYPE>'}"
                 )
+            rollback_hint = (
+                f"Resource deletion cannot be automatically reversed. "
+                f"Manually restore '{name}' via Azure Portal or re-run the IaC that provisioned it."
+            )
 
         elif action.action_type == ActionType.RESTART_SERVICE:
             steps.append({
@@ -474,6 +503,10 @@ class ExecutionAgent:
                 f"az vm start"
                 f" --resource-group {rg}"
                 f" --name {name}"
+            )
+            rollback_hint = (
+                f"Deallocate VM '{name}' to return it to stopped state using deallocate_vm "
+                f"(resource group: {rg}, vm_name: {name})."
             )
 
         elif action.action_type == ActionType.UPDATE_CONFIG:
@@ -598,7 +631,7 @@ class ExecutionAgent:
             "steps": steps,
             "summary": f"{action.action_type.value} on {name}",
             "estimated_impact": action.reason[:200],
-            "rollback_hint": "Reverse the operation manually via Azure Portal if needed",
+            "rollback_hint": rollback_hint,
             "commands": commands,  # backward compat with existing dashboard rendering
             "remediation_confidence": _compute_confidence(steps),
         }
@@ -1251,13 +1284,16 @@ class ExecutionAgent:
             "action_type": action.action_type.value,
             "resource_id": action.target.resource_id,
             "reason": action.reason,
+            "nsg_rule_names": action.nsg_rule_names or [],
             "execute_success": execute_result.get("success", False),
-            "steps_completed": len(execute_result.get("steps_completed", [])),
+            "steps_completed": execute_result.get("steps_completed", []),
         }, indent=2)
 
         prompt = (
             f"The following fix was applied:\n\n{action_summary}\n\n"
             "Please verify the fix is reflected in Azure. "
+            "For MODIFY_NSG actions: check that EACH rule listed in nsg_rule_names "
+            "and in steps_completed no longer appears when you call list_nsg_rules. "
             "Call submit_verification_result when done."
         )
 
