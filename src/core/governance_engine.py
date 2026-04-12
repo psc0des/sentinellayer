@@ -6,7 +6,10 @@ a :class:`~src.core.models.GovernanceVerdict` according to decision rules.
 
 Decision rules (applied in priority order)
 ------------------------------------------
-1. **Critical policy violation** — DENIED regardless of composite score.
+1. **Non-overridden CRITICAL violation** — DENIED regardless of composite score.
+1.5. **LLM-overridden CRITICAL violation** — ESCALATED floor. The LLM cannot
+     substitute for the human approval required by CRITICAL policies (VP, CAB).
+     Even with LLM context, the verdict must surface for human review.
 2. **Composite > ``sri_human_review_threshold`` (default 60)** — DENIED.
 3. **Composite > ``sri_auto_approve_threshold`` (default 25)** — ESCALATED.
 3.5. **Any non-overridden HIGH violation** — ESCALATED floor even when composite ≤ 25.
@@ -184,12 +187,7 @@ class GovernanceDecisionEngine:
              policy violation always requires a human reviewer)
         4. Otherwise → APPROVED
         """
-        # Rule 1 — critical policy violation overrides the numeric score.
-        # Only violations NOT overridden by the LLM trigger auto-DENY.
-        # When the LLM reduces the policy score and annotates a violation with
-        # llm_override, it has determined the violation doesn't truly apply
-        # (e.g., ops agent is remediating, not creating the issue). In that
-        # case the composite score determines the verdict instead.
+        # Rule 1 — non-overridden CRITICAL violations always DENY.
         critical = [
             v for v in policy.violations
             if v.severity == PolicySeverity.CRITICAL and not v.llm_override
@@ -200,6 +198,25 @@ class GovernanceDecisionEngine:
                 SRIVerdict.DENIED,
                 f"DENIED — critical policy violation(s) detected: {ids}. "
                 "Critical violations block execution regardless of composite SRI score.",
+            )
+
+        # Rule 1.5 — LLM-overridden CRITICAL violations floor at ESCALATED.
+        # The LLM can provide context and reasoning, but it cannot substitute for
+        # the human approval required by CRITICAL policies (e.g., VP approval for
+        # POL-DR-001, CAB approval for POL-CRIT-001). Even when the LLM annotates
+        # a CRITICAL violation with llm_override, the verdict must surface for
+        # human review — it can never auto-APPROVE.
+        critical_overridden = [
+            v for v in policy.violations
+            if v.severity == PolicySeverity.CRITICAL and v.llm_override
+        ]
+        if critical_overridden:
+            ids = ", ".join(v.policy_id for v in critical_overridden)
+            return (
+                SRIVerdict.ESCALATED,
+                f"ESCALATED — critical policy violation(s) require human approval: {ids}. "
+                "LLM context noted but CRITICAL violations cannot be auto-approved — "
+                "human review is mandatory.",
             )
 
         # Rule 2 — composite too high to allow even with review

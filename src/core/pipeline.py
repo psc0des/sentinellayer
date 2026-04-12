@@ -388,7 +388,7 @@ class RuriSkryPipeline:
         """
         if resource is None:
             return None
-        tags = resource.get("tags", {})
+        tags = resource.get("tags") or {}  # `or {}` handles "tags": null from Azure API
         return {
             "tags": tags,
             "environment": tags.get("environment"),

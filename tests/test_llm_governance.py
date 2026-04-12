@@ -277,12 +277,12 @@ class TestCriticalViolationSoftening:
         assert verdict.decision == SRIVerdict.DENIED
         assert "critical" in verdict.reason.lower()
 
-    def test_critical_violation_with_llm_override_not_auto_denied(self, engine):
-        """CRITICAL violation with llm_override set → NOT auto-DENIED.
+    def test_critical_violation_with_llm_override_floors_at_escalated(self, engine):
+        """CRITICAL violation with llm_override set → ESCALATED (Rule 1.5), never APPROVED.
 
-        The LLM determined the violation doesn't truly apply (e.g., ops agent is
-        remediating the security issue rather than creating it). The composite
-        score determines the verdict instead of the hard override.
+        The LLM can provide context but cannot substitute for the human approval
+        required by CRITICAL policies (VP/CAB). Even with llm_override set, the
+        verdict must surface for human review.
         """
         action = _make_action()
         policy_r = PolicyResult(
@@ -296,8 +296,9 @@ class TestCriticalViolationSoftening:
             HistoricalResult(sri_historical=0),
             FinancialResult(sri_cost=0),
         )
-        # composite = 10×0.25 = 2.5 → APPROVED (override respected)
-        assert verdict.decision == SRIVerdict.APPROVED
+        # LLM override noted but CRITICAL cannot auto-approve → ESCALATED
+        assert verdict.decision == SRIVerdict.ESCALATED
+        assert "POL-DR-001" in verdict.reason
 
     def test_mixed_violations_non_overridden_critical_still_denies(self, engine):
         """One overridden + one non-overridden CRITICAL → DENIED (non-overridden wins)."""

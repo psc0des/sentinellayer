@@ -239,6 +239,29 @@ class TestSRIScoring:
         # LLM explicitly overrode the HIGH violation; composite=0 → APPROVED
         assert verdict.decision == SRIVerdict.APPROVED
 
+    def test_critical_violation_llm_overridden_floors_at_escalated(self, engine):
+        """Rule 1.5 — CRITICAL + llm_override → ESCALATED, never APPROVED.
+
+        The LLM cannot substitute for VP/CAB approval required by CRITICAL policies.
+        Even composite=0 must not produce APPROVED when a CRITICAL violation exists.
+        """
+        from src.core.models import PolicyViolation
+        action = _make_action()
+        blast = BlastRadiusResult(sri_infrastructure=0)
+        overridden = PolicyViolation(
+            policy_id="POL-DR-001",
+            name="Disaster Recovery Protection",
+            rule="DR resources require VP approval",
+            severity=PolicySeverity.CRITICAL,
+            llm_override="Cost optimisation warranted — resource is underutilised",
+        )
+        policy_r = PolicyResult(sri_policy=0, violations=[overridden])
+        hist = HistoricalResult(sri_historical=0)
+        fin = FinancialResult(sri_cost=0)
+        verdict = engine.evaluate(action, blast, policy_r, hist, fin)
+        assert verdict.decision == SRIVerdict.ESCALATED
+        assert "POL-DR-001" in verdict.reason
+
     def test_medium_violation_does_not_force_escalated(self, engine):
         """MEDIUM violations do NOT trigger Rule 3.5 — only HIGH and above do."""
         from src.core.models import PolicyViolation
