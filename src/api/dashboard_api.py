@@ -2997,6 +2997,202 @@ async def list_github_repos() -> dict:
         raise HTTPException(status_code=502, detail=detail) from exc
 
 
+def _fetch_tf_files_sync(github_token: str, repo_name: str, iac_path: str):
+    """Fetch all .tf and .tfvars files from a GitHub repo path (synchronous).
+
+    Returns a list of TfFile instances.  Run via asyncio.to_thread so the
+    event loop is not blocked by PyGithub network calls.
+    """
+    from github import Github  # noqa: PLC0415
+    from src.core.tf_block_finder import TfFile  # noqa: PLC0415
+
+    gh = Github(github_token)
+    repo = gh.get_repo(repo_name)
+
+    tf_files: list[TfFile] = []
+    try:
+        items = repo.get_contents(iac_path or "")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("resolve_tf_change: get_contents('%s') failed — %s", iac_path, exc)
+        return tf_files
+
+    queue = list(items) if not isinstance(items, list) else items
+    for item in queue:
+        if item.type == "dir":
+            try:
+                sub = repo.get_contents(item.path)
+                queue.extend(sub if isinstance(sub, list) else [sub])
+            except Exception:  # noqa: BLE001
+                pass
+        elif item.name.endswith((".tf", ".tfvars")):
+            try:
+                content = item.decoded_content.decode("utf-8")
+                tf_files.append(TfFile(
+                    file_path=item.path,
+                    file_sha=item.sha,
+                    content=content,
+                ))
+            except Exception:  # noqa: BLE001
+                pass
+    return tf_files
+
+
+@app.post("/api/execution/{execution_id}/resolve-tf-change")
+async def resolve_tf_change(
+    execution_id: str, body: dict = Body(default={})
+) -> dict:
+    """Analyse Terraform files to locate the block managing the target resource
+    and propose a human-confirmable attribute:value change.
+
+    Request body::
+
+        {
+            "iac_repo": "owner/repo",
+            "iac_path": "infrastructure/terraform-demo"
+        }
+
+    Returns::
+
+        {
+            "found": true,
+            "tf_block_address": "azurerm_service_plan.prod",
+            "file_path": "infrastructure/terraform-demo/main.tf",
+            "file_sha": "<git sha>",
+            "attribute": "sku_name",
+            "current_value": "F1",
+            "proposed_value": "S1",
+            "confidence": "high | medium | llm_assisted",
+            "raw_block_preview": "resource ..."
+        }
+
+    Or when the block cannot be found::
+
+        {"found": false, "reason": "..."}
+    """
+    from src.core.tf_block_finder import (  # noqa: PLC0415
+        ARM_TO_TF_TYPE, TF_SKU_ATTRIBUTE,
+        find_tf_block, find_tf_block_with_llm,
+        get_attribute_value, resolve_config_change_with_llm,
+    )
+
+    iac_repo = (body.get("iac_repo") or "").strip()
+    iac_path = (body.get("iac_path") or "").strip()
+
+    if not iac_repo:
+        raise HTTPException(status_code=400, detail="iac_repo is required")
+
+    gateway = _get_execution_gateway()
+    record = gateway.get_record(execution_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Execution {execution_id!r} not found")
+    if not record.verdict_snapshot:
+        raise HTTPException(status_code=400, detail="No verdict snapshot on record")
+
+    # Extract action details from the stored verdict snapshot
+    snap = record.verdict_snapshot
+    action_data = snap.get("proposed_action", {})
+    action_type = action_data.get("action_type", "")
+    target = action_data.get("target", {})
+    resource_type = target.get("resource_type", "")
+    resource_id = target.get("resource_id", "")
+    resource_name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+    reason = action_data.get("reason", "")
+    proposed_sku = target.get("proposed_sku")
+    config_changes = action_data.get("config_changes")  # Optional[dict[str, str]]
+
+    # ARM type → TF resource types
+    tf_types = ARM_TO_TF_TYPE.get(resource_type.lower(), [])
+    if not tf_types:
+        return {
+            "found": False,
+            "reason": (
+                f"No Terraform resource type mapping for ARM type '{resource_type}'. "
+                f"Supported types: {sorted(ARM_TO_TF_TYPE)}"
+            ),
+        }
+
+    # Fetch .tf files from GitHub (synchronous PyGithub → thread)
+    github_token = settings.github_token
+    if not github_token:
+        return {"found": False, "reason": "GITHUB_TOKEN not configured"}
+
+    try:
+        tf_files = await asyncio.to_thread(
+            _fetch_tf_files_sync, github_token, iac_repo, iac_path
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"found": False, "reason": f"GitHub fetch error: {exc}"}
+
+    if not tf_files:
+        return {
+            "found": False,
+            "reason": f"No .tf files found in {iac_repo}/{iac_path or '(root)'}",
+        }
+
+    # Block finder — deterministic passes first, LLM fallback if needed
+    block = find_tf_block(tf_files, resource_name, tf_types)
+    confidence = "high"
+
+    if not block:
+        block = await find_tf_block_with_llm(tf_files, resource_name, tf_types)
+        confidence = "llm_assisted"
+
+    if not block:
+        return {
+            "found": False,
+            "reason": (
+                f"Could not locate a Terraform block of types {tf_types} "
+                f"matching '{resource_name}' in {iac_repo}/{iac_path or '(root)'}"
+            ),
+        }
+
+    # Determine attribute + proposed_value based on action type
+    attribute: str | None = None
+    current_value: str | None = None
+    proposed_value: str | None = None
+
+    if action_type in ("scale_up", "scale_down"):
+        # Known attribute from TF_SKU_ATTRIBUTE; value from proposed_sku on the model
+        attribute = TF_SKU_ATTRIBUTE.get(block.tf_type)
+        if attribute:
+            current_value = get_attribute_value(block, attribute)
+        proposed_value = proposed_sku
+        if not attribute:
+            confidence = "llm_assisted"  # nested SKU (e.g. azurerm_app_service_plan)
+
+    elif config_changes:
+        # Agent provided explicit attribute:value pairs — use the first one
+        attribute = next(iter(config_changes))
+        proposed_value = config_changes[attribute]
+        current_value = get_attribute_value(block, attribute)
+
+    else:
+        # UPDATE_CONFIG without structured data — ask LLM to determine what to change
+        llm_change = await resolve_config_change_with_llm(block, reason, resource_name)
+        if llm_change:
+            attribute = llm_change.get("attribute")
+            proposed_value = llm_change.get("proposed_value")
+            current_value = (
+                llm_change.get("current_value")
+                or (get_attribute_value(block, attribute) if attribute else None)
+            )
+            confidence = llm_change.get("confidence", "llm_assisted")
+        else:
+            confidence = "low"
+
+    return {
+        "found": True,
+        "tf_block_address": block.address,
+        "file_path": block.file_path,
+        "file_sha": block.file_sha,
+        "attribute": attribute,
+        "current_value": current_value,
+        "proposed_value": proposed_value,
+        "confidence": confidence,
+        "raw_block_preview": block.raw_block[:800],
+    }
+
+
 @app.post("/api/execution/{execution_id}/create-pr")
 async def create_pr_from_manual(
     execution_id: str, body: dict = Body(default={})
@@ -3010,9 +3206,19 @@ async def create_pr_from_manual(
 
         {
             "reviewed_by": "alice@example.com",
-            "iac_repo": "owner/repo",     // override detected repo
-            "iac_path": "infra/terraform" // override detected path
+            "iac_repo": "owner/repo",
+            "iac_path": "infra/terraform",
+            "confirmed_change": {
+                "tf_block_address": "azurerm_service_plan.prod",
+                "file_path": "infrastructure/terraform-demo/main.tf",
+                "file_sha": "<sha>",
+                "attribute": "sku_name",
+                "new_value": "S1"
+            }
         }
+
+    ``confirmed_change`` is optional.  When provided (via the 2-step overlay),
+    the PR generator patches the existing file instead of creating a stub.
 
     Returns 404 if execution_id is unknown.
     Returns 400 if the record is not ``manual_required`` or snapshot is missing.
@@ -3021,10 +3227,12 @@ async def create_pr_from_manual(
     reviewed_by = _validate_reviewed_by(body.get("reviewed_by", ""))
     iac_repo = (body.get("iac_repo") or "").strip()
     iac_path = (body.get("iac_path") or "").strip()
+    confirmed_change = body.get("confirmed_change") or None  # dict | None
     try:
         record = await gateway.create_pr_from_manual(
             execution_id, reviewed_by,
             iac_repo=iac_repo, iac_path=iac_path,
+            confirmed_change=confirmed_change,
         )
         return record.model_dump(mode="json")
     except KeyError as exc:

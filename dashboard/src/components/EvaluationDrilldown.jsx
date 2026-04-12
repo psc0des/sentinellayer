@@ -315,11 +315,11 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
         }
     }
 
-    async function handleCreatePR(executionId, iacRepo = '', iacPath = '') {
+    async function handleCreatePR(executionId, iacRepo = '', iacPath = '', confirmedChange = null) {
         setCreatePrLoading(true)
         setCreatePrError(null)
         try {
-            const updated = await createPRFromManual(executionId, reviewedBy || 'dashboard-user', iacRepo, iacPath)
+            const updated = await createPRFromManual(executionId, reviewedBy || 'dashboard-user', iacRepo, iacPath, confirmedChange)
             setExecutionStatus(updated)
             setShowPROverlay(false)
         } catch (err) {
@@ -1031,10 +1031,12 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             {/* Terraform PR overlay — rendered at fixed position, outside scroll flow */}
             {showPROverlay && executionStatus && (
                 <TerraformPROverlay
+                    executionId={executionStatus.execution_id ?? ''}
+                    actionType={ev?.proposed_action?.action_type ?? ''}
                     detectedRepo={executionStatus.iac_repo ?? ''}
                     detectedPath={executionStatus.iac_path ?? ''}
                     loading={createPrLoading}
-                    onConfirm={(repo, path) => handleCreatePR(executionStatus.execution_id, repo, path)}
+                    onConfirm={(repo, path, confirmedChange) => handleCreatePR(executionStatus.execution_id, repo, path, confirmedChange)}
                     onCancel={() => { setShowPROverlay(false); setCreatePrError(null) }}
                 />
             )}

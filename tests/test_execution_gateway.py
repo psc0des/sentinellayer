@@ -298,7 +298,7 @@ class TestApprovalFlow:
         """Approving ESCALATED + IaC-managed actually calls _create_terraform_pr."""
         pr_called = []
 
-        async def fake_pr(record, verdict):
+        async def fake_pr(record, verdict, confirmed_change=None):
             pr_called.append(True)
             record.status = ExecutionStatus.pr_created
             record.pr_number = 99
@@ -861,7 +861,7 @@ class TestCreatePRFromManual:
         """create_pr_from_manual delegates to _create_terraform_pr."""
         pr_calls = []
 
-        async def fake_pr(record, verdict):
+        async def fake_pr(record, verdict, confirmed_change=None):
             pr_calls.append(True)
             record.status = ExecutionStatus.pr_created
             record.pr_url = "https://github.com/org/repo/pull/10"

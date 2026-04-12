@@ -42,6 +42,7 @@ class TerraformPRGenerator:
         self,
         verdict: GovernanceVerdict,
         record: ExecutionRecord,
+        confirmed_change: dict | None = None,
     ) -> ExecutionRecord:
         """Create a GitHub PR with the proposed Terraform change.
 
@@ -73,7 +74,7 @@ class TerraformPRGenerator:
             record.notes = "IAC_GITHUB_REPO not configured — manual execution required"
             return record
 
-        return await asyncio.to_thread(self._create_pr_sync, verdict, record)
+        return await asyncio.to_thread(self._create_pr_sync, verdict, record, confirmed_change)
 
     # ------------------------------------------------------------------
     # Private helpers (sync, run via asyncio.to_thread)
@@ -83,6 +84,7 @@ class TerraformPRGenerator:
         self,
         verdict: GovernanceVerdict,
         record: ExecutionRecord,
+        confirmed_change: dict | None = None,
     ) -> ExecutionRecord:
         """Blocking GitHub API calls — called from asyncio.to_thread."""
         from github import Github, GithubException  # noqa: PLC0415 (lazy import — PyGithub optional)
@@ -113,7 +115,7 @@ class TerraformPRGenerator:
             iac_path = record.iac_path or self._default_iac_path
 
             # --- Attempt 1: find & patch an existing .tf file (production-grade) ---
-            patch = self._find_and_patch_tf_file(repo, iac_path, action)
+            patch = self._find_and_patch_tf_file(repo, iac_path, action, confirmed_change)
             if patch:
                 commit_message = (
                     f"fix({resource_short}): {patch['summary']}\n\n"
@@ -209,6 +211,80 @@ class TerraformPRGenerator:
             record.updated_at = datetime.now(timezone.utc)
 
         return record
+
+    def _apply_config_change_to_content(
+        self,
+        content: str,
+        tf_block_address: str,
+        attribute: str,
+        new_value: str,
+    ) -> str | None:
+        """Patch a single top-level string attribute inside a named Terraform block.
+
+        Finds the block identified by tf_block_address (e.g. "azurerm_service_plan.prod"),
+        then replaces ``attribute = "old_value"`` with ``attribute = "new_value"``
+        within that block only.
+
+        Returns the modified file content, or None if the block or attribute
+        could not be located.
+        """
+        parts = tf_block_address.split(".", 1)
+        if len(parts) != 2:
+            logger.warning(
+                "TerraformPRGenerator: invalid block address '%s'", tf_block_address
+            )
+            return None
+
+        tf_type, logical_name = parts
+        lines = content.split("\n")
+
+        resource_pattern = re.compile(
+            r'^\s*resource\s+"' + re.escape(tf_type) + r'"\s+"'
+            + re.escape(logical_name) + r'"\s*\{?\s*$'
+        )
+
+        block_start: int | None = None
+        brace_depth = 0
+
+        for i, line in enumerate(lines):
+            if block_start is None:
+                if resource_pattern.match(line):
+                    block_start = i
+                    brace_depth = line.count("{") - line.count("}")
+                    if brace_depth == 0:
+                        continue  # opening brace on next line
+            else:
+                brace_depth += line.count("{") - line.count("}")
+
+                if brace_depth <= 0:
+                    # Closed block without finding the attribute
+                    logger.warning(
+                        "TerraformPRGenerator: attribute '%s' not found in block '%s'",
+                        attribute, tf_block_address,
+                    )
+                    return None
+
+                if brace_depth == 1:
+                    # Top-level inside the block — look for the attribute
+                    patched = re.sub(
+                        r'(\b' + re.escape(attribute) + r'\s*=\s*)"[^"]*"',
+                        r'\1"' + new_value.replace("\\", "\\\\") + '"',
+                        line,
+                    )
+                    if patched != line:
+                        new_lines = list(lines)
+                        new_lines[i] = patched
+                        logger.info(
+                            "TerraformPRGenerator: patched %s — %s = %r",
+                            tf_block_address, attribute, new_value,
+                        )
+                        return "\n".join(new_lines)
+
+        if block_start is None:
+            logger.warning(
+                "TerraformPRGenerator: block '%s' not found in content", tf_block_address
+            )
+        return None
 
     def _apply_nsg_fix_to_content(self, content: str, rule_name: str) -> str | None:
         """Find an NSG rule block for rule_name and change Allow→Deny.
@@ -390,18 +466,64 @@ class TerraformPRGenerator:
         repo,  # github.Repository.Repository
         iac_path: str,
         action,  # ProposedAction
+        confirmed_change: dict | None = None,
     ) -> dict | None:
         """Search .tf files in iac_path for the target resource and apply the fix.
 
-        Handles MODIFY_NSG for two Terraform patterns:
-        - Standalone ``resource "azurerm_network_security_rule"`` blocks
-        - Inline ``security_rule {}`` blocks inside ``azurerm_network_security_group``
+        For MODIFY_NSG: deterministic Allow→Deny patch (existing logic).
+        For all other action types: uses human-confirmed change dict from the
+        resolve-tf-change overlay (tf_block_address + attribute + new_value).
 
         Returns a dict ``{path, new_content, sha, summary}`` on success, or None
-        when no matching resource was found in any .tf file.
+        when no matching resource was found / no confirmed change provided.
         """
+        # --- Non-NSG action types: apply human-confirmed change if provided ---
         if action.action_type != ActionType.MODIFY_NSG:
-            return None
+            if not confirmed_change:
+                return None  # no confirmed change → stub fallback
+
+            tf_block_address = confirmed_change.get("tf_block_address", "")
+            file_path = confirmed_change.get("file_path", "")
+            attribute = confirmed_change.get("attribute", "")
+            new_value = confirmed_change.get("new_value", "")
+
+            if not all([tf_block_address, file_path, attribute, new_value]):
+                logger.warning(
+                    "TerraformPRGenerator: confirmed_change missing required fields — "
+                    "falling back to stub"
+                )
+                return None
+
+            try:
+                tf_file = repo.get_contents(file_path)
+                original = tf_file.decoded_content.decode("utf-8")
+                sha = tf_file.sha  # use fresh SHA to avoid git conflicts
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "TerraformPRGenerator: could not fetch '%s' — %s", file_path, exc
+                )
+                return None
+
+            new_content = self._apply_config_change_to_content(
+                original, tf_block_address, attribute, new_value
+            )
+            if new_content is None:
+                logger.warning(
+                    "TerraformPRGenerator: patch failed for %s.%s = %r — stub fallback",
+                    tf_block_address, attribute, new_value,
+                )
+                return None
+
+            resource_short = action.target.resource_id.split("/")[-1]
+            return {
+                "path": file_path,
+                "new_content": new_content,
+                "sha": sha,
+                "summary": (
+                    f"Set {attribute} = \"{new_value}\" on {tf_block_address} "
+                    f"({resource_short})"
+                ),
+            }
 
         # --- Build candidate rule names, most-reliable sources first ---
         # 1. Explicitly set by the agent (structured, format-independent)

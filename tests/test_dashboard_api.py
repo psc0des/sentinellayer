@@ -830,3 +830,219 @@ class TestAuthEndpoints:
         res = auth_client.post("/api/test-notification")
         assert res.status_code == 401
 
+
+# ---------------------------------------------------------------------------
+# Phase 32 — resolve-tf-change endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTfChange:
+    """POST /api/execution/{id}/resolve-tf-change — unit tests (no GitHub/LLM calls)."""
+
+    def _seed_execution_record(self, client, monkeypatch, action_type="update_config"):
+        """Create a minimal execution record in the gateway and return its id."""
+        import uuid
+        from src.core.execution_gateway import ExecutionGateway
+        from src.core.models import (
+            ExecutionRecord, ExecutionStatus, GovernanceVerdict,
+            SRIBreakdown, SRIVerdict, ActionTarget, ActionType, ProposedAction, Urgency,
+        )
+        import src.api.dashboard_api as api_module
+
+        execution_id = str(uuid.uuid4())
+        action = ProposedAction(
+            agent_id="monitoring-agent",
+            action_type=ActionType(action_type),
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/serverfarms/asp-test",
+                resource_type="Microsoft.Web/serverfarms",
+                proposed_sku="S1",
+            ),
+            reason="Only 1 instance — scale out for reliability",
+            urgency=Urgency.MEDIUM,
+        )
+        sri = SRIBreakdown(
+            sri_infrastructure=50, sri_policy=20, sri_historical=10, sri_cost=10,
+            sri_composite=90,
+        )
+        from src.core.models import GovernanceVerdict
+        from datetime import datetime, timezone
+        verdict = GovernanceVerdict(
+            action_id=f"test-{execution_id[:8]}",
+            timestamp=datetime.now(timezone.utc),
+            decision=SRIVerdict.APPROVED,
+            proposed_action=action,
+            skry_risk_index=sri,
+            reason="approved",
+        )
+        from datetime import datetime, timezone as tz
+        now = datetime.now(tz.utc)
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            action_id=verdict.action_id,
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            verdict_snapshot=verdict.model_dump(mode="json"),
+            iac_repo="psc0codes/ruriskry-iac-test",
+            iac_path="infrastructure/terraform-demo",
+            created_at=now,
+            updated_at=now,
+        )
+        # Inject into the gateway used by the API
+        gateway = api_module._get_execution_gateway()
+        gateway._ensure_loaded()
+        gateway._records[execution_id] = record
+        return execution_id
+
+    def test_missing_iac_repo_returns_400(self, client, monkeypatch):
+        eid = self._seed_execution_record(client, monkeypatch)
+        res = client.post(f"/api/execution/{eid}/resolve-tf-change", json={})
+        assert res.status_code == 400
+
+    def test_unknown_execution_id_returns_404(self, client):
+        res = client.post(
+            "/api/execution/nonexistent-id/resolve-tf-change",
+            json={"iac_repo": "owner/repo"},
+        )
+        assert res.status_code == 404
+
+    def test_no_github_token_returns_found_false(self, client, monkeypatch):
+        """When GITHUB_TOKEN is not set, the endpoint returns found=false gracefully."""
+        import src.api.dashboard_api as api_module
+        eid = self._seed_execution_record(client, monkeypatch)
+        # Ensure no token
+        monkeypatch.setattr(api_module.settings, "github_token", "")
+        res = client.post(
+            f"/api/execution/{eid}/resolve-tf-change",
+            json={"iac_repo": "owner/repo", "iac_path": "infra/tf"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["found"] is False
+        assert "GITHUB_TOKEN" in data["reason"]
+
+    def test_unknown_arm_type_returns_found_false(self, client, monkeypatch):
+        """ARM types not in the mapping return found=false with a helpful message."""
+        import uuid
+        from src.core.execution_gateway import ExecutionGateway
+        from src.core.models import (
+            ExecutionRecord, ExecutionStatus, SRIBreakdown, SRIVerdict,
+            ActionTarget, ActionType, ProposedAction, Urgency,
+        )
+        import src.api.dashboard_api as api_module
+
+        execution_id = str(uuid.uuid4())
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.UPDATE_CONFIG,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Unknown/widget/my-widget",
+                resource_type="Microsoft.Unknown/widget",
+            ),
+            reason="needs updating",
+        )
+        sri = SRIBreakdown(sri_infrastructure=50, sri_policy=20, sri_historical=10, sri_cost=10, sri_composite=90)
+        from src.core.models import GovernanceVerdict
+        from datetime import datetime, timezone
+        verdict = GovernanceVerdict(
+            action_id=f"test-{execution_id[:8]}",
+            timestamp=datetime.now(timezone.utc),
+            decision=SRIVerdict.APPROVED,
+            proposed_action=action,
+            skry_risk_index=sri,
+            reason="approved",
+        )
+        now = datetime.now(timezone.utc)
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            action_id=verdict.action_id,
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            verdict_snapshot=verdict.model_dump(mode="json"),
+            created_at=now,
+            updated_at=now,
+        )
+        gateway = api_module._get_execution_gateway()
+        gateway._ensure_loaded()
+        gateway._records[execution_id] = record
+
+        res = client.post(
+            f"/api/execution/{execution_id}/resolve-tf-change",
+            json={"iac_repo": "owner/repo"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["found"] is False
+        assert "Microsoft.Unknown/widget" in data["reason"]
+
+
+class TestCreatePrWithConfirmedChange:
+    """POST /api/execution/{id}/create-pr — confirmed_change passthrough."""
+
+    def test_confirmed_change_accepted_in_body(self, client, monkeypatch):
+        """The endpoint accepts confirmed_change without error (GitHub call will fail gracefully)."""
+        import uuid
+        from src.core.models import (
+            ExecutionRecord, ExecutionStatus, SRIBreakdown, SRIVerdict,
+            ActionTarget, ActionType, ProposedAction, GovernanceVerdict,
+        )
+        import src.api.dashboard_api as api_module
+
+        execution_id = str(uuid.uuid4())
+        action = ProposedAction(
+            agent_id="monitoring-agent",
+            action_type=ActionType.UPDATE_CONFIG,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/serverfarms/asp-test",
+                resource_type="Microsoft.Web/serverfarms",
+            ),
+            reason="scale out for reliability",
+        )
+        sri = SRIBreakdown(sri_infrastructure=50, sri_policy=20, sri_historical=10, sri_cost=10, sri_composite=90)
+        from datetime import datetime, timezone
+        verdict = GovernanceVerdict(
+            action_id=f"test-{execution_id[:8]}",
+            timestamp=datetime.now(timezone.utc),
+            decision=SRIVerdict.APPROVED,
+            proposed_action=action,
+            skry_risk_index=sri,
+            reason="approved",
+        )
+        now = datetime.now(timezone.utc)
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            action_id=verdict.action_id,
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            verdict_snapshot=verdict.model_dump(mode="json"),
+            created_at=now,
+            updated_at=now,
+        )
+        gateway = api_module._get_execution_gateway()
+        gateway._ensure_loaded()
+        gateway._records[execution_id] = record
+
+        confirmed_change = {
+            "tf_block_address": "azurerm_service_plan.prod",
+            "file_path": "infrastructure/terraform-demo/main.tf",
+            "file_sha": "abc123",
+            "attribute": "sku_name",
+            "new_value": "S1",
+        }
+
+        # GITHUB_TOKEN not set → will fail gracefully (not 422 / 500)
+        monkeypatch.setattr(api_module.settings, "github_token", "")
+        res = client.post(
+            f"/api/execution/{execution_id}/create-pr",
+            json={
+                "reviewed_by": "test-user",
+                "iac_repo": "owner/repo",
+                "confirmed_change": confirmed_change,
+            },
+        )
+        # 200 (manual_required with note) — GitHub token missing → graceful fallback
+        assert res.status_code == 200
+        data = res.json()
+        # Status should be manual_required or failed, but NOT a server crash
+        assert data["status"] in ("manual_required", "failed", "pr_created")
+

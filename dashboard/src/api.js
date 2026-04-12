@@ -392,14 +392,40 @@ export async function dismissExecution(executionId, reviewedBy = 'dashboard-user
 }
 
 /**
+ * Analyse Terraform files to locate the block managing the target resource
+ * and propose a human-confirmable attribute:value change.
+ * @param {string} executionId - UUID of the ExecutionRecord
+ * @param {string} iacRepo - GitHub repo (e.g. "owner/repo")
+ * @param {string} [iacPath] - Terraform subdirectory within the repo
+ * @returns {Promise<object>} Resolve result — see API docs
+ */
+export async function resolveTfChange(executionId, iacRepo, iacPath = '') {
+  const res = await apiFetch(`${BASE}/execution/${encodeURIComponent(executionId)}/resolve-tf-change`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      iac_repo: iacRepo,
+      ...(iacPath ? { iac_path: iacPath } : {}),
+    }),
+  })
+  if (!res.ok) {
+    let detail = `API error ${res.status}: failed to analyse Terraform files`
+    try { const body = await res.json(); if (body?.detail) detail = body.detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+/**
  * Create a Terraform PR from a manual_required execution record.
  * @param {string} executionId - UUID of the ExecutionRecord
  * @param {string} reviewedBy - name/email of the person creating the PR
  * @param {string} [iacRepo] - override detected repo (e.g. "owner/repo")
  * @param {string} [iacPath] - override detected Terraform path
+ * @param {object|null} [confirmedChange] - human-confirmed change from resolve step
  * @returns {Promise<object>} Updated ExecutionRecord
  */
-export async function createPRFromManual(executionId, reviewedBy = 'dashboard-user', iacRepo = '', iacPath = '') {
+export async function createPRFromManual(executionId, reviewedBy = 'dashboard-user', iacRepo = '', iacPath = '', confirmedChange = null) {
   const res = await apiFetch(`${BASE}/execution/${encodeURIComponent(executionId)}/create-pr`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -407,6 +433,7 @@ export async function createPRFromManual(executionId, reviewedBy = 'dashboard-us
       reviewed_by: reviewedBy,
       ...(iacRepo ? { iac_repo: iacRepo } : {}),
       ...(iacPath ? { iac_path: iacPath } : {}),
+      ...(confirmedChange ? { confirmed_change: confirmedChange } : {}),
     }),
   })
   if (!res.ok) {

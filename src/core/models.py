@@ -67,6 +67,7 @@ class ProposedAction(BaseModel):
     projected_savings_monthly: Optional[float] = None
     nsg_change_direction: Optional[str] = None  # "open" | "restrict" — set by NSG agents
     nsg_rule_names: Optional[list[str]] = None  # explicit rule names for MODIFY_NSG actions
+    config_changes: Optional[dict[str, str]] = None  # explicit attribute:value pairs for UPDATE_CONFIG actions
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

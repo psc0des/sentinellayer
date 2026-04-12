@@ -400,6 +400,7 @@ class ExecutionGateway:
         reviewed_by: str,
         iac_repo: str = "",
         iac_path: str = "",
+        confirmed_change: dict | None = None,
     ) -> ExecutionRecord:
         """Create a Terraform PR from a manual_required execution record.
 
@@ -477,7 +478,7 @@ class ExecutionGateway:
             record.iac_path = iac_path
 
         try:
-            record = await self._create_terraform_pr(record, verdict)
+            record = await self._create_terraform_pr(record, verdict, confirmed_change)
             logger.info(
                 "ExecutionGateway: %s — PR created from manual_required by '%s'",
                 execution_id[:8], reviewed_by,
@@ -759,12 +760,13 @@ class ExecutionGateway:
         self,
         record: ExecutionRecord,
         verdict: GovernanceVerdict,
+        confirmed_change: dict | None = None,
     ) -> ExecutionRecord:
         """Delegate PR creation to TerraformPRGenerator."""
         try:
             from src.core.terraform_pr_generator import TerraformPRGenerator  # noqa: PLC0415
             generator = TerraformPRGenerator()
-            record = await generator.create_pr(verdict, record)
+            record = await generator.create_pr(verdict, record, confirmed_change)
         except ImportError:
             logger.warning(
                 "ExecutionGateway: PyGithub not installed — "

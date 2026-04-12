@@ -1,4 +1,4 @@
-"""Tests for TerraformPRGenerator._apply_nsg_fix_to_content and _patch_block."""
+"""Tests for TerraformPRGenerator patch helpers."""
 
 import pytest
 from src.core.terraform_pr_generator import TerraformPRGenerator
@@ -164,3 +164,81 @@ resource "azurerm_network_security_group" "nsg" {
         result = gen._apply_nsg_fix_to_content(tf, "allow-ssh-anywhere")
         assert result is not None
         assert '"Deny"' in result
+
+
+# =============================================================================
+# _apply_config_change_to_content
+# =============================================================================
+
+SERVICE_PLAN_TF = '''
+resource "azurerm_service_plan" "prod" {
+  name                = "asp-ruriskry-prod-demo"
+  resource_group_name = "my-rg"
+  os_type             = "Linux"
+  sku_name            = "F1"
+}
+
+resource "azurerm_service_plan" "staging" {
+  name     = "asp-ruriskry-staging"
+  sku_name = "B1"
+}
+'''
+
+VM_TF = '''
+resource "azurerm_linux_virtual_machine" "web01" {
+  name  = "vm-web01"
+  size  = "Standard_B1s"
+}
+'''
+
+
+class TestApplyConfigChange:
+    def test_patches_correct_attribute(self, gen):
+        result = gen._apply_config_change_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.prod", "sku_name", "S1"
+        )
+        assert result is not None
+        assert 'sku_name            = "S1"' in result
+
+    def test_does_not_patch_wrong_block(self, gen):
+        """Only the named block should be patched — not siblings of the same type."""
+        result = gen._apply_config_change_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.prod", "sku_name", "S1"
+        )
+        assert result is not None
+        # staging block must be unchanged
+        assert 'sku_name = "B1"' in result
+
+    def test_patches_vm_size(self, gen):
+        result = gen._apply_config_change_to_content(
+            VM_TF, "azurerm_linux_virtual_machine.web01", "size", "Standard_D2s_v3"
+        )
+        assert result is not None
+        assert '"Standard_D2s_v3"' in result
+
+    def test_returns_none_when_attribute_missing(self, gen):
+        result = gen._apply_config_change_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.prod", "nonexistent_attr", "val"
+        )
+        assert result is None
+
+    def test_returns_none_when_block_missing(self, gen):
+        result = gen._apply_config_change_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.ghost", "sku_name", "S1"
+        )
+        assert result is None
+
+    def test_returns_none_on_invalid_address(self, gen):
+        result = gen._apply_config_change_to_content(
+            SERVICE_PLAN_TF, "no-dot-separator", "sku_name", "S1"
+        )
+        assert result is None
+
+    def test_original_content_unchanged_on_success(self, gen):
+        """Verify only the target line changes; rest of the file is identical."""
+        result = gen._apply_config_change_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.prod", "sku_name", "S1"
+        )
+        assert result is not None
+        # name field should still be there unchanged
+        assert 'name                = "asp-ruriskry-prod-demo"' in result
