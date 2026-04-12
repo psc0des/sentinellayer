@@ -605,6 +605,33 @@ Tag lookup in `dashboard_api._get_resource_tags()` is **environment-aware**:
   `ResourceGraphClient.get_resource_async(resource_id)` — reads real Azure tags immediately.
 - **Mock / fallback**: reads `data/seed_resources.json`; also used if the live query fails.
 
+**Smart patch — Phase 1 & 2 (2026-04-12):**
+
+The overlay is a 2-step flow for action types that require locating a real TF block before creating the PR.
+
+Step 1 (repo + path) → "Analyse →" → `POST /api/execution/{id}/resolve-tf-change` → Step 2 (action-specific review UI) → "Create PR".
+
+`resolve-tf-change` runs a **3-pass deterministic block finder** (`src/core/tf_block_finder.py`) then an LLM fallback:
+1. Exact name match (`name = "asp-prod-demo"`)
+2. Static-prefix match for interpolated names (`"asp-${var.suffix}"` matched against Azure name)
+3. tfvars / variable-defaults resolution (resolves `var.suffix=demo`, then exact-matches)
+4. LLM fallback: sends candidate block names to the model ("which Terraform block manages `asp-prod-demo`?")
+
+Step 2 UI varies by action type:
+- `update_config / scale_up / scale_down` — shows found block + editable attribute:value
+- `delete_resource` — shows block to be deleted (red), dangling-reference scan (grep of resource address across all other .tf files), irreversibility checkbox
+- `modify_nsg` — shows NSG block + LLM security advisory ("Does this Deny correctly remediate the issue? Any similar exposed rules?")
+
+On confirm, `confirmed_change` is sent to `POST .../create-pr` → `TerraformPRGenerator` patches the file in-place (`_apply_config_change_to_content` or `_apply_resource_deletion_to_content`). If the block wasn't found, the generator falls back to a stub file.
+
+> **Known gap — action-type routing is an explicit `if/elif` list, not a registry.**
+> Supporting a new action type requires changes in three places:
+> 1. Add to `RESOLVE_SUPPORTED` set in `TerraformPROverlay.jsx`
+> 2. Add an `elif action_type == "..."` branch in `resolve_tf_change` in `dashboard_api.py`
+> 3. Add a Step 2 UI block in `TerraformPROverlay.jsx`
+>
+> A strategy/registry pattern would eliminate this repetition, but is premature until a third or fourth action type needs wiring. Currently not covered: `create_resource` (needs HCL generation from scratch) and `restart_service` (not an IaC action — no Terraform PR makes sense).
+
 **Key design decisions:**
 - **Gateway never executes directly** — it only creates PRs or marks for manual review
 - **No auto-PR** — PR creation is user-initiated (clicking "Create Terraform PR"); prevents surprise drift
