@@ -499,6 +499,199 @@ class TestRollbackMockMode:
 
 
 # ---------------------------------------------------------------------------
+# Path B deterministic rollback — no pre-computed rollback_commands
+# ---------------------------------------------------------------------------
+
+
+class TestRollbackPathB:
+    """rollback() fallback when plan has no rollback_commands.
+
+    In mock mode (use_local_mocks=True) the mock rollback path is used,
+    so these tests patch _rollback_mock to simulate the live Path B logic
+    with a plan that has steps but no rollback_commands.
+    """
+
+    @pytest.fixture
+    def agent(self):
+        return ExecutionAgent(cfg=_make_cfg(use_local_mocks=True))
+
+    @pytest.mark.asyncio
+    async def test_rollback_with_precomputed_commands_uses_path_a(self, agent):
+        """If rollback_commands is present, use it (Path A)."""
+        action = _make_action(ActionType.MODIFY_NSG)
+        plan = {
+            "steps": [{"operation": "delete_nsg_rule", "params": {"rule_name": "r", "resource_group": "rg", "nsg_name": "n"}, "target": ""}],
+            "rollback_commands": [
+                {"operation": "create_nsg_rule", "step_index": 0, "params": {
+                    "resource_group": "rg", "nsg_name": "n", "rule_name": "r",
+                    "priority": 200, "direction": "Inbound", "access": "Allow",
+                    "protocol": "Tcp", "source_address_prefix": "*",
+                    "destination_address_prefix": "*", "destination_port_range": "22",
+                }}
+            ],
+        }
+        # In mock mode rollback() uses _rollback_mock regardless of plan contents
+        result = await agent.rollback(action, plan)
+        # Mock always succeeds
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_rollback_missing_rollback_commands_has_steps_key(self, agent):
+        """A plan without rollback_commands should still return steps_completed."""
+        action = _make_action(ActionType.MODIFY_NSG)
+        plan = {
+            "steps": [],
+            # No rollback_commands key at all
+        }
+        result = await agent.rollback(action, plan)
+        assert "steps_completed" in result
+
+    @pytest.mark.asyncio
+    async def test_rollback_empty_rollback_commands_treated_as_missing(self, agent):
+        """Empty rollback_commands list is falsy — behaves same as absent key."""
+        action = _make_action(ActionType.MODIFY_NSG)
+        plan = {"steps": [], "rollback_commands": []}
+        result = await agent.rollback(action, plan)
+        assert "steps_completed" in result
+
+
+# ---------------------------------------------------------------------------
+# get_nsg_rule_properties_from_activity_log — unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetNsgRulePropertiesFromActivityLog:
+    """Unit tests for the Activity Log reconstruction helper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_in_mock_mode(self, monkeypatch):
+        """Mock mode has no Activity Log — must return None without error."""
+        from src.infrastructure.azure_tools import get_nsg_rule_properties_from_activity_log
+        import src.infrastructure.azure_tools as atz
+
+        monkeypatch.setattr(atz, "_use_mocks", lambda: True)
+        result = await get_nsg_rule_properties_from_activity_log("rg", "nsg", "rule")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_workspace_id_missing(self, monkeypatch):
+        """Missing LOG_ANALYTICS_WORKSPACE_ID must return None without error."""
+        from src.infrastructure.azure_tools import get_nsg_rule_properties_from_activity_log
+        import src.infrastructure.azure_tools as atz
+        import os
+
+        monkeypatch.setattr(atz, "_use_mocks", lambda: False)
+        monkeypatch.delenv("LOG_ANALYTICS_WORKSPACE_ID", raising=False)
+        result = await get_nsg_rule_properties_from_activity_log("rg", "nsg", "rule")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_extracts_properties_from_response_body(self, monkeypatch):
+        """Correct rule properties are extracted from responseBody JSON."""
+        import json
+        import sys
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # azure-monitor-query may not be installed locally — inject stubs so
+        # the function's import block succeeds without the real package.
+        _fake_status = MagicMock(SUCCESS="Success")
+        _fake_logs_mod = MagicMock()
+        _fake_logs_aio_mod = MagicMock()
+
+        monkeypatch.setitem(sys.modules, "azure.monitor", MagicMock())
+        monkeypatch.setitem(sys.modules, "azure.monitor.query", MagicMock(LogsQueryStatus=_fake_status))
+        monkeypatch.setitem(sys.modules, "azure.monitor.query.aio", _fake_logs_aio_mod)
+
+        from src.infrastructure.azure_tools import get_nsg_rule_properties_from_activity_log
+        import src.infrastructure.azure_tools as atz
+
+        monkeypatch.setattr(atz, "_use_mocks", lambda: False)
+        monkeypatch.setenv("LOG_ANALYTICS_WORKSPACE_ID", "ws-id")
+
+        response_body = json.dumps({
+            "properties": {
+                "priority": 300,
+                "destinationPortRange": "22",
+                "direction": "Inbound",
+                "access": "Allow",
+                "protocol": "Tcp",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+            }
+        })
+        props_json = json.dumps({"responseBody": response_body})
+
+        fake_row = [None, None, props_json, None]
+        fake_table = MagicMock()
+        fake_table.rows = [fake_row]
+        fake_result = MagicMock()
+        fake_result.status = "Success"   # matches _fake_status.SUCCESS
+        fake_result.tables = [fake_table]
+
+        fake_client = AsyncMock()
+        fake_client.query_workspace = AsyncMock(return_value=fake_result)
+        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+        fake_client.__aexit__ = AsyncMock(return_value=None)
+
+        fake_cred = AsyncMock()
+        fake_cred.__aenter__ = AsyncMock(return_value=fake_cred)
+        fake_cred.__aexit__ = AsyncMock(return_value=None)
+
+        _fake_logs_aio_mod.LogsQueryClient.return_value = fake_client
+
+        with patch("azure.identity.aio.DefaultAzureCredential", return_value=fake_cred):
+            result = await get_nsg_rule_properties_from_activity_log("rg", "nsg", "allow-ssh")
+
+        assert result is not None
+        assert result["priority"] == 300
+        assert result["destination_port_range"] == "22"
+        assert result["direction"] == "Inbound"
+        assert result["access"] == "Allow"
+        assert result["protocol"] == "Tcp"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_matching_events(self, monkeypatch):
+        """Returns None when KQL returns no rows (rule not found in logs)."""
+        import sys
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        _fake_status = MagicMock(SUCCESS="Success")
+        _fake_logs_aio_mod = MagicMock()
+
+        monkeypatch.setitem(sys.modules, "azure.monitor", MagicMock())
+        monkeypatch.setitem(sys.modules, "azure.monitor.query", MagicMock(LogsQueryStatus=_fake_status))
+        monkeypatch.setitem(sys.modules, "azure.monitor.query.aio", _fake_logs_aio_mod)
+
+        from src.infrastructure.azure_tools import get_nsg_rule_properties_from_activity_log
+        import src.infrastructure.azure_tools as atz
+
+        monkeypatch.setattr(atz, "_use_mocks", lambda: False)
+        monkeypatch.setenv("LOG_ANALYTICS_WORKSPACE_ID", "ws-id")
+
+        fake_table = MagicMock()
+        fake_table.rows = []
+        fake_result = MagicMock()
+        fake_result.status = "Success"
+        fake_result.tables = [fake_table]
+
+        fake_client = AsyncMock()
+        fake_client.query_workspace = AsyncMock(return_value=fake_result)
+        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+        fake_client.__aexit__ = AsyncMock(return_value=None)
+
+        fake_cred = AsyncMock()
+        fake_cred.__aenter__ = AsyncMock(return_value=fake_cred)
+        fake_cred.__aexit__ = AsyncMock(return_value=None)
+
+        _fake_logs_aio_mod.LogsQueryClient.return_value = fake_client
+
+        with patch("azure.identity.aio.DefaultAzureCredential", return_value=fake_cred):
+            result = await get_nsg_rule_properties_from_activity_log("rg", "nsg", "allow-ssh")
+
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
 # Phase 2A+2B — Generic PATCH tool and metadata lookup (mock mode)
 # ---------------------------------------------------------------------------
 

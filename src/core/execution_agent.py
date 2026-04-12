@@ -984,6 +984,34 @@ class ExecutionAgent:
         captured_nsg_rules: dict[str, list[dict]] = {}
         captured_resource_details: dict[str, dict] = {}
 
+        # Proactively capture before-state NOW, before the LLM runs.
+        # This guarantees rollback_commands are built even when the LLM
+        # omits the read tool call during planning (e.g. skips list_nsg_rules).
+        if action.action_type == ActionType.MODIFY_NSG:
+            try:
+                _pre_rules = await list_nsg_rules_async(action.target.resource_id)
+                captured_nsg_rules[action.target.resource_id] = _pre_rules
+                logger.info(
+                    "ExecutionAgent: pre-captured %d NSG rules from '%s' for rollback",
+                    len(_pre_rules), action.target.resource_id,
+                )
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning(
+                    "ExecutionAgent: proactive NSG rule capture failed (non-fatal): %s", _exc
+                )
+        elif action.action_type in (ActionType.SCALE_UP, ActionType.SCALE_DOWN, ActionType.RESTART_SERVICE):
+            try:
+                _pre_details = await get_resource_details_async(action.target.resource_id)
+                captured_resource_details[action.target.resource_id] = _pre_details
+                logger.info(
+                    "ExecutionAgent: pre-captured resource details for '%s' for rollback",
+                    action.target.resource_id,
+                )
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning(
+                    "ExecutionAgent: proactive resource details capture failed (non-fatal): %s", _exc
+                )
+
         @af.tool(
             name="get_resource_details",
             description=(
@@ -1787,38 +1815,101 @@ class ExecutionAgent:
 
         else:
             # ------------------------------------------------------------------
-            # Path B: LLM-based rollback (fallback when no pre-computed commands)
+            # Path B: deterministic reconstruction (fallback when no pre-computed
+            # commands — typically execution records created before the proactive-
+            # capture fix was deployed).
+            #
+            # For delete_nsg_rule: query Activity Log for the original rule
+            # properties, then issue create_nsg_rule directly.
+            # For all other operations: fail with a clear, actionable message.
+            # No LLM is used — LLM rollback is inherently unreliable because the
+            # deleted resource is gone and activity log KQL does not surface the
+            # full rule properties to the model.
             # ------------------------------------------------------------------
             logger.info(
-                "ExecutionAgent: no pre-computed rollback commands — using LLM fallback"
+                "ExecutionAgent: no pre-computed rollback_commands — "
+                "attempting deterministic reconstruction from plan steps + Activity Log"
             )
-            @af.tool(name="report_step_result", description="Report the outcome of a rollback step.")
-            async def tool_report_step_result_llm(step_index: int, success: bool, message: str) -> str:
-                rollback_log.append({"step": step_index, "success": success, "message": message})
-                return "Step result recorded."
+            from src.infrastructure.azure_tools import (  # noqa: PLC0415
+                get_nsg_rule_properties_from_activity_log,
+            )
 
-            agent = client.as_agent(
-                name="execution-rollback-agent",
-                instructions=_ROLLBACK_INSTRUCTIONS,
-                tools=[
-                    tool_get_resource_details,
-                    tool_list_nsg_rules,
-                    tool_start_vm,
-                    tool_deallocate_vm,
-                    tool_resize_vm,
-                    tool_create_nsg_rule,
-                    tool_report_step_result_llm,
-                ],
-            )
-            rollback_hint = plan.get("rollback_hint", "No rollback hint available.")
-            prompt = (
-                f"Action type: {action.action_type.value}\n"
-                f"Resource: {action.target.resource_id}\n"
-                f"Rollback hint: {rollback_hint}\n\n"
-                "Please reverse the applied fix. Use the tools to execute the rollback. "
-                "Call report_step_result for each step."
-            )
-            await run_with_throttle(agent.run, prompt)
+            for i, step in enumerate(plan.get("steps", [])):
+                op = step.get("operation", "")
+                params = step.get("params", {})
+
+                if op == "delete_nsg_rule":
+                    rule_name = params.get("rule_name", "")
+                    rg = params.get("resource_group", "")
+                    nsg_name = params.get("nsg_name", "")
+
+                    if not (rule_name and rg and nsg_name):
+                        rollback_log.append({
+                            "step": i, "operation": op, "success": False,
+                            "message": (
+                                "delete_nsg_rule step has incomplete params "
+                                "(rule_name / resource_group / nsg_name missing) — cannot auto-rollback."
+                            ),
+                        })
+                        continue
+
+                    rule_data = await get_nsg_rule_properties_from_activity_log(rg, nsg_name, rule_name)
+                    if rule_data:
+                        logger.info(
+                            "ExecutionAgent: reconstructed rule '%s' from Activity Log — calling create_nsg_rule",
+                            rule_name,
+                        )
+                        raw = await tool_create_nsg_rule(
+                            resource_group=rg, nsg_name=nsg_name, rule_name=rule_name,
+                            priority=rule_data["priority"],
+                            direction=rule_data["direction"],
+                            access=rule_data["access"],
+                            protocol=rule_data["protocol"],
+                            source_address_prefix=rule_data["source_address_prefix"],
+                            destination_address_prefix=rule_data["destination_address_prefix"],
+                            destination_port_range=rule_data["destination_port_range"],
+                        )
+                        result = json.loads(raw)
+                        ok = result.get("status") == "created"
+                        rollback_log.append({
+                            "step": i, "operation": "create_nsg_rule", "success": ok, "message": raw,
+                        })
+                    else:
+                        rollback_log.append({
+                            "step": i, "operation": "irreversible", "success": False,
+                            "message": (
+                                f"Original properties for rule '{rule_name}' not found in Activity Log "
+                                f"(searched last 30 days of Log Analytics). "
+                                f"To restore manually: Azure Portal → NSG '{nsg_name}' "
+                                f"→ Inbound security rules → Add '{rule_name}'. "
+                                "Check Activity Log to retrieve the original priority and destination port."
+                            ),
+                        })
+
+                elif op in ("start_vm", "restart_vm"):
+                    rg = params.get("resource_group", "")
+                    vm_name = params.get("vm_name", "")
+                    raw = await tool_deallocate_vm(resource_group=rg, vm_name=vm_name)
+                    result = json.loads(raw)
+                    ok = result.get("status") == "deallocated"
+                    rollback_log.append({
+                        "step": i, "operation": "deallocate_vm", "success": ok, "message": raw,
+                    })
+
+                else:
+                    rollback_log.append({
+                        "step": i, "operation": "manual", "success": False,
+                        "message": (
+                            f"No pre-computed rollback for operation '{op}'. "
+                            "The original resource state was not captured — restore manually."
+                        ),
+                    })
+
+            if not rollback_log:
+                rollback_log.append({
+                    "step": 0, "operation": "none", "success": False,
+                    "message": "No steps found in stored plan — nothing to roll back.",
+                })
 
         if not rollback_log:
             return {

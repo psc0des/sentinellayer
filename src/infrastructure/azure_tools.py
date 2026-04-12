@@ -38,6 +38,7 @@ Usage (inside an agent's async ``@af.tool`` function)::
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1302,3 +1303,125 @@ async def fetch_resource_type_metadata_async(resource_type: str) -> dict:
             "error": str(exc),
             "note": "Metadata lookup failed. Check your credentials and subscription ID.",
         }
+
+
+# ---------------------------------------------------------------------------
+# 8. get_nsg_rule_properties_from_activity_log
+# ---------------------------------------------------------------------------
+
+
+async def get_nsg_rule_properties_from_activity_log(
+    resource_group: str, nsg_name: str, rule_name: str
+) -> dict | None:
+    """Reconstruct original NSG rule properties from the Log Analytics Activity Log.
+
+    Used during rollback when before-state was NOT captured at plan time (e.g.
+    execution records created before the proactive-capture fix).
+
+    Queries ``AzureActivity`` for the most recent successful ``securityRules/write``
+    event on the given rule, then extracts priority, port, direction, etc. from
+    the ``Properties`` JSON column.
+
+    Args:
+        resource_group: Azure resource group containing the NSG.
+        nsg_name:       Name of the NSG (e.g. ``"nsg-east-prod"``).
+        rule_name:      Name of the security rule (e.g. ``"allow-ssh-anywhere"``).
+
+    Returns:
+        Dict with ``priority``, ``destination_port_range``, ``direction``,
+        ``access``, ``protocol``, ``source_address_prefix``,
+        ``destination_address_prefix`` — or ``None`` if not found.
+    """
+    if _use_mocks():
+        return None  # No real Activity Log in mock/CI mode
+
+    workspace_id = os.environ.get("LOG_ANALYTICS_WORKSPACE_ID", "")
+    if not workspace_id:
+        logger.warning("get_nsg_rule_properties_from_activity_log: LOG_ANALYTICS_WORKSPACE_ID not set")
+        return None
+
+    # KQL: find the most recent successful write on this specific rule.
+    # Properties column contains requestBody / responseBody as a JSON string.
+    kql = f"""
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where ResourceId has_cs '/securityRules/'
+| where ResourceGroup =~ '{resource_group}'
+| where OperationName has 'securityRules' and OperationName has 'write'
+| where ActivityStatusValue == 'Success'
+| where ResourceId has_cs '{rule_name}'
+| order by TimeGenerated desc
+| take 5
+| project TimeGenerated, OperationName, Properties, ResourceId
+"""
+
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.monitor.query.aio import LogsQueryClient
+        from azure.monitor.query import LogsQueryStatus
+        from datetime import timedelta
+
+        async with DefaultAzureCredential() as cred:
+            async with LogsQueryClient(cred) as logs_client:
+                resp = await logs_client.query_workspace(
+                    workspace_id=workspace_id,
+                    query=kql,
+                    timespan=timedelta(days=30),
+                )
+                if resp.status != LogsQueryStatus.SUCCESS or not resp.tables:
+                    logger.warning(
+                        "get_nsg_rule_properties_from_activity_log: KQL returned no results "
+                        "for rule '%s' in NSG '%s'", rule_name, nsg_name
+                    )
+                    return None
+
+                for row in resp.tables[0].rows:
+                    # row: [TimeGenerated, OperationName, Properties, ResourceId]
+                    props_str = str(row[2]) if len(row) > 2 else "{}"
+                    try:
+                        props = json.loads(props_str)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    # responseBody is the authoritative post-write state;
+                    # fall back to requestBody if responseBody is absent.
+                    for body_key in ("responseBody", "requestBody"):
+                        body_raw = props.get(body_key, "")
+                        if not body_raw:
+                            continue
+                        try:
+                            body = json.loads(body_raw) if isinstance(body_raw, str) else body_raw
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+
+                        rule_props = body.get("properties", {})
+                        priority = rule_props.get("priority")
+                        dest_port = rule_props.get("destinationPortRange")
+                        if priority is not None and dest_port is not None:
+                            logger.info(
+                                "get_nsg_rule_properties_from_activity_log: "
+                                "reconstructed rule '%s' (priority=%s, port=%s) from Activity Log",
+                                rule_name, priority, dest_port,
+                            )
+                            return {
+                                "priority": int(priority),
+                                "destination_port_range": str(dest_port),
+                                "direction": str(rule_props.get("direction", "Inbound")),
+                                "access": str(rule_props.get("access", "Allow")),
+                                "protocol": str(rule_props.get("protocol", "*")),
+                                "source_address_prefix": str(rule_props.get("sourceAddressPrefix", "*")),
+                                "destination_address_prefix": str(rule_props.get("destinationAddressPrefix", "*")),
+                            }
+
+        logger.warning(
+            "get_nsg_rule_properties_from_activity_log: could not extract rule properties "
+            "from any Activity Log event for rule '%s'", rule_name
+        )
+        return None
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "get_nsg_rule_properties_from_activity_log: query failed for rule '%s': %s",
+            rule_name, exc,
+        )
+        return None
