@@ -71,90 +71,60 @@ _DOWNSIZE_MAP: dict[str, str] = {
     "Standard_D32s_v3": "Standard_D16s_v3",
 }
 
-# System instructions for the framework agent — drives two-layer intelligence.
+# System instructions for the framework agent — drives three-layer intelligence.
 _AGENT_INSTRUCTIONS = """\
-You are a Senior FinOps Engineer conducting an enterprise cloud cost optimisation
-review. Your mission: identify WASTED spend by investigating ACTUAL utilisation
-and resource state — not just SKU name or resource size.
+You are a Senior FinOps Engineer conducting an enterprise cloud cost optimisation review.
+Azure Advisor (Cost) and Azure Policy have pre-run and found cost waste — your job is
+to confirm each finding with actual utilisation data, then look for anything they missed.
 
-━━━ STEP 1: RESOURCE DISCOVERY ━━━
-Call query_resource_graph to enumerate ALL cost-significant resources.
-Use this KQL as a starting point (expand for your environment):
-  Resources | where type in (
-    'microsoft.compute/virtualmachines',
-    'microsoft.compute/disks',
-    'microsoft.network/publicipaddresses',
-    'microsoft.containerservice/managedclusters',
-    'microsoft.web/serverfarms',
-    'microsoft.sql/servers/databases',
-    'microsoft.documentdb/databaseaccounts',
-    'microsoft.storage/storageaccounts',
-    'microsoft.cache/redis'
-  ) | project id, name, type, location, resourceGroup, tags, sku, properties
+━━━ PRIMARY TASK: INVESTIGATE PRE-COMPUTED COST FINDINGS ━━━
+Cost recommendations from Azure Advisor and Azure Policy are listed at the top of
+the prompt. For EACH finding:
+1. Call query_metrics(resource_id, "Percentage CPU", "P7D") to confirm actual utilisation.
+   For deallocated VMs: call get_resource_details to confirm power state and disk costs.
+2. Include actual metric values in the proposal reason: "7-day avg CPU: X%, peak: Y%".
+3. Call propose_action with confirmed evidence.
+Do NOT propose scale_down if CPU > 40% — that contradicts the finding.
+Do NOT skip a pre-computed finding.
 
-━━━ STEP 2: IDLE & OVERSIZED COMPUTE ━━━
-For each VM, call get_resource_details to check power state first:
-  DEALLOCATED VM:
-  - Still incurs storage cost for OS and data disks.
-  - Check if it has been deallocated for an extended period (query_activity_log).
-  - If no recent start events and not tagged as DR/standby → propose
-    delete_resource (MEDIUM urgency) or scale_down (LOW) if data must be kept.
-  - Reason: "VM has been deallocated with no recent activity — incurring disk
-    storage costs with no compute value."
+━━━ SECONDARY TASK: INDEPENDENT COST DISCOVERY ━━━
+After processing pre-computed findings, scan the resource inventory (above) or
+call query_resource_graph for cost waste the APIs missed:
 
-  RUNNING VM — call query_metrics for P7D:
-  - "Percentage CPU", "Available Memory Bytes"
-  - Avg CPU < 5%: strong right-size candidate → propose scale_down (MEDIUM).
-  - Avg CPU < 20%: right-size candidate → propose scale_down (LOW urgency).
-  - Reason MUST include: "7-day avg CPU: X%, peak: Y%"
-  - Do NOT propose deleting running VMs — only scale_down.
-  - Exception: VMs tagged or named as DR/standby/backup with CPU < 2% may be
-    candidates for propose delete_resource (MEDIUM) — note the DR risk in reason.
+IDLE & OVERSIZED COMPUTE (virtual machines and compute resources):
+  For each VM, call get_resource_details for power state:
+  - DEALLOCATED: incurs storage costs → propose delete_resource (MEDIUM) or scale_down.
+  - RUNNING + avg CPU < 5% (P7D): strong right-size → propose scale_down (MEDIUM).
+  - RUNNING + avg CPU < 20%: right-size → propose scale_down (LOW).
+  Reason MUST include "7-day avg CPU: X%, peak: Y%".
+  Do NOT propose deleting running VMs. Exception: DR/standby VMs with CPU < 2%
+  may be delete_resource (MEDIUM) — note the DR risk in reason.
 
-━━━ STEP 3: ORPHANED & UNATTACHED RESOURCES ━━━
-Call query_resource_graph for disks with diskState = 'Unattached':
-  Resources | where type == 'microsoft.compute/disks'
-  | where properties.diskState == 'Unattached'
-  | project id, name, resourceGroup, tags, sku, properties
-  - Each unattached disk = ongoing storage cost with no value.
-  - Propose delete_resource (MEDIUM urgency) unless tagged as backup/snapshot.
-  - Reason: "Disk unattached and incurring storage cost — no VM is using it."
+ORPHANED RESOURCES:
+  Unattached disks (diskState = 'Unattached') → propose delete_resource (MEDIUM).
+  Unassociated public IPs (isnull properties.ipConfiguration) → delete_resource (LOW).
 
-Call query_resource_graph for unassociated public IPs:
-  Resources | where type == 'microsoft.network/publicipaddresses'
-  | where isnull(properties.ipConfiguration)
-  | project id, name, resourceGroup, tags
-  - Each unassociated public IP incurs a small but unnecessary cost.
-  - Propose delete_resource (LOW urgency).
-  - Reason: "Public IP not attached to any resource — reserved but unused."
+PaaS RIGHTSIZING:
+  AKS avg CPU < 40% (P7D) → propose scale_down (LOW/MEDIUM).
+  App Service CpuPercentage < 10% → propose scale_down (LOW).
+  SQL dtu_consumption_percent < 20% → propose scale_down (LOW).
+  Cosmos DB: compare provisioned RU/s against TotalRequests metric.
 
-━━━ STEP 4: CONTAINER, PaaS & DATABASE RIGHTSIZING ━━━
-For AKS clusters, call query_metrics for P7D node CPU:
-  - Cluster avg CPU < 40% → propose scale_down (reduce node count) (LOW/MEDIUM).
+━━━ RESOURCE DISCOVERY (use this KQL when no inventory is provided) ━━━
+Resources
+| project id, name, type, location, resourceGroup, tags, sku, properties
+| order by type asc
 
-For App Service plans (web/serverfarms), call query_metrics P7D:
-  - CpuPercentage < 10% → propose scale_down (LOW urgency).
-
-For SQL databases, call query_metrics P7D:
-  - dtu_consumption_percent < 20% → propose scale_down (LOW urgency).
-
-For Cosmos DB, call get_resource_details:
-  - Provisioned throughput (RU/s) > 10× estimated actual workload
-    (use TotalRequests metric as a proxy) → propose scale_down (LOW urgency).
-
-━━━ STEP 5: STORAGE ACCOUNT WASTE ━━━
-Call query_resource_graph for storage accounts. Call get_resource_details on each:
-  - Standard_LRS for production workloads with replication requirement → flag (LOW).
-  - Very large storage accounts with no access in 30 days (if detectable) → flag (LOW).
+Do NOT add a 'where type in (...)' filter — ALL resource types have costs.
+The Microsoft APIs already flagged the obvious waste — your job is to confirm
+and find what they missed.
 
 ━━━ PROPOSAL RULES ━━━
 - Reason MUST include actual metric values: "7-day avg CPU: X%, peak: Y%".
 - Always call get_resource_details before proposing delete_resource.
-- Never propose deleting a resource tagged as backup, dr, or standby without
-  explicit evidence of waste and a clear note of the risk in the reason.
 - For VMs: prefer scale_down over delete_resource unless clearly abandoned.
 - projected_savings_monthly: estimate 45% savings per VM SKU tier reduction;
-  note the actual disk cost for unattached disks (Standard HDD 128 GB ≈ $5/mo).
+  note disk cost for unattached disks (Standard HDD 128 GB ≈ $5/mo).
 
 ━━━ URGENCY SCALE ━━━
   MEDIUM: Unattached disks, deallocated VMs with no recent activity, oversized
@@ -162,14 +132,8 @@ Call query_resource_graph for storage accounts. Call get_resource_details on eac
   LOW:    Right-size candidates (CPU 5–20%), unused public IPs, lightly used PaaS.
 
 ━━━ YOUR ROLE AND BOUNDARIES ━━━
-Your ONLY job is to inspect the live Azure environment and report what you find.
-You are a detection tool, not a decision-maker about what is "new" or "already known".
-
-NEVER skip or suppress a finding because you think it was flagged before, is
-already being handled, or the user probably knows about it. You have no memory
-of previous scans. Every scan is a fresh, independent inspection of current state.
-If waste or an anomaly exists right now, propose it now. The governance engine
-handles deduplication. The human operator decides whether to act or dismiss.
+Your ONLY job is to inspect and report. You are a detection tool.
+NEVER skip a finding — the governance engine handles deduplication.
 """
 
 
@@ -281,6 +245,7 @@ class CostOptimizationAgent:
             list_nsg_rules_async,
             get_resource_health_async,
             list_advisor_recommendations_async,
+            list_policy_violations_async,
         )
 
         credential = DefaultAzureCredential()
@@ -299,6 +264,88 @@ class CostOptimizationAgent:
         )
 
         proposals_holder: list[ProposedAction] = []
+        scan_notes: list[str] = []
+
+        # ── Pre-scan: Microsoft APIs detect first ─────────────────────────────
+        # Run Advisor (Cost) and Policy BEFORE the LLM scan so the agent
+        # receives confirmed findings as context and confirms with real metrics.
+        raw_findings: list[dict] = []
+
+        try:
+            advisor_recs = await list_advisor_recommendations_async(
+                scope=target_resource_group or None, category="Cost"
+            )
+            advisor_high = [r for r in advisor_recs if str(r.get("impact", "")).lower() == "high"]
+            for rec in advisor_high:
+                short_desc = (
+                    rec.get("shortDescription", {}).get("problem", "")
+                    if isinstance(rec.get("shortDescription"), dict)
+                    else str(rec.get("shortDescription", ""))
+                ) or rec.get("description", "")
+                if not short_desc:
+                    continue  # skip recommendations with no description
+                raw_findings.append({
+                    "source": "ADVISOR-HIGH",
+                    "severity": "HIGH",
+                    "resource_name": rec.get("impactedValue", ""),
+                    "description": short_desc,
+                    "rec_id": rec.get("id", ""),
+                    "resource_type": rec.get("impactedField", ""),
+                })
+            scan_notes.append(
+                f"Pre-scan: Azure Advisor Cost — {len(advisor_high)} HIGH recommendation(s)"
+            )
+        except Exception as exc:
+            logger.warning("CostAgent: pre-scan Advisor failed: %s", exc)
+            scan_notes.append(f"Pre-scan: Azure Advisor unavailable ({exc})")
+
+        try:
+            policy_violations = await list_policy_violations_async(
+                scope=target_resource_group or None
+            )
+            for v in policy_violations:
+                if not v.get("resourceId") or not v.get("policyDefinitionName"):
+                    continue  # skip incomplete violation records
+                assignment = v.get("policyAssignmentName", "")
+                raw_findings.append({
+                    "source": "POLICY-NONCOMPLIANT",
+                    "severity": "MEDIUM",
+                    "resource_id": v.get("resourceId", ""),
+                    "resource_name": v.get("resourceName", ""),
+                    "description": (
+                        f"Policy: {v.get('policyDefinitionName', '')}"
+                        + (f" (assignment: {assignment})" if assignment else "")
+                    ),
+                    "resource_type": "unknown",
+                })
+            scan_notes.append(
+                f"Pre-scan: Azure Policy — {len(policy_violations)} non-compliant resource(s)"
+            )
+        except Exception as exc:
+            logger.warning("CostAgent: pre-scan Policy failed: %s", exc)
+            scan_notes.append(f"Pre-scan: Azure Policy unavailable ({exc})")
+
+        # Build findings summary to inject into the LLM prompt.
+        if raw_findings:
+            findings_lines = [
+                f"=== PRE-COMPUTED FINDINGS: {len(raw_findings)} cost issue(s) from Microsoft APIs ===",
+                "Each finding below was detected deterministically. For each one:",
+                "1. Confirm with query_metrics (CPU/utilisation) or get_resource_details (power state).",
+                "2. Include actual metric values in the proposal reason.",
+                "3. Call propose_action with full evidence.",
+                "",
+            ]
+            for i, f in enumerate(raw_findings, 1):
+                r_name = f.get("resource_name") or f.get("resource_id", "?")
+                line = f"[{i}] [{f.get('source', '?')}] Resource: {r_name} — {f.get('description', '?')}"
+                findings_lines.append(line)
+            findings_lines.append("")
+            findings_text = "\n".join(findings_lines)
+        else:
+            findings_text = (
+                "=== PRE-COMPUTED FINDINGS: No high-impact cost issues detected by "
+                "Microsoft APIs ===\n"
+            )
 
         @af.tool(
             name="query_resource_graph",
@@ -492,7 +539,7 @@ class CostOptimizationAgent:
             else "across the Azure environment"
         )
 
-        # Build prompt — inject inventory if provided
+        # Build prompt — inject pre-computed findings + inventory (if provided).
         if inventory is not None:
             from src.infrastructure.inventory_formatter import format_inventory_for_prompt  # noqa: PLC0415
             inventory_text = format_inventory_for_prompt({
@@ -501,57 +548,102 @@ class CostOptimizationAgent:
                 "refreshed_at": "pre-fetched",
             })
             scan_prompt = (
+                f"{findings_text}\n\n"
                 f"{inventory_text}\n\n"
-                f"Conduct a full 8-step cost optimisation audit {rg_scope}. "
-                "The complete resource inventory is above — review EVERY resource. "
-                "Follow ALL steps in your instructions: "
-                "(1) The inventory above replaces Step 1 resource discovery. "
-                "You may still call query_resource_graph for additional KQL if needed. "
-                "(2) For every VM: read its pre-fetched powerState — "
-                "deallocated VMs still pay for disk storage (flag as MEDIUM delete_resource or scale_down). "
-                "(3) For every disk in the inventory: check diskState — if Unattached, flag as MEDIUM delete_resource. "
-                "(4) For every public IP: check if it is associated with a NIC or load balancer — "
-                "if not attached, flag as LOW delete_resource. "
-                "(5) For running VMs: check CPU utilisation via query_metrics over P7D — "
-                "if avg CPU < 5%, propose scale_down (MEDIUM). If avg CPU < 20%, propose scale_down (LOW). "
-                "(6) For AKS clusters: query_metrics for node CPU — avg < 40% over P7D means overprovisioned. "
-                "For App Service plans: CpuPercentage < 10% → scale_down. "
-                "For SQL databases: dtu_consumption_percent < 20% → scale_down. "
-                "For Cosmos DB: compare provisioned RU/s against TotalRequests metric. "
-                "(7) For storage accounts: check for Standard_LRS on production workloads, "
-                "large accounts with no recent access. "
-                "(8) Call list_advisor_recommendations(category=Cost) to surface pre-computed savings. "
-                "Propose an action for EVERY waste item found. Include projected_savings_monthly where possible."
+                f"Conduct a full cost optimisation audit {rg_scope}. "
+                "FIRST: Investigate EVERY finding listed above — confirm with actual metrics "
+                "(query_metrics for CPU/utilisation, get_resource_details for power state), "
+                "then propose action with real data in the reason. "
+                "THEN: Review the resource inventory for additional waste the APIs missed: "
+                "deallocated VMs (disk storage costs), running VMs with avg CPU < 20% (P7D), "
+                "unattached disks (diskState=Unattached), unassociated public IPs, "
+                "oversized AKS/App Service/SQL/Cosmos DB, large unused storage accounts. "
+                "Include projected_savings_monthly where possible."
             )
         else:
             scan_prompt = (
-                f"Conduct a full 8-step cost optimisation audit {rg_scope}. "
-                "Follow ALL steps in your instructions: "
-                "(1) Query Resource Graph to discover VMs, disks, public IPs, storage accounts, "
-                "databases, Redis, AKS clusters, and App Service plans. "
-                "(2) For every VM: call get_resource_details to check powerState first — "
-                "deallocated VMs still pay for disk storage (flag as MEDIUM delete_resource or scale_down). "
-                "(3) For every disk: check diskState — if Unattached, flag as MEDIUM delete_resource. "
-                "(4) For every public IP: check if it is associated with a NIC or load balancer — "
-                "if not attached, flag as LOW delete_resource. "
-                "(5) For running VMs: check CPU utilisation via query_metrics over P7D — "
-                "if avg CPU < 5%, propose scale_down (MEDIUM). If avg CPU < 20%, propose scale_down (LOW). "
-                "(6) For AKS clusters: query_metrics for node CPU — avg < 40% over P7D means overprovisioned. "
-                "For App Service plans: CpuPercentage < 10% → scale_down. "
-                "For SQL databases: dtu_consumption_percent < 20% → scale_down. "
-                "For Cosmos DB: compare provisioned RU/s against TotalRequests metric. "
-                "(7) For storage accounts: check for Standard_LRS on production workloads, "
-                "large accounts with no recent access. "
-                "(8) Call list_advisor_recommendations(category=Cost) to surface pre-computed savings. "
-                "Propose an action for EVERY waste item found. Include projected_savings_monthly where possible."
+                f"{findings_text}\n\n"
+                f"Conduct a full cost optimisation audit {rg_scope}. "
+                "FIRST: Investigate EVERY finding listed above — confirm with actual metrics "
+                "(query_metrics for CPU/utilisation, get_resource_details for power state). "
+                "THEN: Query ALL resource types for additional cost waste the APIs missed — "
+                "do NOT filter by type. Use the open-ended KQL from your instructions. "
+                "Check: deallocated VMs, unattached disks, unused public IPs, "
+                "running VMs with avg CPU < 20% (P7D), oversized PaaS resources. "
+                "Include projected_savings_monthly where possible."
             )
 
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(agent.run, scan_prompt)
 
-        # Empty proposals means GPT found no waste — that is a valid outcome.
-        # Falling back to seed-data rules would produce false positives in any
-        # real environment that does not match the demo seed_resources.json.
+        # ── Post-scan safety net: auto-propose raw_findings LLM missed ────
+        # APIs ran pre-scan (no new calls here). If the LLM skipped any
+        # pre-computed finding, we auto-propose it as a belt-and-suspenders.
+        pre_auto_count = len(proposals_holder)
+        for finding in raw_findings:
+            resource_id = finding.get("resource_id", "")
+            if not resource_id:
+                rec_id = finding.get("rec_id", "")
+                if rec_id and "/providers/" in rec_id:
+                    idx = rec_id.find("/providers/Microsoft.Advisor")
+                    if idx > 0:
+                        resource_id = rec_id[:idx]
+            if not resource_id:
+                resource_id = finding.get("resource_name", "")
+            if not resource_id:
+                continue
+
+            resource_name = finding.get("resource_name", "")
+            already = any(
+                p.target.resource_id == resource_id
+                or (resource_name and resource_name in (p.target.resource_id or ""))
+                for p in proposals_holder
+            )
+            if already:
+                continue
+
+            src = finding.get("source", "UNKNOWN")
+            desc = finding.get("description", "")
+            sev = finding.get("severity", "MEDIUM")
+            urgency_enum = Urgency.HIGH if sev == "HIGH" else Urgency.MEDIUM
+            action_type = (
+                ActionType.SCALE_DOWN if src == "ADVISOR-HIGH" else ActionType.UPDATE_CONFIG
+            )
+            proposals_holder.append(ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=action_type,
+                target=ActionTarget(
+                    resource_id=resource_id,
+                    resource_type=finding.get("resource_type", "unknown"),
+                ),
+                reason=f"{src}: {desc}",
+                urgency=urgency_enum,
+            ))
+
+        auto_missed = len(proposals_holder) - pre_auto_count
+        if auto_missed:
+            scan_notes.append(
+                f"Post-scan safety net: {auto_missed} pre-computed finding(s) "
+                "auto-proposed (LLM did not cover them)"
+            )
+
+        # Post-scan log — counts per detection path.
+        auto_count = sum(
+            1 for p in proposals_holder
+            if p.reason.startswith(("ADVISOR-HIGH:", "POLICY-NONCOMPLIANT:"))
+        )
+        llm_count = len(proposals_holder) - auto_count
+        if proposals_holder:
+            scan_notes.append(
+                f"Scan complete — {len(proposals_holder)} proposal(s): "
+                f"{auto_count} deterministic, {llm_count} LLM-originated"
+            )
+        else:
+            scan_notes.append(
+                "Scan complete — no cost waste found in Azure environment."
+            )
+
+        self.scan_notes: list[str] = scan_notes
         return proposals_holder
 
     # ------------------------------------------------------------------

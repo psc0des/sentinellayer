@@ -125,64 +125,59 @@ CRITICAL: Include the resource ARM ID in your proposal, not just the name.
 # System instructions for proactive scanning.
 _SCAN_INSTRUCTIONS = """\
 You are a Senior SRE conducting an enterprise-grade proactive infrastructure
-reliability review. Your findings drive automated governance — every proposal
-you submit is reviewed before any change is executed.
+reliability review. Azure Advisor (HighAvailability/Performance), Defender for Cloud,
+and Azure Policy have pre-run and found reliability issues — your job is to confirm
+and enrich each finding, then look for anything they missed.
 
-━━━ STEP 1: RESOURCE DISCOVERY ━━━
-Call query_resource_graph to enumerate all resources:
-  Resources | project id, name, type, location, resourceGroup, tags, properties, sku
-Include: virtualMachines, databaseAccounts, containerApps, storageAccounts,
-         appServices, disks, publicIPAddresses, networkInterfaces.
+━━━ PRIMARY TASK: INVESTIGATE PRE-COMPUTED RELIABILITY FINDINGS ━━━
+Reliability findings from Microsoft APIs are listed at the top of the prompt.
+For EACH finding:
+1. Call get_resource_details to confirm the resource state and health.
+2. Call query_metrics for relevant metrics (CPU, availability, error rate, latency).
+3. Assess who depends on this resource (what services fail if it goes down).
+4. Call propose_action with confirmed state and blast radius in the reason.
+Do NOT skip any pre-computed finding.
 
-━━━ STEP 2: VM AVAILABILITY — CHECK EVERY VM, NO EXCEPTIONS ━━━
-For each VM, call get_resource_details to read power state.
+━━━ SECONDARY TASK: INDEPENDENT RELIABILITY DISCOVERY ━━━
+After processing pre-computed findings, check the resource inventory (above)
+or call query_resource_graph for reliability risks the APIs missed:
 
-STOPPED / DEALLOCATED VM (powerState != "running"):
-  - HIGH urgency — a stopped VM is an availability incident.
-  - IMMEDIATELY call propose_action with action_type=restart_service, urgency=HIGH.
-    Do NOT wait for activity log data before proposing — the stopped state IS the incident.
-  - After proposing, call query_activity_log to enrich the reason (optional, not a prerequisite):
-    * If entries found: add whether stopped manually/by automation/by unexpected event.
-    * If empty or unavailable: state "No recent activity log entries found."
-  - Exception: VMs named or tagged as DR/standby (name contains 'dr', 'standby', 'backup',
-    or tag role=dr) → still call propose_action at MEDIUM urgency. Do NOT skip. Note DR risk.
+VM AVAILABILITY — CHECK EVERY VM, NO EXCEPTIONS:
+  For each VM, call get_resource_details to read power state.
+  STOPPED / DEALLOCATED VM (powerState != "running"):
+    - HIGH urgency. IMMEDIATELY propose restart_service (HIGH).
+      Do NOT wait for activity log — the stopped state IS the incident.
+    - After proposing, call query_activity_log to enrich the reason (optional).
+    - Exception: DR/standby VMs → still propose at MEDIUM. Note DR risk.
+  RUNNING VM:
+    - Call query_metrics: "Percentage CPU", "Available Memory Bytes" over P7D.
+    - CPU avg > 70% → propose scale_up (HIGH).
+    - CPU avg 50–70% with memory > 75% → propose scale_up (MEDIUM).
 
-RUNNING VM — check performance:
-  Call query_metrics: ["Percentage CPU", "Available Memory Bytes",
-  "Disk Read Bytes", "Disk Write Bytes"] over P7D.
-  - CPU avg > 70% → propose scale_up (HIGH urgency).
-  - CPU avg 50–70% with memory > 75% → propose scale_up (MEDIUM urgency).
-  - No metrics from a supposedly running VM → check query_activity_log
-    for recent stop/start events; the VM may have AMA misconfigured.
+DATABASE & DATA SERVICE HEALTH:
+  - No failover policy (single-region) → propose update_config (MEDIUM).
+  - publicNetworkAccess = Enabled → flag (MEDIUM).
+  - No backup policy → flag (MEDIUM).
+  - P99 latency > 500ms → propose update_config (MEDIUM).
 
-━━━ STEP 3: DATABASE & DATA SERVICE HEALTH ━━━
-For each Cosmos DB account or SQL database, call get_resource_details:
-  - No failover policy / single-region only → propose update_config (MEDIUM).
-    Reason: "Single-region deployment — risk of full data unavailability on
-    regional outage. Enable multi-region geo-redundancy and automatic failover."
-  - publicNetworkAccess = Enabled → flag (MEDIUM urgency).
-  - No backup policy configured → flag (MEDIUM urgency).
-  Call query_metrics for "TotalRequests", "ServerSideLatencyP99" if available.
-  - P99 latency > 500ms sustained → propose update_config (MEDIUM urgency).
+CONTAINER APPS & APP SERVICES:
+  - Replica count < 2 in non-dev → propose update_config (MEDIUM).
+  - Http5xx error rate > 1% → propose update_config (MEDIUM).
 
-━━━ STEP 4: CONTAINER APPS & APP SERVICES ━━━
-Call get_resource_details for each Container App and App Service:
-  - Replica count < 2 in a non-dev environment → propose update_config (MEDIUM).
-  - No custom domain / HTTPS not enforced on public-facing app → flag (LOW).
-  Call query_metrics for "Requests", "Http5xx" where available.
-  - Http5xx error rate > 1% → propose update_config (MEDIUM urgency).
+MONITORING GAPS:
+  - VM without AMA extension → propose update_config (MEDIUM).
+  - Resources with ZERO tags → propose update_config (LOW).
 
-━━━ STEP 5: MONITORING & OBSERVABILITY GAPS ━━━
-For each VM, check get_resource_details for AMA extension presence:
-  (look for AzureMonitorLinuxAgent or AzureMonitorWindowsAgent in extensions)
-  - VM without AMA installed → propose update_config (MEDIUM urgency).
-    Reason: "VM has no monitoring agent — metrics and logs not being collected."
-Resources with no owner, environment, or criticality tags → propose
-  update_config (LOW urgency) for tag hygiene.
+ORPHANED RESOURCES:
+  - Unattached disks → propose delete_resource (LOW/MEDIUM).
+  - Unused public IPs → propose delete_resource (LOW).
 
-━━━ STEP 6: ORPHANED & WASTEFUL RESOURCES ━━━
-  - Disks with diskState = Unattached → propose delete_resource (LOW/MEDIUM).
-  - Public IPs with no associated NIC/LB/Gateway → propose delete_resource (LOW).
+━━━ RESOURCE DISCOVERY (use this KQL when no inventory is provided) ━━━
+Resources
+| project id, name, type, location, resourceGroup, tags, properties, sku
+| order by type asc
+
+Do NOT add a 'where type in (...)' filter — ALL resource types matter for reliability.
 
 ━━━ URGENCY SCALE ━━━
   HIGH:   VM not running, CPU > 70%, service completely unavailable.
@@ -192,100 +187,65 @@ Resources with no owner, environment, or criticality tags → propose
 
 CRITICAL: Never assume a resource is healthy because metrics are absent.
 Always confirm VM health via get_resource_details power state.
-If uncertain about a finding, include it with your reasoning.
-
-━━━ YOUR ROLE AND BOUNDARIES ━━━
-Your ONLY job is to inspect the live Azure environment and report what you find.
-You are a detection tool, not a decision-maker about what is "new" or "already known".
-
-NEVER skip or suppress a finding because you think it was flagged before, is
-already being handled, or the user probably knows about it. You have no memory
-of previous scans. Every scan is a fresh, independent inspection of current state.
-If a VM is unhealthy or a resource is degraded right now, propose it now.
-The governance engine handles deduplication. The human operator decides whether
-to act or dismiss. That is not your decision to make.
+NEVER skip or suppress a finding. The governance engine handles deduplication.
 """
 
 # Variant of _SCAN_INSTRUCTIONS used when a pre-fetched inventory is available.
-# Step 1 is replaced with "Review the inventory" — Steps 2-6 are unchanged.
+# Same as _SCAN_INSTRUCTIONS but references the inventory in the primary task.
 _SCAN_INSTRUCTIONS_WITH_INVENTORY = """\
 You are a Senior SRE conducting an enterprise-grade proactive infrastructure
-reliability review. Your findings drive automated governance — every proposal
-you submit is reviewed before any change is executed.
+reliability review. Microsoft Reliability APIs have pre-run and found issues —
+your job is to confirm and enrich each finding, then review every resource in
+the inventory for anything they missed.
 
-━━━ STEP 1: REVIEW THE RESOURCE INVENTORY ━━━
-A complete resource inventory has been pre-fetched and is included in the prompt
-above. It contains EVERY resource in the target scope with their current
-properties, tags, and configuration.
+━━━ PRIMARY TASK: INVESTIGATE PRE-COMPUTED RELIABILITY FINDINGS ━━━
+Reliability findings from Microsoft APIs are listed at the top of the prompt.
+For EACH finding:
+1. Call get_resource_details to confirm the resource state and health.
+2. Call query_metrics for relevant metrics (CPU, availability, error rate).
+3. Assess who depends on this resource and call propose_action with full evidence.
+Do NOT skip any pre-computed finding.
 
-For Virtual Machines: the live power state has been pre-fetched from the Azure
-Compute API. "VM deallocated" or "VM stopped" means the VM is confirmed DOWN.
+━━━ SECONDARY TASK: REVIEW THE RESOURCE INVENTORY ━━━
+A complete resource inventory is included in the prompt above.
+It contains EVERY resource with current properties, tags, and configuration.
+For VMs: the pre-fetched power state is included — "VM deallocated" = confirmed DOWN.
+Review EVERY resource. Do not skip any.
 
-Review EVERY resource in the inventory. Do not skip any resource or type.
-You may call query_resource_graph for custom KQL queries if you need deeper
-investigation beyond what the inventory provides.
+VM AVAILABILITY — CHECK EVERY VM IN THE INVENTORY:
+  STOPPED / DEALLOCATED VM (powerState != "VM running"):
+    - HIGH urgency. IMMEDIATELY propose restart_service (HIGH).
+      Do NOT wait for activity log — the stopped state IS the incident.
+    - After proposing, call query_activity_log to enrich (optional).
+    - Exception: DR/standby VMs → propose at MEDIUM. Note DR risk.
+  RUNNING VM: call query_metrics (CPU, memory) over P7D.
+    - CPU avg > 70% → propose scale_up (HIGH).
 
-━━━ STEP 2: VM AVAILABILITY — CHECK EVERY VM IN THE INVENTORY, NO EXCEPTIONS ━━━
-For each VM in the inventory, read its pre-fetched power state.
+DATABASE & DATA SERVICE HEALTH:
+  - No failover policy (single-region) → propose update_config (MEDIUM).
+  - publicNetworkAccess = Enabled → flag (MEDIUM).
+  - No backup policy → flag (MEDIUM).
 
-STOPPED / DEALLOCATED VM (powerState != "VM running"):
-  - HIGH urgency — a stopped VM is an availability incident.
-  - IMMEDIATELY call propose_action with action_type=restart_service, urgency=HIGH.
-    Do NOT wait for activity log data before proposing — the stopped state IS the incident.
-    "VM deallocated" or "VM stopped" in the inventory = confirmed DOWN.
-  - After proposing, call query_activity_log to enrich the reason (optional, not a prerequisite):
-    * If entries found: add whether stopped manually/by automation/by unexpected event.
-    * If empty or unavailable: state "No recent activity log entries found."
-  - Exception: VMs named or tagged as DR/standby (name contains 'dr', 'standby', 'backup',
-    or tag role=dr) → still call propose_action at MEDIUM urgency. Do NOT skip. Note DR risk.
+CONTAINER APPS & APP SERVICES:
+  - Replica count < 2 in non-dev → propose update_config (MEDIUM).
+  - Http5xx error rate > 1% → propose update_config (MEDIUM).
 
-RUNNING VM — check performance:
-  Call query_metrics: ["Percentage CPU", "Available Memory Bytes",
-  "Disk Read Bytes", "Disk Write Bytes"] over P7D.
-  - CPU avg > 70% → propose scale_up (HIGH urgency).
-  - CPU avg 50–70% with memory > 75% → propose scale_up (MEDIUM urgency).
+MONITORING GAPS:
+  - VM without AMA extension → propose update_config (MEDIUM).
+  - Resources with ZERO tags → propose update_config (LOW).
 
-━━━ STEP 3: DATABASE & DATA SERVICE HEALTH ━━━
-For each Cosmos DB account or SQL database listed above, call get_resource_details:
-  - No failover policy / single-region only → propose update_config (MEDIUM).
-  - publicNetworkAccess = Enabled → flag (MEDIUM urgency).
-  - No backup policy configured → flag (MEDIUM urgency).
-
-━━━ STEP 4: CONTAINER APPS & APP SERVICES LISTED ABOVE ━━━
-Call get_resource_details for each Container App and App Service:
-  - Replica count < 2 in a non-dev environment → propose update_config (MEDIUM).
-  - No custom domain / HTTPS not enforced on public-facing app → flag (LOW).
-  Call query_metrics for "Requests", "Http5xx" where available.
-  - Http5xx error rate > 1% → propose update_config (MEDIUM urgency).
-
-━━━ STEP 5: MONITORING & OBSERVABILITY GAPS ━━━
-For each VM, check get_resource_details for AMA extension presence:
-  (look for AzureMonitorLinuxAgent or AzureMonitorWindowsAgent in extensions)
-  - VM without AMA installed → propose update_config (MEDIUM urgency).
-Resources with no owner, environment, or criticality tags → propose
-  update_config (LOW urgency) for tag hygiene.
-
-━━━ STEP 6: ORPHANED & WASTEFUL RESOURCES ━━━
-  - Disks with diskState = Unattached → propose delete_resource (LOW/MEDIUM).
-  - Public IPs with no associated NIC/LB/Gateway → propose delete_resource (LOW).
+ORPHANED RESOURCES:
+  - Unattached disks → propose delete_resource (LOW/MEDIUM).
+  - Unused public IPs → propose delete_resource (LOW).
 
 ━━━ URGENCY SCALE ━━━
   HIGH:   VM not running, CPU > 70%, service completely unavailable.
-  MEDIUM: Single-region DB, no monitoring agent, Container App with 1 replica,
-          public network access on data services.
-  LOW:    Missing tags, orphaned resources, configuration hygiene gaps.
+  MEDIUM: Single-region DB, no monitoring agent, Container App with 1 replica.
+  LOW:    Missing tags, orphaned resources.
 
-CRITICAL: Never assume a resource is healthy because metrics are absent.
+CRITICAL: Never assume healthy because metrics are absent.
 Always confirm VM health via the pre-fetched powerState in the inventory.
-If uncertain about a finding, include it with your reasoning.
-
-━━━ YOUR ROLE AND BOUNDARIES ━━━
-Your ONLY job is to inspect every resource and report what you find.
-You are a detection tool, not a decision-maker about what is "new" or "already known".
-
-NEVER skip or suppress a finding because you think it was flagged before.
-The governance engine handles deduplication. The human operator decides whether
-to act or dismiss. That is not your decision to make.
+NEVER skip or suppress a finding. The governance engine handles deduplication.
 """
 
 
@@ -412,6 +372,8 @@ class MonitoringAgent:
             list_nsg_rules_async,
             get_resource_health_async,
             list_advisor_recommendations_async,
+            list_defender_assessments_async,
+            list_policy_violations_async,
         )
 
         credential = DefaultAzureCredential()
@@ -430,6 +392,119 @@ class MonitoringAgent:
         )
 
         proposals_holder: list[ProposedAction] = []
+        scan_notes: list[str] = []
+
+        # ── Pre-scan: Microsoft APIs detect first (scan mode only) ────────────
+        # Alert mode is a targeted investigation — mixing subscription-wide
+        # reliability findings would be noise. Pre-scan runs for scan mode only.
+        raw_findings: list[dict] = []
+
+        if not alert_payload:
+            for advisor_category in ("HighAvailability", "Performance"):
+                try:
+                    advisor_recs = await list_advisor_recommendations_async(
+                        scope=target_resource_group or None, category=advisor_category
+                    )
+                    advisor_high = [
+                        r for r in advisor_recs if str(r.get("impact", "")).lower() == "high"
+                    ]
+                    for rec in advisor_high:
+                        short_desc = (
+                            rec.get("shortDescription", {}).get("problem", "")
+                            if isinstance(rec.get("shortDescription"), dict)
+                            else str(rec.get("shortDescription", ""))
+                        ) or rec.get("description", "")
+                        raw_findings.append({
+                            "source": f"ADVISOR-HIGH",
+                            "severity": "HIGH",
+                            "resource_name": rec.get("impactedValue", ""),
+                            "description": short_desc,
+                            "rec_id": rec.get("id", ""),
+                            "resource_type": rec.get("impactedField", ""),
+                        })
+                    scan_notes.append(
+                        f"Pre-scan: Azure Advisor {advisor_category} — "
+                        f"{len(advisor_high)} HIGH recommendation(s)"
+                    )
+                except Exception as exc:
+                    logger.warning("MonitoringAgent: pre-scan Advisor (%s) failed: %s", advisor_category, exc)
+                    scan_notes.append(f"Pre-scan: Azure Advisor {advisor_category} unavailable ({exc})")
+
+            try:
+                defender_assessments = await list_defender_assessments_async(
+                    scope=target_resource_group or None
+                )
+                defender_high = [
+                    a for a in defender_assessments if str(a.get("severity", "")).lower() == "high"
+                ]
+                for a in defender_high:
+                    raw_findings.append({
+                        "source": "DEFENDER-HIGH",
+                        "severity": "HIGH",
+                        "resource_id": a.get("resourceId", ""),
+                        "resource_name": a.get("resourceName", ""),
+                        "description": a.get("assessmentName", ""),
+                        "remediation": a.get("remediation", ""),
+                        "resource_type": "unknown",
+                    })
+                scan_notes.append(
+                    f"Pre-scan: Defender for Cloud — {len(defender_high)} HIGH assessment(s)"
+                )
+            except Exception as exc:
+                logger.warning("MonitoringAgent: pre-scan Defender failed: %s", exc)
+                scan_notes.append(f"Pre-scan: Defender for Cloud unavailable ({exc})")
+
+            try:
+                policy_violations = await list_policy_violations_async(
+                    scope=target_resource_group or None
+                )
+                for v in policy_violations:
+                    if not v.get("resourceId") or not v.get("policyDefinitionName"):
+                        continue  # skip incomplete violation records
+                    assignment = v.get("policyAssignmentName", "")
+                    raw_findings.append({
+                        "source": "POLICY-NONCOMPLIANT",
+                        "severity": "MEDIUM",
+                        "resource_id": v.get("resourceId", ""),
+                        "resource_name": v.get("resourceName", ""),
+                        "description": (
+                            f"Policy: {v.get('policyDefinitionName', '')}"
+                            + (f" (assignment: {assignment})" if assignment else "")
+                        ),
+                        "resource_type": "unknown",
+                    })
+                scan_notes.append(
+                    f"Pre-scan: Azure Policy — {len(policy_violations)} non-compliant resource(s)"
+                )
+            except Exception as exc:
+                logger.warning("MonitoringAgent: pre-scan Policy failed: %s", exc)
+                scan_notes.append(f"Pre-scan: Azure Policy unavailable ({exc})")
+
+            # Build findings summary to inject into the LLM prompt.
+            if raw_findings:
+                findings_lines = [
+                    f"=== PRE-COMPUTED FINDINGS: {len(raw_findings)} reliability issue(s) from Microsoft APIs ===",
+                    "Each finding below was detected deterministically. For each one:",
+                    "1. Call get_resource_details to confirm the issue is current.",
+                    "2. Call query_metrics for health metrics to enrich the reason.",
+                    "3. Assess blast radius and call propose_action with full evidence.",
+                    "",
+                ]
+                for i, f in enumerate(raw_findings, 1):
+                    r_name = f.get("resource_name") or f.get("resource_id", "?")
+                    line = f"[{i}] [{f.get('source', '?')}] Resource: {r_name} — {f.get('description', '?')}"
+                    if f.get("remediation"):
+                        line += f" | Hint: {f['remediation']}"
+                    findings_lines.append(line)
+                findings_lines.append("")
+                findings_text = "\n".join(findings_lines)
+            else:
+                findings_text = (
+                    "=== PRE-COMPUTED FINDINGS: No high-severity reliability issues detected "
+                    "by Microsoft APIs ===\n"
+                )
+        else:
+            findings_text = ""
 
         @af.tool(
             name="query_metrics",
@@ -630,7 +705,7 @@ class MonitoringAgent:
                 "metric values, and activity log findings in the reason."
             )
         elif inventory is not None:
-            # Inventory-assisted scan — inject formatted resource list into prompt.
+            # Inventory-assisted scan — inject pre-computed findings + formatted resource list.
             from src.infrastructure.inventory_formatter import format_inventory_for_prompt  # noqa: PLC0415
             inventory_text = format_inventory_for_prompt({
                 "resources": inventory,
@@ -644,17 +719,15 @@ class MonitoringAgent:
                 else "across the Azure subscription"
             )
             prompt = (
+                f"{findings_text}\n\n"
                 f"{inventory_text}\n\n"
                 f"Conduct a full reliability scan {rg_scope}. "
-                "The complete resource inventory is above. "
-                "Review EVERY resource and assess for operational and reliability issues. "
-                "For each VM: check the pre-fetched power state — deallocated/stopped = DOWN. "
-                "For running VMs: call query_metrics for CPU/memory/disk over P7D. "
-                "For databases: check failover, publicNetworkAccess, backup config. "
-                "For App Services/Container Apps: check replica count, HTTPS, error rates. "
-                "For all resources: check for missing tags, orphaned state, monitoring gaps. "
-                "Use query_metrics, query_activity_log, get_resource_health, and "
-                "list_advisor_recommendations for deeper investigation. "
+                "FIRST: Investigate EVERY finding listed above — confirm with real data, "
+                "assess blast radius, and propose action. "
+                "THEN: Review the resource inventory for additional reliability risks the APIs missed: "
+                "stopped/deallocated VMs (restart_service HIGH), running VMs with high CPU (scale_up), "
+                "single-region databases, App Services with 1 replica, missing monitoring agents, "
+                "resources with zero tags, orphaned disks/IPs. "
                 "Propose remediation for EVERY reliability risk found."
             )
         else:
@@ -665,24 +738,14 @@ class MonitoringAgent:
                 else "across the Azure environment"
             )
             prompt = (
-                f"Conduct a full 6-domain proactive reliability scan {rg_scope}. "
-                "Follow ALL steps in your instructions: "
-                "(1) Discover ALL resource types — VMs, databases, Container Apps, "
-                "App Services, storage accounts, disks, public IPs, network interfaces. "
-                "(2) For EVERY VM: call get_resource_details to check powerState FIRST — "
-                "stopped/deallocated VMs are DOWN (HIGH urgency restart_service). "
-                "For running VMs, query_metrics for CPU/memory stress over P7D. "
-                "A VM with no metrics is DOWN, not clean. "
-                "(3) For each database (Cosmos DB, SQL): check failover policy, "
-                "publicNetworkAccess, backup config. Single-region = MEDIUM risk. "
-                "(4) For each Container App and App Service: check replica count "
-                "(< 2 in non-dev = MEDIUM), HTTPS enforcement, Http5xx error rate. "
-                "(5) Check VMs for AMA extension (AzureMonitorLinuxAgent/WindowsAgent) — "
-                "missing agent means no metrics or logs collected (MEDIUM). "
-                "Flag resources with zero tags (LOW). "
-                "(6) Flag orphaned resources: unattached disks, public IPs with no NIC/LB. "
-                "Call get_resource_health and list_advisor_recommendations(category=HighAvailability) "
-                "for platform-level signals. "
+                f"{findings_text}\n\n"
+                f"Conduct a full proactive reliability scan {rg_scope}. "
+                "FIRST: Investigate EVERY finding listed above — confirm with real data and propose action. "
+                "THEN: Query ALL resource types for additional reliability risks the APIs missed — "
+                "do NOT filter by type. Use the open-ended KQL from your instructions. "
+                "Check: VM power states (stopped = HIGH restart_service), running VM CPU (P7D), "
+                "database failover/backup config, Container App replica counts, "
+                "AMA monitoring gaps, orphaned resources, tagging gaps. "
                 "Propose remediation for EVERY reliability risk found."
             )
 
@@ -704,9 +767,78 @@ class MonitoringAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(agent.run, prompt)
 
-        # Empty proposals means GPT found no reliability risks — a valid outcome.
-        # Falling back to seed-data rules would produce false positives in any
-        # real environment that does not match the demo seed_resources.json.
+        # ── Post-scan safety net (scan mode only) ────────────────────────────
+        # APIs ran pre-scan (no new calls here). If the LLM skipped any
+        # pre-computed finding, we auto-propose it as a belt-and-suspenders.
+        # Alert mode has no raw_findings so this is a no-op there.
+        if not alert_payload:
+            pre_auto_count = len(proposals_holder)
+            for finding in raw_findings:
+                resource_id = finding.get("resource_id", "")
+                if not resource_id:
+                    rec_id = finding.get("rec_id", "")
+                    if rec_id and "/providers/" in rec_id:
+                        idx = rec_id.find("/providers/Microsoft.Advisor")
+                        if idx > 0:
+                            resource_id = rec_id[:idx]
+                if not resource_id:
+                    resource_id = finding.get("resource_name", "")
+                if not resource_id:
+                    continue
+
+                resource_name = finding.get("resource_name", "")
+                already = any(
+                    p.target.resource_id == resource_id
+                    or (resource_name and resource_name in (p.target.resource_id or ""))
+                    for p in proposals_holder
+                )
+                if already:
+                    continue
+
+                src = finding.get("source", "UNKNOWN")
+                desc = finding.get("description", "")
+                sev = finding.get("severity", "MEDIUM")
+                urgency_enum = Urgency.HIGH if sev == "HIGH" else Urgency.MEDIUM
+                rem = finding.get("remediation", "")
+                reason = f"{src}: {desc}"
+                if rem:
+                    reason += f". Remediation: {rem}"
+
+                proposals_holder.append(ProposedAction(
+                    agent_id=_AGENT_ID,
+                    action_type=ActionType.UPDATE_CONFIG,
+                    target=ActionTarget(
+                        resource_id=resource_id,
+                        resource_type=finding.get("resource_type", "unknown"),
+                    ),
+                    reason=reason,
+                    urgency=urgency_enum,
+                ))
+
+            auto_missed = len(proposals_holder) - pre_auto_count
+            if auto_missed:
+                scan_notes.append(
+                    f"Post-scan safety net: {auto_missed} pre-computed finding(s) "
+                    "auto-proposed (LLM did not cover them)"
+                )
+
+            # Post-scan integrity log.
+            auto_count = sum(
+                1 for p in proposals_holder
+                if p.reason.startswith(("ADVISOR-HIGH:", "DEFENDER-HIGH:", "POLICY-NONCOMPLIANT:"))
+            )
+            llm_count = len(proposals_holder) - auto_count
+            if proposals_holder:
+                scan_notes.append(
+                    f"Scan complete — {len(proposals_holder)} proposal(s): "
+                    f"{auto_count} deterministic, {llm_count} LLM-originated"
+                )
+            else:
+                scan_notes.append(
+                    "Scan complete — no reliability risks found in Azure environment."
+                )
+
+        self.scan_notes: list[str] = scan_notes
         return proposals_holder
 
     # ------------------------------------------------------------------

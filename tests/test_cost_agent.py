@@ -3,6 +3,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -289,3 +290,164 @@ class TestCostOptimizationAgent:
 
         agent = CostOptimizationAgent(resources_path=tmp_path)
         assert agent._scan_rules() == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 1A: Safety net tests (Advisor + Policy deterministic post-scan checks)
+# ---------------------------------------------------------------------------
+
+def _advisor_rec_cost(
+    resource_id: str, name: str, impact: str = "High", desc: str = "Rightsize VM"
+) -> dict:
+    """Minimal Advisor recommendation dict."""
+    return {
+        "id": f"{resource_id}/providers/Microsoft.Advisor/recommendations/abc",
+        "impactedValue": name,
+        "impactedField": "Microsoft.Compute/virtualMachines",
+        "impact": impact,
+        "shortDescription": {"problem": desc},
+    }
+
+
+def _policy_violation_cost(resource_id: str, name: str, policy: str = "cost-tagging") -> dict:
+    """Minimal Policy non-compliant resource dict."""
+    return {
+        "resourceId": resource_id,
+        "resourceName": name,
+        "policyDefinitionName": policy,
+        "policyAssignmentName": "org-cost-baseline",
+    }
+
+
+def _make_cost_agent() -> CostOptimizationAgent:
+    """Agent with _use_framework=True and minimal seed data."""
+    data = {"resources": [], "dependency_edges": []}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(data, f)
+        path = f.name
+    cfg = MagicMock()
+    cfg.azure_openai_endpoint = "https://fake.openai.azure.com"
+    cfg.azure_openai_deployment = "gpt-4o"
+    cfg.llm_timeout = 600
+    cfg.demo_mode = False
+    return CostOptimizationAgent(resources_path=path, cfg=cfg)
+
+
+async def _run_cost_safety_nets(
+    advisor_recs: list[dict],
+    policy_violations: list[dict],
+) -> tuple[CostOptimizationAgent, list[ProposedAction]]:
+    """Run cost agent scan with LLM calls mocked out.
+
+    Returns (agent, proposals) so tests can inspect both agent.scan_notes and
+    the returned proposals list.
+    """
+    agent = _make_cost_agent()
+    with (
+        patch("openai.AsyncAzureOpenAI"),
+        patch("azure.identity.DefaultAzureCredential"),
+        patch("azure.identity.get_bearer_token_provider"),
+        patch("agent_framework.openai.OpenAIResponsesClient") as mock_oir,
+        patch("src.infrastructure.llm_throttle.run_with_throttle", new=AsyncMock()),
+        patch(
+            "src.infrastructure.azure_tools.list_advisor_recommendations_async",
+            new=AsyncMock(return_value=advisor_recs),
+        ),
+        patch(
+            "src.infrastructure.azure_tools.list_policy_violations_async",
+            new=AsyncMock(return_value=policy_violations),
+        ),
+    ):
+        mock_agent_obj = MagicMock()
+        mock_agent_obj.run = AsyncMock()
+        mock_oir.return_value.as_agent.return_value = mock_agent_obj
+        proposals = await agent.scan(target_resource_group="test-rg")
+    return agent, proposals
+
+
+class TestCostAgentSafetyNets:
+    """Phase 1A: deterministic post-scan safety nets for Cost agent."""
+
+    async def test_advisor_high_impact_rec_added_when_llm_misses_it(self):
+        """A HIGH-impact Advisor Cost recommendation produces a proposal."""
+        rid = "/subscriptions/sub1/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/vm-idle"
+        _, proposals = await _run_cost_safety_nets(
+            advisor_recs=[_advisor_rec_cost(rid, "vm-idle", impact="High", desc="VM is undersized")],
+            policy_violations=[],
+        )
+        assert len(proposals) == 1
+        assert proposals[0].reason.startswith("ADVISOR-HIGH:")
+        assert proposals[0].urgency == Urgency.HIGH
+        assert proposals[0].action_type == ActionType.SCALE_DOWN
+
+    async def test_advisor_medium_impact_rec_not_added(self):
+        """Medium-impact Advisor recommendations are ignored — only HIGH triggers auto-propose."""
+        rid = "/subscriptions/sub1/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/vm-medium"
+        _, proposals = await _run_cost_safety_nets(
+            advisor_recs=[_advisor_rec_cost(rid, "vm-medium", impact="Medium", desc="Idle VM")],
+            policy_violations=[],
+        )
+        assert len(proposals) == 0
+
+    async def test_advisor_empty_response_does_not_crash(self):
+        """An empty Advisor response produces no proposals and no exception."""
+        _, proposals = await _run_cost_safety_nets(advisor_recs=[], policy_violations=[])
+        assert proposals == []
+
+    async def test_advisor_rec_missing_description_is_skipped(self):
+        """A recommendation without shortDescription is silently skipped."""
+        rid = "/subscriptions/sub1/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/vm-nodesc"
+        rec = {
+            "id": f"{rid}/providers/Microsoft.Advisor/recommendations/abc",
+            "impactedValue": "vm-nodesc",
+            "impact": "High",
+        }
+        _, proposals = await _run_cost_safety_nets(advisor_recs=[rec], policy_violations=[])
+        assert len(proposals) == 0
+
+    async def test_policy_violation_added_when_llm_misses_it(self):
+        """A Policy non-compliant resource produces an UPDATE_CONFIG proposal."""
+        rid = "/subscriptions/sub1/resourceGroups/test-rg/providers/Microsoft.Storage/storageAccounts/sa-untagged"
+        _, proposals = await _run_cost_safety_nets(
+            advisor_recs=[],
+            policy_violations=[_policy_violation_cost(rid, "sa-untagged", "require-cost-tags")],
+        )
+        assert len(proposals) == 1
+        assert proposals[0].reason.startswith("POLICY-NONCOMPLIANT:")
+        assert proposals[0].urgency == Urgency.MEDIUM
+        assert proposals[0].action_type == ActionType.UPDATE_CONFIG
+
+    async def test_policy_violation_missing_resource_id_skipped(self):
+        """A violation record without resourceId is silently skipped."""
+        _, proposals = await _run_cost_safety_nets(
+            advisor_recs=[],
+            policy_violations=[{"resourceName": "orphan", "policyDefinitionName": "some-policy"}],
+        )
+        assert len(proposals) == 0
+
+    async def test_policy_violation_missing_policy_name_skipped(self):
+        """A violation record without policyDefinitionName is silently skipped."""
+        _, proposals = await _run_cost_safety_nets(
+            advisor_recs=[],
+            policy_violations=[{
+                "resourceId": "/subscriptions/sub1/resourceGroups/test-rg/providers/Microsoft.Storage/storageAccounts/sa",
+                "resourceName": "sa",
+            }],
+        )
+        assert len(proposals) == 0
+
+    async def test_scan_notes_populated_after_scan(self):
+        """agent.scan_notes is set and non-empty after scan completes."""
+        rid = "/subscriptions/sub1/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/vm-1"
+        agent, _ = await _run_cost_safety_nets(
+            advisor_recs=[_advisor_rec_cost(rid, "vm-1")],
+            policy_violations=[],
+        )
+        assert hasattr(agent, "scan_notes")
+        assert isinstance(agent.scan_notes, list)
+        assert len(agent.scan_notes) > 0
+
+    async def test_scan_notes_contain_scan_complete_entry(self):
+        """scan_notes always contains a 'Scan complete' summary line."""
+        agent, _ = await _run_cost_safety_nets(advisor_recs=[], policy_violations=[])
+        assert any("Scan complete" in note for note in agent.scan_notes)

@@ -156,21 +156,29 @@ class TestPlanMockMode:
         assert "resource delete" in plan["commands"][0]
 
     @pytest.mark.asyncio
-    async def test_plan_update_config(self, agent):
-        # UPDATE_CONFIG has no single generic SDK call — mock path returns
-        # a manual step so the user gets an honest "apply this yourself"
-        # message rather than a misleading update_resource_tags no-op.
+    async def test_plan_update_config_unknown_reason_is_guided_manual(self, agent):
+        # UPDATE_CONFIG with an unrecognised reason falls to guided_manual
+        # (not manual) — provides az CLI + Portal steps rather than no guidance.
         action = _make_action(ActionType.UPDATE_CONFIG)
         plan = await agent.plan(action, {})
 
-        assert plan["steps"][0]["operation"] == "manual"
+        assert plan["steps"][0]["operation"] == "guided_manual"
+        params = plan["steps"][0]["params"]
+        assert "az_cli_commands" in params
+        assert "portal_steps" in params
 
     @pytest.mark.asyncio
-    async def test_plan_create_resource_is_manual(self, agent):
+    async def test_plan_create_resource_is_guided_manual(self, agent):
+        # CREATE_RESOURCE cannot be automated — plan returns guided_manual
+        # with copy-pasteable az CLI commands and Portal steps.
         action = _make_action(ActionType.CREATE_RESOURCE)
         plan = await agent.plan(action, {})
 
-        assert plan["steps"][0]["operation"] == "manual"
+        assert plan["steps"][0]["operation"] == "guided_manual"
+        params = plan["steps"][0]["params"]
+        assert "az_cli_commands" in params
+        assert "portal_steps" in params
+        assert "doc_url" in params
 
     # -- Structural assertions -----------------------------------------------
 
@@ -443,3 +451,293 @@ class TestRollbackMockMode:
         assert "steps_completed" in result
         assert isinstance(result["steps_completed"], list)
         assert len(result["steps_completed"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 2A+2B — Generic PATCH tool and metadata lookup (mock mode)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateConfigInferredProperty:
+    """_build_mock_plan UPDATE_CONFIG: infers update_resource_property from reason text."""
+
+    @pytest.fixture
+    def agent(self):
+        return ExecutionAgent(cfg=_make_cfg(use_local_mocks=True))
+
+    @pytest.mark.asyncio
+    async def test_update_config_public_blob_access_inferred(self, agent):
+        """Reason mentioning allowBlobPublicAccess → update_resource_property step."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="HIGH: Storage account 'sa-01' has allowBlobPublicAccess=true.",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "update_resource_property"
+        assert step["params"]["property_path"] == "properties.allowBlobPublicAccess"
+        assert step["params"]["new_value"] == "false"
+
+    @pytest.mark.asyncio
+    async def test_update_config_https_only_inferred(self, agent):
+        """Reason mentioning HTTPS-only → update_resource_property with supportsHttpsTrafficOnly."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="HIGH: HTTP traffic allowed — data in plaintext.",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "update_resource_property"
+        assert step["params"]["property_path"] == "properties.supportsHttpsTrafficOnly"
+        assert step["params"]["new_value"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_update_config_soft_delete_inferred(self, agent):
+        """Reason mentioning soft-delete → update_resource_property with enableSoftDelete."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="HIGH: Key Vault 'kv-prod' has soft-delete disabled.",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "update_resource_property"
+        assert step["params"]["property_path"] == "properties.enableSoftDelete"
+        assert step["params"]["new_value"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_update_config_public_network_access_inferred(self, agent):
+        """Reason mentioning publicNetworkAccess → update_resource_property with Disabled."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="MEDIUM: Database 'cosmos-prod' has publicNetworkAccess=Enabled.",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "update_resource_property"
+        assert step["params"]["property_path"] == "properties.publicNetworkAccess"
+        assert step["params"]["new_value"] == '"Disabled"'
+
+    @pytest.mark.asyncio
+    async def test_update_config_unknown_reason_falls_back_to_guided_manual(self, agent):
+        """Unknown reason text falls back to 'guided_manual' with az CLI + Portal steps."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="Some unrecognised configuration issue on the resource.",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "guided_manual"
+        assert "az_cli_commands" in step["params"]
+        assert "portal_steps" in step["params"]
+
+    @pytest.mark.asyncio
+    async def test_update_resource_property_step_has_all_required_params(self, agent):
+        """Inferred update_resource_property step has resource_id, api_version, property_path, new_value."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="HIGH: allowBlobPublicAccess=true on storage account.",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "update_resource_property"
+        params = step["params"]
+        assert "resource_id" in params
+        assert "api_version" in params
+        assert "property_path" in params
+        assert "new_value" in params
+
+    @pytest.mark.asyncio
+    async def test_update_resource_property_has_az_cli_command(self, agent):
+        """An inferred update_resource_property plan still includes az CLI commands."""
+        action = _make_action(
+            ActionType.UPDATE_CONFIG,
+            reason="HIGH: allowBlobPublicAccess=true on storage account.",
+        )
+        plan = await agent.plan(action, {})
+
+        assert len(plan["commands"]) > 0
+        # Should mention az resource patch
+        assert any("resource" in cmd.lower() for cmd in plan["commands"])
+
+
+class TestFetchResourceTypeMetadata:
+    """fetch_resource_type_metadata_async — mock mode returns expected shape."""
+
+    async def test_mock_returns_dict_with_expected_keys(self):
+        from src.infrastructure.azure_tools import fetch_resource_type_metadata_async
+        result = await fetch_resource_type_metadata_async("Microsoft.Storage/storageAccounts")
+        assert "resource_type" in result
+        assert "latest_stable_api_version" in result
+        assert "all_api_versions" in result
+        assert "note" in result
+
+    async def test_mock_returns_sensible_api_version(self):
+        from src.infrastructure.azure_tools import fetch_resource_type_metadata_async
+        result = await fetch_resource_type_metadata_async("Microsoft.KeyVault/vaults")
+        version = result["latest_stable_api_version"]
+        # Version should look like YYYY-MM-DD
+        assert len(version) == 10
+        assert version.count("-") == 2
+
+    async def test_mock_cached_on_second_call(self):
+        """Same resource type called twice should return the same object (cached)."""
+        from src.infrastructure.azure_tools import (
+            fetch_resource_type_metadata_async,
+            _resource_type_metadata_cache,
+        )
+        rt = "microsoft.storage/storageaccounts-cache-test"
+        # Inject a dummy entry to verify cache hit
+        _resource_type_metadata_cache[rt] = {"cached": True}
+        result = await fetch_resource_type_metadata_async(rt)
+        assert result == {"cached": True}
+        # Clean up
+        del _resource_type_metadata_cache[rt]
+
+    async def test_mock_invalid_format_returns_error(self):
+        """A resource_type without '/' returns an error key."""
+        from src.infrastructure.azure_tools import fetch_resource_type_metadata_async
+        result = await fetch_resource_type_metadata_async("NoSlashHere")
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# TestRemediationConfidence — Phase 3A
+# ---------------------------------------------------------------------------
+
+
+class TestRemediationConfidence:
+    """_compute_confidence assigns correct RemediationConfidence based on plan steps."""
+
+    @pytest.fixture
+    def agent(self):
+        return ExecutionAgent(cfg=_make_cfg(use_local_mocks=True))
+
+    # -- _compute_confidence unit tests --
+
+    def test_auto_fix_ops_return_auto_fix(self):
+        from src.core.execution_agent import _compute_confidence
+        for op in ("start_vm", "restart_vm", "resize_vm", "delete_nsg_rule",
+                   "create_nsg_rule", "delete_resource", "update_resource_tags"):
+            steps = [{"operation": op}]
+            assert _compute_confidence(steps) == "auto_fix", f"Expected auto_fix for {op}"
+
+    def test_update_resource_property_returns_generic_fix(self):
+        from src.core.execution_agent import _compute_confidence
+        steps = [{"operation": "update_resource_property"}]
+        assert _compute_confidence(steps) == "generic_fix"
+
+    def test_guided_manual_returns_guided_manual(self):
+        from src.core.execution_agent import _compute_confidence
+        steps = [{"operation": "guided_manual"}]
+        assert _compute_confidence(steps) == "guided_manual"
+
+    def test_manual_returns_manual(self):
+        from src.core.execution_agent import _compute_confidence
+        steps = [{"operation": "manual"}]
+        assert _compute_confidence(steps) == "manual"
+
+    def test_empty_steps_returns_manual(self):
+        from src.core.execution_agent import _compute_confidence
+        assert _compute_confidence([]) == "manual"
+
+    def test_mixed_auto_and_generic_returns_generic(self):
+        from src.core.execution_agent import _compute_confidence
+        steps = [{"operation": "start_vm"}, {"operation": "update_resource_property"}]
+        assert _compute_confidence(steps) == "generic_fix"
+
+    def test_mixed_auto_and_manual_returns_manual(self):
+        from src.core.execution_agent import _compute_confidence
+        steps = [{"operation": "start_vm"}, {"operation": "manual"}]
+        assert _compute_confidence(steps) == "manual"
+
+    def test_manual_short_circuits_immediately(self):
+        """manual op returns immediately — no need to check remaining steps."""
+        from src.core.execution_agent import _compute_confidence
+        steps = [{"operation": "manual"}, {"operation": "start_vm"}, {"operation": "start_vm"}]
+        assert _compute_confidence(steps) == "manual"
+
+    # -- Integration: plan() includes remediation_confidence --
+
+    @pytest.mark.asyncio
+    async def test_plan_restart_has_auto_fix_confidence(self, agent):
+        """restart_service plan → auto_fix confidence."""
+        plan = await agent.plan(_make_action(ActionType.RESTART_SERVICE), {})
+        assert plan["remediation_confidence"] == "auto_fix"
+
+    @pytest.mark.asyncio
+    async def test_plan_scale_down_has_auto_fix_confidence(self, agent):
+        """scale_down plan → auto_fix (uses resize_vm)."""
+        plan = await agent.plan(_make_action(ActionType.SCALE_DOWN, proposed_sku="Standard_D2s_v3"), {})
+        assert plan["remediation_confidence"] == "auto_fix"
+
+    @pytest.mark.asyncio
+    async def test_plan_update_config_known_property_has_generic_fix_confidence(self, agent):
+        """UPDATE_CONFIG with recognised property → generic_fix (update_resource_property)."""
+        action = _make_action(ActionType.UPDATE_CONFIG, reason="allowBlobPublicAccess is enabled")
+        plan = await agent.plan(action, {})
+        assert plan["remediation_confidence"] == "generic_fix"
+
+    @pytest.mark.asyncio
+    async def test_plan_update_config_unknown_reason_has_guided_manual_confidence(self, agent):
+        """UPDATE_CONFIG with unknown reason → guided_manual confidence."""
+        action = _make_action(ActionType.UPDATE_CONFIG, reason="Some unknown configuration issue")
+        plan = await agent.plan(action, {})
+        assert plan["remediation_confidence"] == "guided_manual"
+
+    @pytest.mark.asyncio
+    async def test_plan_create_resource_has_guided_manual_confidence(self, agent):
+        """CREATE_RESOURCE → guided_manual confidence."""
+        plan = await agent.plan(_make_action(ActionType.CREATE_RESOURCE), {})
+        assert plan["remediation_confidence"] == "guided_manual"
+
+
+# ---------------------------------------------------------------------------
+# TestGuidedManualSteps — Phase 2C
+# ---------------------------------------------------------------------------
+
+
+class TestGuidedManualSteps:
+    """guided_manual steps include az_cli_commands, portal_steps, and doc_url."""
+
+    @pytest.fixture
+    def agent(self):
+        return ExecutionAgent(cfg=_make_cfg(use_local_mocks=True))
+
+    @pytest.mark.asyncio
+    async def test_create_resource_guided_step_has_all_fields(self, agent):
+        plan = await agent.plan(_make_action(ActionType.CREATE_RESOURCE), {})
+        step = plan["steps"][0]
+        assert step["operation"] == "guided_manual"
+        params = step["params"]
+        assert isinstance(params["az_cli_commands"], list)
+        assert len(params["az_cli_commands"]) > 0
+        assert isinstance(params["portal_steps"], list)
+        assert len(params["portal_steps"]) > 0
+        assert isinstance(params["doc_url"], str)
+        assert params["doc_url"].startswith("https://")
+
+    @pytest.mark.asyncio
+    async def test_unknown_update_config_guided_step_has_all_fields(self, agent):
+        action = _make_action(ActionType.UPDATE_CONFIG, reason="Enable private endpoint for database")
+        plan = await agent.plan(action, {})
+        step = plan["steps"][0]
+        assert step["operation"] == "guided_manual"
+        params = step["params"]
+        assert isinstance(params["az_cli_commands"], list)
+        assert isinstance(params["portal_steps"], list)
+        assert isinstance(params["doc_url"], str)
+
+    @pytest.mark.asyncio
+    async def test_guided_manual_reason_includes_action_reason(self, agent):
+        """Step reason should include context from the original action reason."""
+        reason_text = "Enable private endpoint for the database"
+        action = _make_action(ActionType.CREATE_RESOURCE, reason=reason_text)
+        plan = await agent.plan(action, {})
+        step = plan["steps"][0]
+        assert reason_text[:40] in step["reason"] or "guided" in step["reason"].lower()

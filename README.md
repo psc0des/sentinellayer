@@ -11,7 +11,7 @@
 
 RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (Monitoring bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 816 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 962 automated tests.
 
 ---
 
@@ -116,15 +116,20 @@ then provides an **independent second opinion** using 4 governance agents in par
 agent catches obvious risks; RuriSkry catches what the ops agent missed.
 
 Each operational agent has enterprise-grade system instructions:
-the **Monitoring Agent** runs a 6-step proactive scan covering VM power state, database health,
+All three operational agents use a **three-phase detection pipeline**: (1) Microsoft APIs
+(Azure Advisor, Defender for Cloud, Azure Policy) run **first** — deterministic, confirmed
+findings injected into the LLM prompt as context; (2) LLM investigates confirmed findings
+with real metric data (CPU%, power state, activity log) and scans for anything the APIs missed
+using open-ended KQL (no hardcoded resource type filters — discovers all 200+ Azure types);
+(3) post-scan safety net auto-proposes any finding the LLM skipped, using the already-computed
+API results (no duplicate API calls). Each phase deduplicates against the others.
+The **Monitoring Agent** runs a 6-step proactive scan covering VM power state, database health,
 container app health, observability gaps, and orphaned resources — and handles 5 distinct Azure
 Monitor alert types with evidence-specific investigation steps. The **Deploy Agent** audits 9
-security domains per scan: NSG rules, storage security, database/Key Vault config, VM security
-posture, activity log changes, resource tagging, Microsoft Defender for Cloud assessments, and
-Azure Policy compliance — using a three-layer detection architecture (hardcoded Python checks +
-Microsoft API safety nets + LLM reasoning) that covers any Azure resource type via Resource Graph. The **Cost Agent** flags deallocated VMs
-(disk cost persists when stopped), unattached disks, and orphaned public IPs in addition to
-traditional rightsizing proposals.
+security domains per scan including NSG rules, storage security, database/Key Vault config, VM
+security posture, Defender for Cloud assessments, and Azure Policy compliance. The **Cost Agent**
+flags deallocated VMs (disk cost persists when stopped), unattached disks, orphaned public IPs,
+and over-provisioned SKUs — backed by Advisor cost recommendations and Policy compliance checks.
 
 ### Live Azure Topology Analysis
 In live mode (`USE_LIVE_TOPOLOGY=true`), governance agents query **Azure Resource Graph in
@@ -197,9 +202,21 @@ Two-phase execution with human review in between:
 
 1. **Plan phase** — LLM reads the resource's current state (via read-only Azure tools), then outputs a structured step-by-step plan: operation, target, params, reason per step + summary, estimated impact, rollback hint
 2. **Human reviews** — dashboard shows the plan as a steps table before any write operation
-3. **Execute phase** — LLM calls Azure SDK write tools exactly as planned (`start_vm`, `resize_vm`, `delete_nsg_rule`, etc.); fails safe if any step fails
+3. **Execute phase** — LLM calls Azure SDK write tools exactly as planned; fails safe if any step fails
 
-This replaces a hardcoded switch of 5 action types with LLM reasoning over **any** approved action — the same pattern that makes operational agents intelligent now applies to execution. Works in mock mode (816 tests pass, no Azure/OpenAI required) and live mode.
+The agent follows a 4-step decision tree when choosing how to fix an issue:
+1. **Specific tool** (`start_vm`, `resize_vm`, `delete_nsg_rule`, etc.) — safest, most tested
+2. **Generic PATCH** (`update_resource_property`) — updates any property on any Azure resource type via `resources.begin_update_by_id`; LLM calls `fetch_azure_docs` first to confirm the correct `api_version` and `property_path`
+3. **Guided manual** (`guided_manual`) — copy-pasteable az CLI commands + numbered Portal steps when new resource creation or multi-step orchestration is needed; rendered inline in the dashboard with a copy button
+4. **Manual** — last resort with best-effort explanation
+
+Every plan is stamped with a **Remediation Confidence badge** shown next to the plan summary:
+- **Automated fix** (green) — specific SDK tool, fully automated
+- **Generic fix** (blue) — ARM PATCH, likely works; verify after
+- **Guided manual** (amber) — exact steps provided; human runs them
+- **Manual** (grey) — investigation required
+
+The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (962 tests pass, no Azure/OpenAI required) and live mode.
 
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
@@ -391,7 +408,7 @@ python examples/demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 816 passed, 0 failed
+# Expected: 962 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 ```
@@ -515,7 +532,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 816-test suite.
+drilldowns, and a comprehensive 962-test suite.
 
 ---
 

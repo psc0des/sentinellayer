@@ -56,6 +56,103 @@ function formatTime(iso) {
     }
 }
 
+// ── RemediationConfidenceBadge ────────────────────────────────────────────────
+// Shows how confidently the execution agent can automate the fix.
+
+const CONFIDENCE_CONFIG = {
+    auto_fix:      { label: 'Automated fix',          color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/25', dot: 'bg-emerald-400', tip: 'A specific, well-tested SDK tool handles this end-to-end' },
+    generic_fix:   { label: 'Generic fix available',  color: 'text-blue-400',    bg: 'bg-blue-500/10',    border: 'border-blue-500/25',    dot: 'bg-blue-400',    tip: 'Generic ARM PATCH — likely works; verify the resource after execution' },
+    guided_manual: { label: 'Guided manual steps',    color: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/25',   dot: 'bg-amber-400',   tip: 'We know the exact steps — see the az CLI commands and Portal guide below' },
+    manual:        { label: 'Manual required',         color: 'text-slate-400',   bg: 'bg-slate-500/10',   border: 'border-slate-500/25',   dot: 'bg-slate-400',   tip: 'No automated path — investigation required before acting' },
+}
+
+function RemediationConfidenceBadge({ confidence }) {
+    if (!confidence) return null
+    const cfg = CONFIDENCE_CONFIG[confidence] ?? CONFIDENCE_CONFIG.manual
+    return (
+        <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-medium ${cfg.color} ${cfg.bg} ${cfg.border}`} title={cfg.tip}>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+            {cfg.label}
+        </div>
+    )
+}
+
+// ── GuidedManualSteps ─────────────────────────────────────────────────────────
+// Renders az CLI commands (copyable) + Portal steps (numbered list) for a
+// guided_manual plan step. Shown inline in the plan view when step.operation
+// is "guided_manual".
+
+function CopyButton({ text }) {
+    const [copied, setCopied] = React.useState(false)
+    const copy = () => {
+        navigator.clipboard?.writeText(text).then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+        })
+    }
+    return (
+        <button
+            onClick={copy}
+            className="ml-2 px-1.5 py-0.5 text-[9px] rounded border border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200 transition-colors"
+        >
+            {copied ? 'copied' : 'copy'}
+        </button>
+    )
+}
+
+function GuidedManualSteps({ params }) {
+    if (!params) return null
+    const cmds = params.az_cli_commands ?? []
+    const portalSteps = params.portal_steps ?? []
+    const docUrl = params.doc_url ?? ''
+    const allCmds = cmds.join('\n')
+
+    return (
+        <div className="space-y-3 mt-2">
+            {/* az CLI commands */}
+            {cmds.length > 0 && (
+                <div>
+                    <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">az CLI Commands</span>
+                        <CopyButton text={allCmds} />
+                    </div>
+                    <pre className="text-xs text-emerald-300 bg-slate-950 rounded-lg p-3 overflow-x-auto border border-slate-700/50 whitespace-pre-wrap leading-relaxed">
+                        {cmds.map((cmd, i) => (
+                            <span key={i} className="block">
+                                <span className={cmd.startsWith('#') ? 'text-slate-500' : 'text-emerald-300'}>
+                                    {cmd.startsWith('#') ? cmd : `$ ${cmd}`}
+                                </span>
+                            </span>
+                        ))}
+                    </pre>
+                </div>
+            )}
+
+            {/* Portal steps */}
+            {portalSteps.length > 0 && (
+                <div>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block mb-1">Azure Portal Steps</span>
+                    <ol className="space-y-1">
+                        {portalSteps.map((step, i) => (
+                            <li key={i} className="flex items-start gap-2 text-xs text-slate-300">
+                                <span className="shrink-0 w-5 h-5 rounded-full bg-slate-700 text-slate-400 flex items-center justify-center text-[9px] font-bold mt-0.5">{i + 1}</span>
+                                {step}
+                            </li>
+                        ))}
+                    </ol>
+                </div>
+            )}
+
+            {/* Doc link */}
+            {docUrl && (
+                <p className="text-[10px] text-slate-500">
+                    Docs: <a href={docUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline underline-offset-2">{docUrl}</a>
+                </p>
+            )}
+        </div>
+    )
+}
+
 // ── AgentFixPlanView ────────────────────────────────────────────────────────
 // Renders the structured execution plan returned by the LLM-driven agent.
 // Falls back to raw commands if plan has no steps (backward compat).
@@ -64,13 +161,18 @@ function AgentFixPlanView({ plan }) {
     if (!plan) return null
 
     const hasSteps = Array.isArray(plan.steps) && plan.steps.length > 0
+    // Collect all guided_manual steps to render their detailed sections below the table
+    const guidedSteps = hasSteps ? plan.steps.filter(s => s.operation === 'guided_manual') : []
 
     return (
         <div className="space-y-3">
-            {/* Summary */}
-            {plan.summary && (
-                <p className="text-xs text-slate-300 font-medium">{plan.summary}</p>
-            )}
+            {/* Summary + confidence badge on same line */}
+            <div className="flex items-center gap-3 flex-wrap">
+                {plan.summary && (
+                    <p className="text-xs text-slate-300 font-medium flex-1">{plan.summary}</p>
+                )}
+                <RemediationConfidenceBadge confidence={plan.remediation_confidence} />
+            </div>
 
             {/* Steps table */}
             {hasSteps ? (
@@ -100,6 +202,16 @@ function AgentFixPlanView({ plan }) {
                 <p className="text-xs text-slate-500 italic">No steps — resource may already be in the desired state.</p>
             )}
 
+            {/* Guided manual detail sections */}
+            {guidedSteps.map((step, i) => (
+                <div key={i} className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                    <p className="text-[10px] text-amber-400 uppercase tracking-wider font-semibold mb-2">
+                        Step {plan.steps.indexOf(step) + 1} — Guided Manual Steps
+                    </p>
+                    <GuidedManualSteps params={step.params} />
+                </div>
+            ))}
+
             {/* Impact + rollback */}
             {plan.estimated_impact && (
                 <p className="text-xs text-amber-400/80">⚡ Impact: {plan.estimated_impact}</p>
@@ -108,7 +220,7 @@ function AgentFixPlanView({ plan }) {
                 <p className="text-xs text-slate-500">↩ Rollback: <code className="text-slate-400">{plan.rollback_hint}</code></p>
             )}
 
-            {/* Equivalent CLI (backward compat) */}
+            {/* Equivalent CLI (backward compat — non-guided steps) */}
             {Array.isArray(plan.commands) && plan.commands.length > 0 && (
                 <details className="group">
                     <summary className="text-[10px] text-slate-500 cursor-pointer hover:text-slate-400 select-none">Equivalent CLI commands</summary>

@@ -941,9 +941,12 @@ Generate the LLM-driven execution plan for a `manual_required` issue. Pure read 
   "estimated_impact": "Inbound traffic matching this rule will be blocked",
   "rollback_hint": "az network nsg rule create ... --name AllowAll_Inbound",
   "commands": ["az network nsg rule delete --resource-group rg-prod --nsg-name nsg-east --name AllowAll_Inbound"],
+  "remediation_confidence": "auto_fix",
   "warning": "These steps will modify your Azure environment. Review carefully before executing."
 }
 ```
+
+`remediation_confidence` values: `auto_fix` (specific SDK tool — fully automated), `generic_fix` (ARM PATCH — verify after), `guided_manual` (step-by-step az CLI + Portal guide in each step's `params`), `manual` (investigation required). Steps with `operation: "guided_manual"` carry `params.az_cli_commands`, `params.portal_steps`, and `params.doc_url`.
 
 Returns `404` if `execution_id` is unknown, `400` if no verdict snapshot is stored.
 

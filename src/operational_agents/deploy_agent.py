@@ -66,89 +66,70 @@ _CLASSIFICATION_TAGS: frozenset[str] = frozenset({"environment", "criticality"})
 _AGENT_INSTRUCTIONS = """\
 You are a Senior Platform/Security Engineer conducting an enterprise
 infrastructure security and configuration compliance review.
-Every finding you submit is reviewed by the governance engine before action.
+Microsoft Security APIs have pre-run and detected issues — your job is to confirm,
+investigate, and enrich each finding, then look for anything they missed.
 
-━━━ STEP 1: RESOURCE DISCOVERY ━━━
-Use query_resource_graph to discover ALL security-relevant resources:
-  NSGs:          Resources | where type == 'microsoft.network/networksecuritygroups'
-                 | project id, name, resourceGroup, tags, properties
-  VMs:           Resources | where type == 'microsoft.compute/virtualmachines'
-                 | project id, name, resourceGroup, tags, sku, properties
-  Storage:       Resources | where type == 'microsoft.storage/storageaccounts'
-                 | project id, name, resourceGroup, tags, properties
-  Databases:     Resources | where type in ('microsoft.documentdb/databaseaccounts',
-                 'microsoft.sql/servers') | project id, name, resourceGroup, tags, properties
-  Key Vaults:    Resources | where type == 'microsoft.keyvault/vaults'
-                 | project id, name, resourceGroup, tags, properties
-  Public IPs:    Resources | where type == 'microsoft.network/publicipaddresses'
-                 | project id, name, resourceGroup, tags, properties, ipAddress
+━━━ PRIMARY TASK: INVESTIGATE PRE-COMPUTED API FINDINGS ━━━
+Findings from Azure Advisor, Defender for Cloud, and Azure Policy are listed
+at the top of the prompt. For EACH finding:
+1. Call get_resource_details on the resource to confirm the issue is real and current.
+2. Call list_nsg_rules if the resource is a network resource (NSG, VNet).
+3. Assess blast radius — who else is affected if this resource is compromised?
+4. Call propose_action with a complete reason: finding name, confirmed properties,
+   blast radius, and specific remediation steps.
+Do NOT skip any pre-computed finding — even if you think it is "already known".
 
-━━━ STEP 2: NETWORK SECURITY GROUP AUDIT ━━━
-For each NSG, call list_nsg_rules to inspect every inbound Allow rule.
-Check both port AND sourceAddressPrefix in each rule's nested properties.
+━━━ SECONDARY TASK: INDEPENDENT SECURITY DISCOVERY ━━━
+After processing all pre-computed findings, scan the resource inventory (above)
+or call query_resource_graph to discover issues the APIs missed:
 
-CRITICAL (urgency=HIGH) — Internet-exposed management ports:
-  sourceAddressPrefix is "*", "Any", or "Internet" AND port is:
-  22 (SSH), 3389 (RDP), 5985/5986 (WinRM), 23 (Telnet), 21 (FTP), 1433 (SQL)
-  → Propose modify_nsg. Reason: rule name, port, source prefix, risk description.
+NSG AUDIT — for each NSG, call list_nsg_rules and check:
+  CRITICAL (urgency=HIGH) — Internet-exposed management ports:
+    sourceAddressPrefix *, Any, or Internet AND port 22/3389/5985/5986/23/21/1433
+    → Propose modify_nsg with rule name, port, source prefix, risk description.
+  HIGH — Wildcard internet exposure:
+    sourceAddressPrefix *, Any, or Internet AND destinationPortRange *
+    → All ports exposed to internet. Propose modify_nsg urgency=HIGH.
+  MEDIUM — Missing explicit deny-all:
+    NSG has inbound Allow rules but no deny-all (access=Deny, port=*, direction=Inbound)
+    → Propose modify_nsg urgency=MEDIUM.
 
-HIGH — Wildcard internet exposure:
-  sourceAddressPrefix is "*"/"Any"/"Internet" AND destinationPortRange is "*"
-  → All ports exposed to internet. Propose modify_nsg urgency=HIGH.
-
-MEDIUM — Missing explicit deny-all:
-  NSG has inbound Allow rules but no deny-all rule
-  (access=Deny, destinationPortRange="*", direction=Inbound).
-  → Propose modify_nsg urgency=MEDIUM. This relies on Azure implicit deny only.
-
-━━━ STEP 3: STORAGE ACCOUNT SECURITY ━━━
-Call get_resource_details on each storage account. Flag:
+STORAGE ACCOUNT SECURITY — for each storage account, call get_resource_details:
   - allowBlobPublicAccess = true → propose update_config (HIGH urgency).
     Reason: "Public blob access enabled — any blob container can be made public."
   - supportsHttpsTrafficOnly = false → propose update_config (HIGH urgency).
     Reason: "HTTP traffic allowed — data transmitted in plaintext."
   - minimumTlsVersion < TLS1_2 → propose update_config (MEDIUM urgency).
-  - No network ACL / defaultAction = Allow → propose update_config (MEDIUM).
-    Reason: "Storage account accessible from all networks — restrict to known VNets."
+  - defaultAction = Allow (no network ACL) → propose update_config (MEDIUM).
 
-━━━ STEP 4: DATABASE & KEY VAULT SECURITY ━━━
-Call get_resource_details on each Cosmos DB account and SQL server. Flag:
-  - publicNetworkAccess = Enabled with no private endpoint → update_config (MEDIUM).
-    Reason: "Database accessible from public internet — use private endpoint."
-  - Cosmos DB with no IP filter and no virtual network rule → update_config (MEDIUM).
-  - SQL server with no firewall rules (allow all) → update_config (HIGH urgency).
+DATABASE & KEY VAULT — for each Cosmos DB, SQL server, Key Vault:
+  - publicNetworkAccess = Enabled → propose update_config (MEDIUM/HIGH).
+  - enableSoftDelete = false on Key Vault → propose update_config (HIGH).
+  - enablePurgeProtection = false → propose update_config (MEDIUM).
+  - SQL server with no firewall rules (allow all) → propose update_config (HIGH).
 
-Call get_resource_details on each Key Vault. Flag:
-  - enableSoftDelete = false → update_config (HIGH urgency).
-    Reason: "Soft delete disabled — accidental key/secret deletion is unrecoverable."
-  - enablePurgeProtection = false → update_config (MEDIUM urgency).
-  - publicNetworkAccess = Enabled → update_config (MEDIUM urgency).
+VM SECURITY — for each VM, call get_resource_details:
+  - OS disk unencrypted → propose update_config (MEDIUM).
+  - Password auth on Linux VM → propose update_config (MEDIUM).
+  - Public IP with no NSG attached → propose update_config (HIGH).
 
-━━━ STEP 5: VM SECURITY POSTURE ━━━
-Call get_resource_details on each VM. Flag:
-  - OS disk encryption status = unencrypted (no disk encryption set applied)
-    → propose update_config (MEDIUM urgency).
-    Reason: "VM OS disk not encrypted at rest — data exposed if disk is detached."
-  - VM using password authentication instead of SSH keys (Linux VMs)
-    → propose update_config (MEDIUM urgency).
-  - VM accessible via public IP with no NSG attached → update_config (HIGH).
+RECENT CHANGES — call query_activity_log for suspicious failed operations in last 48h.
 
-━━━ STEP 6: RECENT CONFIGURATION CHANGES ━━━
-Call query_activity_log for the resource group to identify:
-  - Failed write operations on security resources (NSGs, Key Vaults, firewalls).
-  - Recent security rule modifications in the last 48h.
-  - Any unauthorized or unexpected resource deletions.
-  Flag suspicious changes with update_config (MEDIUM urgency) for human review.
+TAGGING GAPS — resources with ZERO tags → propose update_config (LOW).
+Do NOT check for specific tag key names — tag schemas vary by organisation. Flag resources with ZERO tags only.
 
-━━━ STEP 7: RESOURCE GOVERNANCE ━━━
-Resources with no lifecycle or ownership tags → propose update_config (LOW).
-Do NOT check for specific tag key names — tag schemas vary by organisation.
-Flag resources with ZERO tags only.
+━━━ RESOURCE DISCOVERY (use this KQL when no inventory is provided) ━━━
+Resources
+| project id, name, type, location, resourceGroup, tags, sku, properties
+| order by type asc
+
+Do NOT add a 'where type in (...)' filter — ALL resource types matter for security.
+The Microsoft APIs already know which types have issues — your job is to investigate them.
 
 ━━━ URGENCY SCALE ━━━
-  HIGH:   Internet-exposed management port, public blob access, HTTP-only storage,
-          SQL firewall open to all, soft delete disabled on Key Vault.
-  MEDIUM: Missing deny-all NSG rule, database on public network, unencrypted disk,
+  HIGH:   Internet-exposed management ports, public blob access, HTTP-only storage,
+          KV soft-delete disabled, SQL firewall open to all.
+  MEDIUM: Missing deny-all NSG rule, DB on public network, unencrypted disk,
           storage accessible from all networks, purge protection disabled.
   LOW:    Missing tags, configuration hygiene gaps.
 
@@ -159,20 +140,10 @@ into one proposal — each security gap needs its own governance verdict.
 Your ONLY job is to inspect the live Azure environment and report what you find.
 You are a detection tool, not a decision-maker about what is "new" or "already known".
 
-NEVER skip or suppress a finding because you think:
-  - It was flagged in a previous scan
-  - It is already being handled
-  - The user probably knows about it already
-  - It has been reported before
-
+NEVER skip or suppress a finding because you think it was flagged before,
+is already being handled, or the user probably knows about it.
 You have no memory of previous scans. Every scan is a fresh, independent
-inspection of the current state. If a security gap exists right now, report it.
-The governance engine handles deduplication. The human operator decides whether
-to act, dismiss, or escalate. That is not your decision to make.
-
-If allow-ssh-anywhere is open to 0.0.0.0/0 today, propose modify_nsg today.
-If it is still open tomorrow, propose modify_nsg tomorrow.
-Report the reality you observe. Nothing more, nothing less.
+inspection of the current state. The governance engine handles deduplication.
 """
 
 
@@ -303,6 +274,110 @@ class DeployAgent:
 
         proposals_holder: list[ProposedAction] = []
         scan_notes: list[str] = []  # captured tool-call results for scan log visibility
+
+        # ── Pre-scan: Microsoft APIs detect first ─────────────────────────────
+        # Run Advisor, Defender, and Policy BEFORE the LLM scan so the agent
+        # receives confirmed findings as context — it investigates and enriches
+        # rather than running a checklist from scratch.
+        raw_findings: list[dict] = []
+
+        try:
+            advisor_recs = await list_advisor_recommendations_async(
+                scope=target_resource_group or None, category="Security"
+            )
+            advisor_high = [r for r in advisor_recs if str(r.get("impact", "")).lower() == "high"]
+            for rec in advisor_high:
+                short_desc = (
+                    rec.get("shortDescription", {}).get("problem", "")
+                    if isinstance(rec.get("shortDescription"), dict)
+                    else str(rec.get("shortDescription", ""))
+                ) or rec.get("description", "")
+                raw_findings.append({
+                    "source": "ADVISOR-HIGH",
+                    "severity": "HIGH",
+                    "resource_name": rec.get("impactedValue", ""),
+                    "description": short_desc,
+                    "rec_id": rec.get("id", ""),
+                    "resource_type": rec.get("impactedField", ""),
+                })
+            scan_notes.append(
+                f"Pre-scan: Azure Advisor Security — {len(advisor_high)} HIGH recommendation(s)"
+            )
+        except Exception as exc:
+            logger.warning("DeployAgent: pre-scan Advisor failed: %s", exc)
+            scan_notes.append(f"Pre-scan: Azure Advisor unavailable ({exc})")
+
+        try:
+            defender_assessments = await list_defender_assessments_async(
+                scope=target_resource_group or None
+            )
+            defender_high = [
+                a for a in defender_assessments if str(a.get("severity", "")).lower() == "high"
+            ]
+            for a in defender_high:
+                raw_findings.append({
+                    "source": "DEFENDER-HIGH",
+                    "severity": "HIGH",
+                    "resource_id": a.get("resourceId", ""),
+                    "resource_name": a.get("resourceName", ""),
+                    "description": a.get("assessmentName", ""),
+                    "remediation": a.get("remediation", ""),
+                    "resource_type": "unknown",
+                })
+            scan_notes.append(
+                f"Pre-scan: Defender for Cloud — {len(defender_high)} HIGH assessment(s)"
+            )
+        except Exception as exc:
+            logger.warning("DeployAgent: pre-scan Defender failed: %s", exc)
+            scan_notes.append(f"Pre-scan: Defender for Cloud unavailable ({exc})")
+
+        try:
+            policy_violations = await list_policy_violations_async(
+                scope=target_resource_group or None
+            )
+            for v in policy_violations:
+                assignment = v.get("policyAssignmentName", "")
+                raw_findings.append({
+                    "source": "POLICY-NONCOMPLIANT",
+                    "severity": "MEDIUM",
+                    "resource_id": v.get("resourceId", ""),
+                    "resource_name": v.get("resourceName", ""),
+                    "description": (
+                        f"Policy: {v.get('policyDefinitionName', '')}"
+                        + (f" (assignment: {assignment})" if assignment else "")
+                    ),
+                    "resource_type": "unknown",
+                })
+            scan_notes.append(
+                f"Pre-scan: Azure Policy — {len(policy_violations)} non-compliant resource(s)"
+            )
+        except Exception as exc:
+            logger.warning("DeployAgent: pre-scan Policy failed: %s", exc)
+            scan_notes.append(f"Pre-scan: Azure Policy unavailable ({exc})")
+
+        # Build findings summary to inject into the LLM prompt.
+        if raw_findings:
+            findings_lines = [
+                f"=== PRE-COMPUTED FINDINGS: {len(raw_findings)} issue(s) from Microsoft Security APIs ===",
+                "Each finding below was detected deterministically. For each one:",
+                "1. Call get_resource_details to confirm the issue is current.",
+                "2. Call list_nsg_rules if the resource is network-related.",
+                "3. Assess blast radius and call propose_action with full evidence.",
+                "",
+            ]
+            for i, f in enumerate(raw_findings, 1):
+                r_name = f.get("resource_name") or f.get("resource_id", "?")
+                line = f"[{i}] [{f.get('source', '?')}] Resource: {r_name} — {f.get('description', '?')}"
+                if f.get("remediation"):
+                    line += f" | Hint: {f['remediation']}"
+                findings_lines.append(line)
+            findings_lines.append("")
+            findings_text = "\n".join(findings_lines)
+        else:
+            findings_text = (
+                "=== PRE-COMPUTED FINDINGS: No high-severity issues detected by "
+                "Microsoft Security APIs ===\n"
+            )
 
         @af.tool(
             name="query_resource_graph",
@@ -721,7 +796,7 @@ class DeployAgent:
             else "across the Azure environment"
         )
 
-        # Build prompt — inject inventory if provided
+        # Build prompt — inject pre-computed findings + inventory (if provided).
         if inventory is not None:
             from src.infrastructure.inventory_formatter import format_inventory_for_prompt  # noqa: PLC0415
             inventory_text = format_inventory_for_prompt({
@@ -730,232 +805,94 @@ class DeployAgent:
                 "refreshed_at": "pre-fetched",
             })
             scan_prompt = (
+                f"{findings_text}\n\n"
                 f"{inventory_text}\n\n"
-                f"Conduct a full 9-domain security and configuration compliance audit {rg_scope}. "
-                "The complete resource inventory is above — review EVERY resource listed. "
-                "Follow ALL steps in your instructions: "
-                "(1) The inventory above replaces Step 1 resource discovery — use it as your resource list. "
-                "You may still call query_resource_graph for custom KQL if needed. "
-                "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
-                "(3) Review storage account security settings (public blob access, HTTPS, TLS, network ACLs). "
-                "(4) Check database and Key Vault configuration (publicNetworkAccess, purge protection, soft delete). "
-                "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
-                "(6) Query activity logs for suspicious or failed changes in the last 48h. "
-                "(7) Flag resources with zero tags. "
-                "(8) Call list_defender_assessments to get Defender for Cloud findings for full-service coverage. "
-                "(9) Call list_policy_violations to surface Azure Policy non-compliance (CIS, NIST, PCI-DSS). "
+                f"Conduct a full security and configuration compliance audit {rg_scope}. "
+                "FIRST: Investigate EVERY finding listed above — confirm each issue, "
+                "assess blast radius, and propose action with full evidence. "
+                "THEN: Review the resource inventory for additional issues the APIs missed: "
+                "NSG rules (internet-exposed ports, missing deny-all), "
+                "storage security (public access, HTTPS, TLS, network ACLs), "
+                "database/Key Vault config (publicNetworkAccess, soft delete, purge protection), "
+                "VM security posture (disk encryption, auth type, public IP without NSG), "
+                "activity log for suspicious changes (last 48h), "
+                "resources with zero tags (LOW). "
                 "Propose an action for EVERY finding you discover."
             )
         else:
             scan_prompt = (
-                f"Conduct a full 9-domain security and configuration compliance audit {rg_scope}. "
-                "Follow ALL steps in your instructions: "
-                "(1) Discover ALL resource types — NSGs, VMs, storage accounts, databases, Key Vaults, public IPs. "
-                "(2) Audit NSG rules for internet-exposed management ports and missing deny-all. "
-                "(3) Review storage account security settings (public blob access, HTTPS, TLS, network ACLs). "
-                "(4) Check database and Key Vault configuration (publicNetworkAccess, purge protection, soft delete). "
-                "(5) Assess VM security posture (disk encryption, auth type, public IP with no NSG). "
-                "(6) Query activity logs for suspicious or failed changes in the last 48h. "
-                "(7) Flag resources with zero tags. "
-                "(8) Call list_defender_assessments to get Defender for Cloud findings for full-service coverage. "
-                "(9) Call list_policy_violations to surface Azure Policy non-compliance (CIS, NIST, PCI-DSS). "
+                f"{findings_text}\n\n"
+                f"Conduct a full security and configuration compliance audit {rg_scope}. "
+                "FIRST: Investigate EVERY finding listed above — confirm each issue, "
+                "assess blast radius, and propose action with full evidence. "
+                "THEN: Query ALL resource types for additional issues the APIs missed — "
+                "do NOT filter by type. Use the open-ended KQL from your instructions. "
+                "Check: NSG rules, storage security, database/Key Vault config, "
+                "VM security posture, activity logs (last 48h), and tagging gaps. "
                 "Propose an action for EVERY finding you discover."
             )
 
         from src.infrastructure.llm_throttle import run_with_throttle
         await run_with_throttle(agent.run, scan_prompt)
 
-        # Expose tool-call notes for the dashboard live log.
-        self.scan_notes: list[str] = scan_notes
-
-        # ── Azure Advisor safety net ─────────────────────────────────────
-        # Our hardcoded checks cover NSGs, storage, Key Vaults, and databases.
-        # But Azure has 200+ service types — we can't write Python for each one.
-        # Microsoft maintains security best-practice checks for ALL services
-        # via Azure Advisor. We call it deterministically after the LLM scan
-        # and auto-propose for every HIGH-impact Security recommendation the
-        # LLM missed. This gives us full-service coverage without maintaining
-        # per-service detection code.
-        pre_advisor_count = len(proposals_holder)
-        try:
-            advisor_recs = await list_advisor_recommendations_async(
-                scope=target_resource_group or None,
-                category="Security",
-            )
-            advisor_high = [
-                r for r in advisor_recs
-                if str(r.get("impact", "")).lower() == "high"
-            ]
-            for rec in advisor_high:
-                impacted = rec.get("impactedValue") or rec.get("impacted_resource") or ""
-                rec_id = rec.get("id", "")
-                short_desc = (
-                    rec.get("shortDescription", {}).get("problem", "")
-                    if isinstance(rec.get("shortDescription"), dict)
-                    else str(rec.get("shortDescription", ""))
-                ) or rec.get("description", "")
-
-                # Build a resource_id — Advisor gives impactedValue (resource name)
-                # and sometimes the full resource ID in the recommendation id.
-                resource_id = ""
+        # ── Post-scan safety net: auto-propose raw_findings LLM missed ────
+        # APIs ran pre-scan (no new calls here). If the LLM skipped any
+        # pre-computed finding, we auto-propose it as a belt-and-suspenders.
+        pre_auto_count = len(proposals_holder)
+        for finding in raw_findings:
+            resource_id = finding.get("resource_id", "")
+            if not resource_id:
+                rec_id = finding.get("rec_id", "")
                 if rec_id and "/providers/" in rec_id:
-                    # Extract the resource portion from the recommendation ARM ID
                     idx = rec_id.find("/providers/Microsoft.Advisor")
                     if idx > 0:
                         resource_id = rec_id[:idx]
-                if not resource_id:
-                    resource_id = impacted or rec_id
+            if not resource_id:
+                resource_id = finding.get("resource_name", "")
+            if not resource_id:
+                continue
 
-                if not resource_id or not short_desc:
-                    continue
-
-                # Skip if LLM or hardcoded checks already proposed for this resource
-                already = any(
-                    p.target.resource_id == resource_id
-                    or (impacted and impacted in (p.target.resource_id or ""))
-                    for p in proposals_holder
-                )
-                if already:
-                    continue
-
-                proposals_holder.append(ProposedAction(
-                    agent_id=_AGENT_ID,
-                    action_type=ActionType.UPDATE_CONFIG,
-                    target=ActionTarget(
-                        resource_id=resource_id,
-                        resource_type=rec.get("impactedField", "unknown"),
-                    ),
-                    reason=f"ADVISOR-HIGH: {short_desc}",
-                    urgency=Urgency.HIGH,
-                ))
-
-            advisor_added = len(proposals_holder) - pre_advisor_count
-            if advisor_high:
-                scan_notes.append(
-                    f"Azure Advisor: {len(advisor_high)} HIGH-impact Security recommendation(s) "
-                    f"({advisor_added} new, {len(advisor_high) - advisor_added} already covered)"
-                )
-        except Exception as exc:
-            logger.warning("DeployAgent: Advisor safety net failed: %s", exc)
-            scan_notes.append(f"Azure Advisor: unavailable ({exc})")
-
-        # ── Microsoft Defender for Cloud safety net ──────────────────────
-        # Defender continuously evaluates ALL resource types against CIS,
-        # NIST, PCI-DSS, and Azure Security Benchmark.  We auto-propose
-        # for every HIGH-severity Unhealthy assessment that the LLM and
-        # Advisor didn't already catch.
-        pre_defender_count = len(proposals_holder)
-        try:
-            defender_assessments = await list_defender_assessments_async(
-                scope=target_resource_group or None,
+            resource_name = finding.get("resource_name", "")
+            already = any(
+                p.target.resource_id == resource_id
+                or (resource_name and resource_name in (p.target.resource_id or ""))
+                for p in proposals_holder
             )
-            defender_high = [
-                a for a in defender_assessments
-                if str(a.get("severity", "")).lower() == "high"
-            ]
-            for assessment in defender_high:
-                resource_id = assessment.get("resourceId", "")
-                resource_name = assessment.get("resourceName", "")
-                assessment_name = assessment.get("assessmentName", "")
+            if already:
+                continue
 
-                if not resource_id or not assessment_name:
-                    continue
+            src = finding.get("source", "UNKNOWN")
+            desc = finding.get("description", "")
+            sev = finding.get("severity", "MEDIUM")
+            urgency_enum = Urgency.HIGH if sev == "HIGH" else Urgency.MEDIUM
+            rem = finding.get("remediation", "")
+            reason = f"{src}: {desc}"
+            if rem:
+                reason += f". Remediation: {rem}"
 
-                # Skip if already proposed by hardcoded, LLM, or Advisor paths
-                already = any(
-                    p.target.resource_id == resource_id
-                    or (resource_name and resource_name in (p.target.resource_id or ""))
-                    for p in proposals_holder
-                )
-                if already:
-                    continue
+            proposals_holder.append(ProposedAction(
+                agent_id=_AGENT_ID,
+                action_type=ActionType.UPDATE_CONFIG,
+                target=ActionTarget(
+                    resource_id=resource_id,
+                    resource_type=finding.get("resource_type", "unknown"),
+                ),
+                reason=reason,
+                urgency=urgency_enum,
+            ))
 
-                remediation = assessment.get("remediation", "")
-                reason_parts = [f"DEFENDER-HIGH: {assessment_name}"]
-                if remediation:
-                    reason_parts.append(f"Remediation: {remediation}")
-
-                proposals_holder.append(ProposedAction(
-                    agent_id=_AGENT_ID,
-                    action_type=ActionType.UPDATE_CONFIG,
-                    target=ActionTarget(
-                        resource_id=resource_id,
-                        resource_type="unknown",
-                    ),
-                    reason=". ".join(reason_parts),
-                    urgency=Urgency.HIGH,
-                ))
-
-            defender_added = len(proposals_holder) - pre_defender_count
-            if defender_high:
-                scan_notes.append(
-                    f"Defender for Cloud: {len(defender_high)} HIGH-severity assessment(s) "
-                    f"({defender_added} new, {len(defender_high) - defender_added} already covered)"
-                )
-        except Exception as exc:
-            logger.warning("DeployAgent: Defender safety net failed: %s", exc)
-            scan_notes.append(f"Defender for Cloud: unavailable ({exc})")
-
-        # ── Azure Policy compliance safety net ───────────────────────────
-        # Azure Policy evaluates every resource against assigned compliance
-        # frameworks (CIS, NIST 800-53, PCI-DSS, custom policies).  We
-        # auto-propose for non-compliant resources not already caught by
-        # the other detection layers.
-        pre_policy_count = len(proposals_holder)
-        try:
-            policy_violations = await list_policy_violations_async(
-                scope=target_resource_group or None,
+        auto_missed = len(proposals_holder) - pre_auto_count
+        if auto_missed:
+            scan_notes.append(
+                f"Post-scan safety net: {auto_missed} pre-computed finding(s) "
+                "auto-proposed (LLM did not cover them)"
             )
-            for violation in policy_violations:
-                resource_id = violation.get("resourceId", "")
-                resource_name = violation.get("resourceName", "")
-                policy_name = violation.get("policyDefinitionName", "")
-
-                if not resource_id or not policy_name:
-                    continue
-
-                # Skip if already proposed by any other path
-                already = any(
-                    p.target.resource_id == resource_id
-                    or (resource_name and resource_name in (p.target.resource_id or ""))
-                    for p in proposals_holder
-                )
-                if already:
-                    continue
-
-                assignment = violation.get("policyAssignmentName", "")
-                reason = (
-                    f"POLICY-NONCOMPLIANT: {policy_name}"
-                    + (f" (assignment: {assignment})" if assignment else "")
-                )
-
-                proposals_holder.append(ProposedAction(
-                    agent_id=_AGENT_ID,
-                    action_type=ActionType.UPDATE_CONFIG,
-                    target=ActionTarget(
-                        resource_id=resource_id,
-                        resource_type="unknown",
-                    ),
-                    reason=reason,
-                    urgency=Urgency.MEDIUM,
-                ))
-
-            policy_added = len(proposals_holder) - pre_policy_count
-            if policy_violations:
-                scan_notes.append(
-                    f"Azure Policy: {len(policy_violations)} non-compliant resource(s) "
-                    f"({policy_added} new, {len(policy_violations) - policy_added} already covered)"
-                )
-        except Exception as exc:
-            logger.warning("DeployAgent: Policy compliance safety net failed: %s", exc)
-            scan_notes.append(f"Azure Policy: unavailable ({exc})")
 
         # ── Post-scan integrity log ──────────────────────────────────────
-        # Count how many proposals came from each detection path.
-        # This lets operators audit whether the LLM is pulling its weight.
         auto_count = sum(
             1 for p in proposals_holder
-            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '", "ADVISOR-HIGH:", "DEFENDER-HIGH:", "POLICY-NONCOMPLIANT:"))
+            if p.reason.startswith(("CRITICAL:", "HIGH:", "MEDIUM:", "NSG '",
+                                    "ADVISOR-HIGH:", "DEFENDER-HIGH:", "POLICY-NONCOMPLIANT:"))
         )
         llm_count = len(proposals_holder) - auto_count
         if proposals_holder:
@@ -968,6 +905,7 @@ class DeployAgent:
                 "Scan complete — no actionable issues found in Azure environment."
             )
 
+        self.scan_notes: list[str] = scan_notes
         return proposals_holder
 
     # ------------------------------------------------------------------

@@ -43,6 +43,21 @@ class PolicySeverity(str, Enum):
     CRITICAL = "critical"
 
 
+class RemediationConfidence(str, Enum):
+    """How confidently the execution agent can automate a fix.
+
+    Assigned during the plan phase based on which operation was chosen:
+    - auto_fix:     a specific, well-tested SDK tool handles it end-to-end
+    - generic_fix:  generic ARM PATCH covers it — likely works, verify after
+    - guided_manual: we know the exact steps; human runs the az CLI commands
+    - manual:        no automated path — investigation required
+    """
+    AUTO_FIX = "auto_fix"
+    GENERIC_FIX = "generic_fix"
+    GUIDED_MANUAL = "guided_manual"
+    MANUAL = "manual"
+
+
 # ============================================
 # Action Models (from Operational Agents)
 # ============================================

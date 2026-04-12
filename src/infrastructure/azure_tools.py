@@ -1190,3 +1190,115 @@ async def list_policy_violations_async(
             "list_policy_violations_async: Azure Policy API call failed: %s", exc
         )
         return []
+
+
+# ---------------------------------------------------------------------------
+# 10. fetch_resource_type_metadata_async
+# ---------------------------------------------------------------------------
+
+# In-memory cache shared across the lifetime of the process — same resource
+# type queried multiple times in one scan pays the API cost only once.
+_resource_type_metadata_cache: dict[str, dict] = {}
+
+
+async def fetch_resource_type_metadata_async(resource_type: str) -> dict:
+    """Return ARM API version metadata for an Azure resource type.
+
+    Uses the Azure Resource Manager provider metadata API (Option C from the
+    architecture plan) — no external web fetches, same Managed Identity the
+    agent already holds for all other Azure calls.
+
+    Args:
+        resource_type: ARM resource type string, e.g.
+                       'Microsoft.Storage/storageAccounts' or
+                       'microsoft.keyvault/vaults' (case-insensitive).
+
+    Returns:
+        Dict with:
+          - resource_type: normalised resource type (provider/type)
+          - latest_stable_api_version: the most recent non-preview version
+          - all_api_versions: full sorted list
+          - note: human-readable guidance for the LLM
+        On failure returns a dict with 'error' key.
+    """
+    # Normalise to lowercase for cache key and comparison
+    rt_lower = resource_type.lower().strip()
+    if rt_lower in _resource_type_metadata_cache:
+        return _resource_type_metadata_cache[rt_lower]
+
+    # Validate format before any API call or mock short-circuit
+    if "/" not in rt_lower:
+        result = {"error": f"Invalid resource_type format: '{resource_type}'. Expected 'Provider/type'."}
+        _resource_type_metadata_cache[rt_lower] = result
+        return result
+
+    if _use_mocks():
+        # Return a realistic response so mock-mode tests work without Azure credentials.
+        result = {
+            "resource_type": resource_type,
+            "latest_stable_api_version": "2023-01-01",
+            "all_api_versions": ["2023-01-01", "2022-09-01", "2021-09-01"],
+            "note": (
+                f"[mock] Use api_version='2023-01-01' for {resource_type}. "
+                "In live mode this returns real Azure metadata."
+            ),
+        }
+        _resource_type_metadata_cache[rt_lower] = result
+        return result
+
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.mgmt.resource.resources.aio import ResourceManagementClient
+        from src.config import settings
+
+        # Split provider and resource_type (e.g. "Microsoft.Storage" / "storageAccounts")
+        parts = rt_lower.split("/", 1)
+        namespace = parts[0]   # e.g. "microsoft.storage"
+        type_name = parts[1]   # e.g. "storageaccounts"
+
+        async with DefaultAzureCredential() as cred:
+            async with ResourceManagementClient(cred, settings.azure_subscription_id) as client:
+                provider = await client.providers.get(namespace)
+
+        # Find the matching resource type in the provider response
+        matched_rt = None
+        for rt in (provider.resource_types or []):
+            if (rt.resource_type or "").lower() == type_name:
+                matched_rt = rt
+                break
+
+        if matched_rt is None:
+            result = {
+                "resource_type": resource_type,
+                "error": f"Resource type '{type_name}' not found under provider '{namespace}'",
+                "note": "The provider was found but this resource type was not listed.",
+            }
+            _resource_type_metadata_cache[rt_lower] = result
+            return result
+
+        all_versions: list[str] = sorted(
+            (matched_rt.api_versions or []), reverse=True
+        )
+        # Prefer stable versions (no "preview" in the version string)
+        stable = [v for v in all_versions if "preview" not in v.lower()]
+        latest_stable = stable[0] if stable else (all_versions[0] if all_versions else "unknown")
+
+        result = {
+            "resource_type": resource_type,
+            "latest_stable_api_version": latest_stable,
+            "all_api_versions": all_versions[:10],  # cap to avoid huge responses
+            "note": (
+                f"Use api_version='{latest_stable}' when calling update_resource_property "
+                f"for {resource_type}. Avoid '-preview' versions for PATCH operations."
+            ),
+        }
+        _resource_type_metadata_cache[rt_lower] = result
+        return result
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fetch_resource_type_metadata_async: failed for '%s': %s", resource_type, exc)
+        return {
+            "resource_type": resource_type,
+            "error": str(exc),
+            "note": "Metadata lookup failed. Check your credentials and subscription ID.",
+        }
