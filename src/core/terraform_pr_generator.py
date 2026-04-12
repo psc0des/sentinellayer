@@ -333,18 +333,42 @@ class TerraformPRGenerator:
         if action.action_type != ActionType.MODIFY_NSG:
             return None
 
-        # Quoted: rule 'name' or rule "name" — or unquoted Azure-style identifier
-        rule_match = re.search(
-            r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
-        ) or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
-        if not rule_match:
+        # --- Extract rule name: most reliable source is the resource_id itself ---
+        # ARM ID for security rules ends with /securityRules/<rule-name>
+        rule_name: str | None = None
+        sr_id_match = re.search(
+            r"/securityRules/([^/]+)$", action.target.resource_id, re.IGNORECASE
+        )
+        if sr_id_match:
+            rule_name = sr_id_match.group(1)
+            logger.info(
+                "TerraformPRGenerator: extracted rule_name='%s' from resource_id", rule_name
+            )
+
+        # Fallback: parse reason string — handles "rule 'name'" or "rule \"name\""
+        if not rule_name:
+            rule_match = re.search(
+                r"rule ['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE
+            ) or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
+            if rule_match:
+                rule_name = rule_match.group(1)
+                logger.info(
+                    "TerraformPRGenerator: extracted rule_name='%s' from reason", rule_name
+                )
+
+        # Last resort: use the short resource name (last segment of resource_id)
+        if not rule_name:
+            resource_id = action.target.resource_id
+            rule_name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+            logger.info(
+                "TerraformPRGenerator: using resource_short='%s' as rule_name fallback", rule_name
+            )
+
+        if not rule_name:
             logger.warning(
-                "TerraformPRGenerator: cannot extract rule name from reason — "
-                "falling back to stub. Reason: %.120s", action.reason
+                "TerraformPRGenerator: cannot determine rule name — falling back to stub."
             )
             return None
-        rule_name = rule_match.group(1)
-        logger.info("TerraformPRGenerator: extracted rule_name='%s' from reason", rule_name)
 
         try:
             items = repo.get_contents(iac_path)
