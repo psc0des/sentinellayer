@@ -546,6 +546,31 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ---
 
+## Current Status & Honest Expectations
+
+RuriSkry is a genuine attempt at solving a real and underserved problem: holding AI agents accountable before they act on production infrastructure. The core architecture — the SRI™ scoring engine, governance pipeline, HITL execution flow, Cosmos DB audit trail — is solid and designed to production standards.
+
+**However: this is actively in development.** I started this thinking it would come together quickly. The more I tested against real Azure environments, the more edge cases surfaced. That's the nature of infrastructure tooling — the gap between "works in one environment" and "works reliably everywhere" is wide, and the only way to close it is through continued real-world testing. This project will get there, but it isn't there yet.
+
+**What this means for you:**
+
+- The governance logic, policy engine, and scoring model are well-tested and intentional
+- The agent execution paths (plan → execute → verify → rollback) work, but may behave unexpectedly on resource configurations or Azure environments I haven't tested against
+- You will likely find bugs. That's expected and welcome — every issue reported makes this better for everyone
+
+**If you're deploying RuriSkry:**
+- Start with mock mode (`USE_LOCAL_MOCKS=true`) to understand how the decision pipeline works before connecting live Azure credentials
+- Run it alongside your existing change management process, not as a replacement, while you build confidence in the verdicts
+- Tune policies and scoring weights to your environment — they live in `data/policies.json` and `src/core/governance_engine.py` and are designed to be adjusted
+
+**If you find something broken:**
+- Open an issue — a clear reproduction case is the most valuable contribution you can make
+- The codebase is structured to be readable and modifiable; fixes and policy contributions are welcome
+
+This is open-source in the truest sense: the code is available, the design is transparent, and the expectation is that it improves through use and collaboration — not that it works perfectly out of the box on day one.
+
+---
+
 <p align="center">
   <b>RuriSkry: Because autonomous AI needs accountable AI. 🛡️</b>
 </p>
