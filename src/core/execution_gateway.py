@@ -528,7 +528,14 @@ class ExecutionGateway:
 
         # Return the cached plan if one already exists — keeps the plan stable
         # so what the user reviewed in the preview is exactly what gets executed.
-        # Only regenerate when there is no stored plan yet.
+        # Only regenerate when there is no stored plan yet, OR when a cached plan
+        # is missing rollback_commands (generated before proactive capture deploy).
+        if record.execution_plan and not record.execution_plan.get("rollback_commands"):
+            logger.info(
+                "ExecutionGateway: %s — cached plan missing rollback_commands, regenerating",
+                execution_id[:8],
+            )
+            record.execution_plan = None
         if record.execution_plan:
             plan = record.execution_plan
         else:
@@ -597,8 +604,20 @@ class ExecutionGateway:
 
         action = ProposedAction.model_validate(snapshot["proposed_action"])
 
-        # Use the stored plan if available; otherwise generate on the fly
+        # Use the stored plan if available; otherwise generate on the fly.
+        # If a cached plan exists but has no rollback_commands (generated before
+        # proactive before-state capture was deployed), clear it and regenerate
+        # NOW — the resource hasn't been modified yet so list_nsg_rules etc.
+        # can still capture the before-state for deterministic rollback.
         plan = record.execution_plan
+        if plan and not plan.get("rollback_commands"):
+            logger.info(
+                "ExecutionGateway: %s — cached plan missing rollback_commands, regenerating",
+                execution_id[:8],
+            )
+            record.execution_plan = None
+            self._save(record)
+            plan = None
         if not plan:
             logger.info(
                 "ExecutionGateway: %s — no stored plan, generating now",
