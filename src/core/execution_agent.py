@@ -129,15 +129,27 @@ _VERIFY_INSTRUCTIONS = """\
 You are RuriSkry's Execution Verification Agent. An approved fix has just been
 applied to an Azure resource. Your job is to confirm that the fix took effect.
 
-Use read-only tools to check the current resource state:
-- For NSG actions: call list_nsg_rules and confirm the problematic rule no longer exists.
-- For VM start/restart: call get_resource_details and check the power state.
-- For VM resize: call get_resource_details and confirm the new SKU is set.
-- For delete: call get_resource_details and confirm the resource is gone.
+You will receive:
+- action_type: what category of fix was applied
+- steps_completed: the exact operations that ran, with their result messages
+
+Use steps_completed to understand WHAT was changed, then verify it in Azure:
+- delete_nsg_rule step: call list_nsg_rules and confirm the named rule is absent.
+- resize_vm step: call get_resource_details and confirm the new SKU is set.
+- start_vm / restart_vm step: call get_resource_details and check power state is Running.
+- update_resource_property step: call get_resource_details and confirm the property changed.
+- delete_resource step: call get_resource_details and confirm the resource returns empty.
+
+IMPORTANT — Azure replication lag:
+Azure Resource Graph can take 30–60 seconds to reflect changes made via the ARM API.
+If a step reports success but the change is not yet visible in Resource Graph, call
+submit_verification_result with confirmed=true and note "change applied, propagation pending".
+Trust the step result — if the SDK tool returned success, the change is in Azure.
+Only set confirmed=false if the step itself reported failure.
 
 Then call submit_verification_result with:
-- confirmed: true if the fix is visible in Azure, false if not yet reflected.
-- message: a one-line human-readable confirmation (e.g. "VM confirmed running — power state is Running").
+- confirmed: true if the step succeeded (even if not yet visible in Resource Graph).
+- message: a one-line confirmation referencing the specific resource and what changed.
 
 Be concise. Do not propose further actions.
 """
@@ -450,14 +462,23 @@ class ExecutionAgent:
             rollback_hint = (
                 f"Recreate the deleted NSG rule(s) {quoted} on NSG '{name}' "
                 f"(resource group: {rg}) using the create_nsg_rule tool. "
-                "Retrieve the original rule properties (priority, port, protocol, "
-                "sourceAddressPrefix, destinationAddressPrefix, access, direction) "
-                "from the Azure Activity Log: "
-                f"az monitor activity-log list --resource-group {rg} "
-                f"--resource-id {action.target.resource_id} "
-                "--status Succeeded --caller-object-id '*' "
-                "--query \"[?operationName.value=='Microsoft.Network/networkSecurityGroups/securityRules/write']\" "
-                "-o json"
+                "Call list_nsg_rules on the NSG first to confirm the rules are gone, "
+                "then call get_resource_details to check the Azure Activity Log for the "
+                "original rule properties, or use these az CLI commands to restore them:\n"
+                + "\n".join(
+                    f"az network nsg rule create"
+                    f" --resource-group {rg}"
+                    f" --nsg-name {name}"
+                    f" --name {r}"
+                    f" --priority <original-priority>"
+                    f" --direction Inbound"
+                    f" --access Allow"
+                    f" --protocol Tcp"
+                    f" --source-address-prefixes '*'"
+                    f" --destination-address-prefixes '*'"
+                    f" --destination-port-ranges <original-port>"
+                    for r in rule_names_list
+                )
             )
 
         elif action.action_type in (ActionType.SCALE_DOWN, ActionType.SCALE_UP):
@@ -966,11 +987,12 @@ class ExecutionAgent:
         @af.tool(
             name="create_nsg_rule",
             description=(
-                "Create or update an NSG security rule. "
+                "Create or update an Azure NSG security rule. "
                 "direction must be 'Inbound' or 'Outbound'. "
                 "access must be 'Allow' or 'Deny'. "
                 "protocol must be 'Tcp', 'Udp', 'Icmp', or '*'. "
-                "Use '*' for source_address or destination_address to mean 'Any'."
+                "Use '*' for source_address_prefix or destination_address_prefix to mean 'Any'. "
+                "source_port_range is always '*' (Azure ignores source port for security rules)."
             ),
         )
         async def tool_create_nsg_rule(
@@ -981,9 +1003,9 @@ class ExecutionAgent:
             direction: str,
             access: str,
             protocol: str,
-            source_address: str,
-            destination_address: str,
-            destination_port: str,
+            source_address_prefix: str,
+            destination_address_prefix: str,
+            destination_port_range: str,
         ) -> str:
             from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
             from azure.mgmt.network.aio import NetworkManagementClient  # noqa: PLC0415
@@ -992,9 +1014,9 @@ class ExecutionAgent:
                 "direction": direction,
                 "access": access,
                 "protocol": protocol,
-                "source_address_prefix": source_address,
-                "destination_address_prefix": destination_address,
-                "destination_port_range": destination_port,
+                "source_address_prefix": source_address_prefix,
+                "destination_address_prefix": destination_address_prefix,
+                "destination_port_range": destination_port_range,
                 "source_port_range": "*",
             }
             try:
