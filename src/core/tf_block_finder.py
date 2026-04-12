@@ -398,6 +398,59 @@ def get_attribute_value(block: BlockMatch, attribute: str) -> Optional[str]:
 
 
 # =============================================================================
+# Public synchronous API — dangling-reference detection
+# =============================================================================
+
+def find_dangling_references(
+    block: BlockMatch,
+    all_tf_files: list[TfFile],
+) -> list[dict]:
+    """Scan TF files for references to the given resource block's address.
+
+    Searches all files *other than* the file that contains the block for any
+    line containing the Terraform resource address (e.g.
+    ``azurerm_service_plan.prod``).  This catches outputs, resource
+    attribute references like ``azurerm_service_plan.prod.id``, and module
+    inputs that would break if the block were deleted.
+
+    Args:
+        block:          The BlockMatch that is a candidate for deletion.
+        all_tf_files:   All .tf files in the IaC repo.
+
+    Returns:
+        List of dicts ``{file_path, line, text}`` — one entry per matching
+        line.  Empty list when no references are found (safe to delete).
+    """
+    address = block.address  # e.g. "azurerm_service_plan.prod"
+    refs: list[dict] = []
+
+    for tf_file in all_tf_files:
+        if tf_file.file_path == block.file_path:
+            continue  # skip the source file itself
+
+        for line_no, line in enumerate(tf_file.content.split("\n"), 1):
+            if address in line:
+                refs.append({
+                    "file_path": tf_file.file_path,
+                    "line": line_no,
+                    "text": line.strip(),
+                })
+
+    if refs:
+        logger.info(
+            "tf_block_finder [dangling_refs]: '%s' referenced in %d location(s)",
+            address, len(refs),
+        )
+    else:
+        logger.info(
+            "tf_block_finder [dangling_refs]: '%s' has no cross-file references — safe to delete",
+            address,
+        )
+
+    return refs
+
+
+# =============================================================================
 # Public async API (LLM-backed)
 # =============================================================================
 
@@ -589,3 +642,87 @@ async def resolve_config_change_with_llm(
     except Exception as exc:  # noqa: BLE001
         logger.warning("tf_block_finder [config_llm]: call failed — %s", exc)
         return None
+
+
+async def get_nsg_advisory_with_llm(
+    block: BlockMatch,
+    nsg_rule_name: str,
+    reason: str,
+) -> dict:
+    """Get an LLM advisory review for an NSG rule change (Allow → Deny).
+
+    Sends the NSG Terraform block to the model and asks whether the planned
+    change correctly remediates the security issue and whether any similar
+    rules remain exposed.
+
+    This is **advisory only** — the result does not gate PR creation.
+
+    Args:
+        block:          The located ``azurerm_network_security_group`` BlockMatch.
+        nsg_rule_name:  The rule being tightened (e.g. ``"allow-ssh-anywhere"``).
+        reason:         The agent's original reason string.
+
+    Returns:
+        dict with keys: ``review_passed`` (bool), ``message`` (str),
+        ``similar_rules`` (list[str]).
+        On LLM unavailability, returns a safe default (review_passed=True,
+        empty similar_rules).
+    """
+    from src.config import settings  # noqa: PLC0415
+
+    if settings.use_local_mocks or not settings.azure_openai_endpoint:
+        logger.debug("tf_block_finder [nsg_advisory]: skipping (mocks=%s)", settings.use_local_mocks)
+        return {"review_passed": True, "message": "Advisory unavailable in mock mode.", "similar_rules": []}
+
+    prompt = (
+        f"You are a cloud security expert reviewing a Terraform NSG change.\n\n"
+        f"The governance system will change the rule '{nsg_rule_name}' in this "
+        f"NSG block from access=Allow to access=Deny.\n"
+        f"Reason: \"{reason}\"\n\n"
+        f"NSG Terraform block:\n```hcl\n{block.raw_block[:2000]}\n```\n\n"
+        f"Answer:\n"
+        f"1. Does changing '{nsg_rule_name}' to Deny correctly address the stated issue?\n"
+        f"2. Are there other rules in this block with similar exposure "
+        f"   (Allow + broad source + sensitive port, e.g. 22, 3389, 5985)?\n\n"
+        f"Reply with ONLY JSON:\n"
+        f'{{\"review_passed\": true|false, '
+        f'\"message\": \"<1-2 sentence assessment>\", '
+        f'\"similar_rules\": [\"<rule-name>\", ...]}}'
+    )
+
+    try:
+        import json  # noqa: PLC0415
+        from openai import AsyncAzureOpenAI  # noqa: PLC0415
+        from azure.identity import DefaultAzureCredential, get_bearer_token_provider  # noqa: PLC0415
+
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
+        )
+        client = AsyncAzureOpenAI(
+            azure_endpoint=settings.azure_openai_endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version=settings.azure_openai_api_version,
+            timeout=30.0,
+        )
+        resp = await client.chat.completions.create(
+            model=settings.azure_openai_deployment,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content.strip())
+        result = {
+            "review_passed": bool(data.get("review_passed", True)),
+            "message": str(data.get("message", "")),
+            "similar_rules": list(data.get("similar_rules", [])),
+        }
+        logger.info(
+            "tf_block_finder [nsg_advisory]: rule='%s' review_passed=%s similar=%s",
+            nsg_rule_name, result["review_passed"], result["similar_rules"],
+        )
+        return result
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("tf_block_finder [nsg_advisory]: LLM call failed — %s", exc)
+        return {"review_passed": True, "message": "Advisory unavailable (LLM error).", "similar_rules": []}

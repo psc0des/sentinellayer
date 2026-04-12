@@ -242,3 +242,59 @@ class TestApplyConfigChange:
         assert result is not None
         # name field should still be there unchanged
         assert 'name                = "asp-ruriskry-prod-demo"' in result
+
+
+# =============================================================================
+# _apply_resource_deletion_to_content
+# =============================================================================
+
+class TestApplyResourceDeletion:
+
+    def test_removes_target_block(self, gen):
+        result = gen._apply_resource_deletion_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.prod"
+        )
+        assert result is not None
+        assert 'resource "azurerm_service_plan" "prod"' not in result
+
+    def test_leaves_sibling_block_intact(self, gen):
+        result = gen._apply_resource_deletion_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.prod"
+        )
+        assert result is not None
+        assert 'resource "azurerm_service_plan" "staging"' in result
+        assert '"B1"' in result
+
+    def test_removes_only_target_block(self, gen):
+        """Only the named block is gone — no other content missing."""
+        result = gen._apply_resource_deletion_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.staging"
+        )
+        assert result is not None
+        assert 'resource "azurerm_service_plan" "staging"' not in result
+        assert 'resource "azurerm_service_plan" "prod"' in result
+        assert '"F1"' in result
+
+    def test_returns_none_when_block_not_found(self, gen):
+        result = gen._apply_resource_deletion_to_content(
+            SERVICE_PLAN_TF, "azurerm_service_plan.ghost"
+        )
+        assert result is None
+
+    def test_returns_none_on_invalid_address(self, gen):
+        result = gen._apply_resource_deletion_to_content(
+            SERVICE_PLAN_TF, "no-dot-separator"
+        )
+        assert result is None
+
+    def test_single_block_file_leaves_empty_content(self, gen):
+        single = '''resource "azurerm_linux_virtual_machine" "web01" {
+  name = "vm-web01"
+  size = "Standard_B1s"
+}
+'''
+        result = gen._apply_resource_deletion_to_content(
+            single, "azurerm_linux_virtual_machine.web01"
+        )
+        assert result is not None
+        assert "azurerm_linux_virtual_machine" not in result

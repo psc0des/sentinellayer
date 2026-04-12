@@ -236,15 +236,23 @@ class TestHistoricalPatternAgent:
         incident_ids = [i.incident_id for i in result.similar_incidents]
         assert "INC-2025-0634" in incident_ids
 
-    async def test_update_config_sql_scores_in_escalation_band(self, agent):
-        """UPDATE_CONFIG on sql-prod (similarity=1.0, severity=medium) → 26–60 band."""
+    async def test_update_config_sql_scores_in_escalation_band(self, agent, monkeypatch):
+        """UPDATE_CONFIG on sql-prod (similarity=1.0, severity=medium) → 26–60 band.
+
+        Monkeypatches DecisionTracker.get_recent to isolate from on-disk
+        decision files accumulated by real scans — those inflate the
+        governance-history boost and push the score outside the expected range.
+        """
+        from src.core.decision_tracker import DecisionTracker
+        monkeypatch.setattr(DecisionTracker, "get_recent", lambda self, *a, **kw: [])
+
         action = _make_action(
             "sql-prod",
             ActionType.UPDATE_CONFIG,
             resource_type="Microsoft.Sql/servers",
         )
         result = await agent.evaluate(action)
-        # sim=1.0 × medium=40 = 40.0 → ESCALATED
+        # sim=1.0 × medium=40 = 40.0, governance history=0 → ESCALATED band
         assert 26.0 <= result.sri_historical <= 60.0
 
     # ------------------------------------------------------------------

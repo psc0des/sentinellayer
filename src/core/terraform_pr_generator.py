@@ -212,6 +212,71 @@ class TerraformPRGenerator:
 
         return record
 
+    def _apply_resource_deletion_to_content(
+        self,
+        content: str,
+        tf_block_address: str,
+    ) -> str | None:
+        """Remove a Terraform resource block from file content.
+
+        Locates the block by type and logical name (e.g.
+        ``"azurerm_service_plan.prod"``), removes it and any immediately
+        preceding blank line, and returns the modified content.
+
+        Returns the modified file content, or None if the block is not found
+        or the address is invalid.
+        """
+        parts = tf_block_address.split(".", 1)
+        if len(parts) != 2:
+            logger.warning(
+                "TerraformPRGenerator: invalid block address '%s'", tf_block_address
+            )
+            return None
+
+        tf_type, logical_name = parts
+        lines = content.split("\n")
+
+        resource_pattern = re.compile(
+            r'^\s*resource\s+"' + re.escape(tf_type) + r'"\s+"'
+            + re.escape(logical_name) + r'"\s*\{?\s*$'
+        )
+
+        block_start: int | None = None
+        block_end: int | None = None
+        brace_depth = 0
+
+        for i, line in enumerate(lines):
+            if block_start is None:
+                if resource_pattern.match(line):
+                    block_start = i
+                    brace_depth = line.count("{") - line.count("}")
+                    if brace_depth == 0:
+                        continue  # opening brace on next line
+            else:
+                brace_depth += line.count("{") - line.count("}")
+                if brace_depth <= 0:
+                    block_end = i
+                    break
+
+        if block_start is None or block_end is None:
+            logger.warning(
+                "TerraformPRGenerator: block '%s' not found — cannot delete", tf_block_address
+            )
+            return None
+
+        # Expand removal range to include one preceding blank line (cosmetic cleanup)
+        actual_start = block_start
+        if actual_start > 0 and lines[actual_start - 1].strip() == "":
+            actual_start -= 1
+
+        new_lines = lines[:actual_start] + lines[block_end + 1:]
+
+        logger.info(
+            "TerraformPRGenerator: deleted block '%s' (lines %d–%d)",
+            tf_block_address, block_start + 1, block_end + 1,
+        )
+        return "\n".join(new_lines)
+
     def _apply_config_change_to_content(
         self,
         content: str,
@@ -484,6 +549,47 @@ class TerraformPRGenerator:
 
             tf_block_address = confirmed_change.get("tf_block_address", "")
             file_path = confirmed_change.get("file_path", "")
+            change_action = confirmed_change.get("action", "")
+
+            # ── DELETE_RESOURCE ───────────────────────────────────────────────
+            if action.action_type == ActionType.DELETE_RESOURCE or change_action == "delete":
+                if not all([tf_block_address, file_path]):
+                    logger.warning(
+                        "TerraformPRGenerator: delete confirmed_change missing "
+                        "tf_block_address or file_path — falling back to stub"
+                    )
+                    return None
+
+                try:
+                    tf_file = repo.get_contents(file_path)
+                    original = tf_file.decoded_content.decode("utf-8")
+                    sha = tf_file.sha
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "TerraformPRGenerator: could not fetch '%s' for deletion — %s",
+                        file_path, exc,
+                    )
+                    return None
+
+                new_content = self._apply_resource_deletion_to_content(
+                    original, tf_block_address
+                )
+                if new_content is None:
+                    logger.warning(
+                        "TerraformPRGenerator: deletion patch failed for '%s' — stub fallback",
+                        tf_block_address,
+                    )
+                    return None
+
+                resource_short = action.target.resource_id.split("/")[-1]
+                return {
+                    "path": file_path,
+                    "new_content": new_content,
+                    "sha": sha,
+                    "summary": f"Remove {tf_block_address} ({resource_short})",
+                }
+
+            # ── CONFIG CHANGE (update_config, scale_up, scale_down) ───────────
             attribute = confirmed_change.get("attribute", "")
             new_value = confirmed_change.get("new_value", "")
 

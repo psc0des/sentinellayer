@@ -11,6 +11,7 @@ from src.core.tf_block_finder import (
     _name_matches_interpolated,
     _parse_tfvars,
     _resolve_interpolation,
+    find_dangling_references,
     find_tf_block,
     get_attribute_value,
 )
@@ -372,3 +373,72 @@ class TestGetAttributeValue:
         content = 'resource "x" "y" {\n  size = var.vm_size\n}'
         block = self._make_block(content)
         assert get_attribute_value(block, "size") is None
+
+
+# =============================================================================
+# find_dangling_references
+# =============================================================================
+
+class TestFindDanglingReferences:
+    def _make_file(self, path: str, content: str) -> TfFile:
+        return TfFile(file_path=path, file_sha="abc", content=content)
+
+    def _make_block(self, tf_type: str, logical_name: str, file_path: str) -> BlockMatch:
+        return BlockMatch(
+            tf_type=tf_type,
+            logical_name=logical_name,
+            file_path=file_path,
+            file_sha="abc",
+            start_line=0,
+            end_line=5,
+            raw_block="",
+            name_value="test",
+        )
+
+    def test_finds_reference_in_other_file(self):
+        block = self._make_block("azurerm_service_plan", "prod", "main.tf")
+        other = self._make_file(
+            "outputs.tf",
+            'output "plan_id" {\n  value = azurerm_service_plan.prod.id\n}\n',
+        )
+        refs = find_dangling_references(block, [other])
+        assert len(refs) == 1
+        assert refs[0]["file_path"] == "outputs.tf"
+        assert refs[0]["line"] == 2
+        assert "azurerm_service_plan.prod" in refs[0]["text"]
+
+    def test_skips_source_file(self):
+        block = self._make_block("azurerm_service_plan", "prod", "main.tf")
+        source = self._make_file(
+            "main.tf",
+            'resource "azurerm_service_plan" "prod" {\n  name = "test"\n}\n',
+        )
+        refs = find_dangling_references(block, [source])
+        assert refs == []
+
+    def test_no_references_returns_empty(self):
+        block = self._make_block("azurerm_service_plan", "prod", "main.tf")
+        other = self._make_file("outputs.tf", 'output "x" { value = "static" }')
+        refs = find_dangling_references(block, [other])
+        assert refs == []
+
+    def test_multiple_references_in_same_file(self):
+        block = self._make_block("azurerm_service_plan", "prod", "main.tf")
+        content = (
+            'resource "azurerm_linux_web_app" "app" {\n'
+            '  service_plan_id = azurerm_service_plan.prod.id\n'
+            '}\n'
+            'output "plan_id" { value = azurerm_service_plan.prod.id }\n'
+        )
+        other = self._make_file("app.tf", content)
+        refs = find_dangling_references(block, [other])
+        assert len(refs) == 2
+
+    def test_multiple_files_scanned(self):
+        block = self._make_block("azurerm_service_plan", "prod", "main.tf")
+        f1 = self._make_file("app.tf", 'service_plan_id = azurerm_service_plan.prod.id')
+        f2 = self._make_file("outputs.tf", 'value = azurerm_service_plan.prod.sku_name')
+        refs = find_dangling_references(block, [f1, f2])
+        assert len(refs) == 2
+        paths = {r["file_path"] for r in refs}
+        assert paths == {"app.tf", "outputs.tf"}

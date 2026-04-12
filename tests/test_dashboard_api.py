@@ -975,6 +975,149 @@ class TestResolveTfChange:
         assert data["found"] is False
         assert "Microsoft.Unknown/widget" in data["reason"]
 
+    def test_delete_resource_returns_delete_action(self, client, monkeypatch):
+        """delete_resource action type: found block returns action='delete' + dangling_refs."""
+        import uuid
+        from src.core.tf_block_finder import TfFile
+        from src.core.models import (
+            ExecutionRecord, ExecutionStatus, SRIBreakdown, SRIVerdict,
+            ActionTarget, ActionType, ProposedAction, GovernanceVerdict,
+        )
+        from datetime import datetime, timezone
+        import src.api.dashboard_api as api_module
+
+        execution_id = str(uuid.uuid4())
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.DELETE_RESOURCE,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-web01",
+                resource_type="Microsoft.Compute/virtualMachines",
+            ),
+            reason="resource is unused and incurring cost",
+        )
+        sri = SRIBreakdown(sri_infrastructure=50, sri_policy=20, sri_historical=10, sri_cost=10, sri_composite=90)
+        verdict = GovernanceVerdict(
+            action_id=f"test-{execution_id[:8]}",
+            timestamp=datetime.now(timezone.utc),
+            decision=SRIVerdict.APPROVED,
+            proposed_action=action,
+            skry_risk_index=sri,
+            reason="approved",
+        )
+        now = datetime.now(timezone.utc)
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            action_id=verdict.action_id,
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            verdict_snapshot=verdict.model_dump(mode="json"),
+            created_at=now,
+            updated_at=now,
+        )
+        gateway = api_module._get_execution_gateway()
+        gateway._ensure_loaded()
+        gateway._records[execution_id] = record
+
+        # Monkeypatch file fetcher to return a TF file with a matching VM block
+        vm_tf = TfFile(
+            file_path="main.tf",
+            file_sha="abc123",
+            content=(
+                'resource "azurerm_linux_virtual_machine" "web01" {\n'
+                '  name = "vm-web01"\n'
+                '  size = "Standard_B1s"\n'
+                '}\n'
+            ),
+        )
+        monkeypatch.setattr(api_module.settings, "github_token", "fake-token")
+        monkeypatch.setattr(api_module, "_fetch_tf_files_sync", lambda *a, **kw: [vm_tf])
+
+        res = client.post(
+            f"/api/execution/{execution_id}/resolve-tf-change",
+            json={"iac_repo": "owner/repo"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["found"] is True
+        assert data["action"] == "delete"
+        assert data["tf_block_address"] == "azurerm_linux_virtual_machine.web01"
+        assert "dangling_refs" in data
+        assert isinstance(data["dangling_refs"], list)
+
+    def test_modify_nsg_returns_nsg_review_action(self, client, monkeypatch):
+        """modify_nsg action type: found NSG block returns action='nsg_review' + advisory."""
+        import uuid
+        from src.core.tf_block_finder import TfFile
+        from src.core.models import (
+            ExecutionRecord, ExecutionStatus, SRIBreakdown, SRIVerdict,
+            ActionTarget, ActionType, ProposedAction, GovernanceVerdict,
+        )
+        from datetime import datetime, timezone
+        import src.api.dashboard_api as api_module
+
+        execution_id = str(uuid.uuid4())
+        action = ProposedAction(
+            agent_id="deploy-agent",
+            action_type=ActionType.MODIFY_NSG,
+            target=ActionTarget(
+                resource_id="/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkSecurityGroups/nsg-prod",
+                resource_type="Microsoft.Network/networkSecurityGroups",
+            ),
+            reason="allow-ssh-anywhere permits SSH from any source",
+            nsg_rule_names=["allow-ssh-anywhere"],
+        )
+        sri = SRIBreakdown(sri_infrastructure=50, sri_policy=20, sri_historical=10, sri_cost=10, sri_composite=90)
+        verdict = GovernanceVerdict(
+            action_id=f"test-{execution_id[:8]}",
+            timestamp=datetime.now(timezone.utc),
+            decision=SRIVerdict.APPROVED,
+            proposed_action=action,
+            skry_risk_index=sri,
+            reason="approved",
+        )
+        now = datetime.now(timezone.utc)
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            action_id=verdict.action_id,
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.manual_required,
+            verdict_snapshot=verdict.model_dump(mode="json"),
+            created_at=now,
+            updated_at=now,
+        )
+        gateway = api_module._get_execution_gateway()
+        gateway._ensure_loaded()
+        gateway._records[execution_id] = record
+
+        nsg_tf = TfFile(
+            file_path="main.tf",
+            file_sha="abc123",
+            content=(
+                'resource "azurerm_network_security_group" "nsg_prod" {\n'
+                '  name = "nsg-prod"\n'
+                '  security_rule {\n'
+                '    name   = "allow-ssh-anywhere"\n'
+                '    access = "Allow"\n'
+                '  }\n'
+                '}\n'
+            ),
+        )
+        monkeypatch.setattr(api_module.settings, "github_token", "fake-token")
+        monkeypatch.setattr(api_module, "_fetch_tf_files_sync", lambda *a, **kw: [nsg_tf])
+
+        res = client.post(
+            f"/api/execution/{execution_id}/resolve-tf-change",
+            json={"iac_repo": "owner/repo"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["found"] is True
+        assert data["action"] == "nsg_review"
+        assert data["tf_block_address"] == "azurerm_network_security_group.nsg_prod"
+        assert "advisory" in data
+        assert "review_passed" in data["advisory"]
+
 
 class TestCreatePrWithConfirmedChange:
     """POST /api/execution/{id}/create-pr — confirmed_change passthrough."""

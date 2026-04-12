@@ -3071,8 +3071,8 @@ async def resolve_tf_change(
     """
     from src.core.tf_block_finder import (  # noqa: PLC0415
         ARM_TO_TF_TYPE, TF_SKU_ATTRIBUTE,
-        find_tf_block, find_tf_block_with_llm,
-        get_attribute_value, resolve_config_change_with_llm,
+        find_dangling_references, find_tf_block, find_tf_block_with_llm,
+        get_attribute_value, get_nsg_advisory_with_llm, resolve_config_change_with_llm,
     )
 
     iac_repo = (body.get("iac_repo") or "").strip()
@@ -3099,6 +3099,15 @@ async def resolve_tf_change(
     reason = action_data.get("reason", "")
     proposed_sku = target.get("proposed_sku")
     config_changes = action_data.get("config_changes")  # Optional[dict[str, str]]
+
+    # For MODIFY_NSG: always target the parent NSG block, not a security rule sub-resource.
+    # The resource_id may end with /securityRules/<rule-name> — strip that.
+    if action_type == "modify_nsg":
+        resource_type = "microsoft.network/networksecuritygroups"
+        sec_rules_idx = resource_id.lower().find("/securityrules/")
+        if sec_rules_idx != -1:
+            nsg_resource_id = resource_id[:sec_rules_idx]
+            resource_name = nsg_resource_id.split("/")[-1] if "/" in nsg_resource_id else nsg_resource_id
 
     # ARM type → TF resource types
     tf_types = ARM_TO_TF_TYPE.get(resource_type.lower(), [])
@@ -3146,6 +3155,34 @@ async def resolve_tf_change(
             ),
         }
 
+    # ── DELETE_RESOURCE: show block + dangling-reference check ──────────────
+    if action_type == "delete_resource":
+        dangling = find_dangling_references(block, tf_files)
+        return {
+            "found": True,
+            "action": "delete",
+            "tf_block_address": block.address,
+            "file_path": block.file_path,
+            "file_sha": block.file_sha,
+            "raw_block_preview": block.raw_block[:800],
+            "dangling_refs": dangling,
+        }
+
+    # ── MODIFY_NSG: show NSG block + LLM advisory review ─────────────────────
+    if action_type == "modify_nsg":
+        nsg_rule_name = (action_data.get("nsg_rule_names") or [None])[0] or ""
+        advisory = await get_nsg_advisory_with_llm(block, nsg_rule_name, reason)
+        return {
+            "found": True,
+            "action": "nsg_review",
+            "tf_block_address": block.address,
+            "file_path": block.file_path,
+            "file_sha": block.file_sha,
+            "raw_block_preview": block.raw_block[:800],
+            "advisory": advisory,
+        }
+
+    # ── CONFIG CHANGE (update_config, scale_up, scale_down) ──────────────────
     # Determine attribute + proposed_value based on action type
     attribute: str | None = None
     current_value: str | None = None

@@ -27,12 +27,16 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { fetchGithubRepos, resolveTfChange } from '../api'
 
-// Action types where block-finding + change confirmation adds value.
-// MODIFY_NSG is excluded — it's handled fully deterministically.
+// Action types that go through the 2-step analyse → confirm flow.
+// delete_resource: shows block + dangling refs + explicit checkbox.
+// modify_nsg: shows NSG block + LLM advisory before PR creation.
+// update_config / scale_up / scale_down: attribute:value edit (Phase 1).
 const RESOLVE_SUPPORTED = new Set([
   'update_config',
   'scale_up',
   'scale_down',
+  'delete_resource',
+  'modify_nsg',
 ])
 
 const CONFIDENCE_LABEL = {
@@ -61,11 +65,12 @@ export default function TerraformPROverlay({
   const [dropdownOpen, setDropdownOpen] = useState(false)
 
   // ── Step 2 state ────────────────────────────────────────────────────────
-  const [step, setStep]                   = useState(1)
-  const [resolving, setResolving]         = useState(false)
-  const [resolveError, setResolveError]   = useState(null)
-  const [resolveResult, setResolveResult] = useState(null)  // API response
-  const [editedValue, setEditedValue]     = useState('')    // human-editable proposed value
+  const [step, setStep]                       = useState(1)
+  const [resolving, setResolving]             = useState(false)
+  const [resolveError, setResolveError]       = useState(null)
+  const [resolveResult, setResolveResult]     = useState(null)  // API response
+  const [editedValue, setEditedValue]         = useState('')    // human-editable proposed value
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false) // delete checkbox
 
   const searchRef   = useRef(null)
   const dropdownRef = useRef(null)
@@ -144,13 +149,27 @@ export default function TerraformPROverlay({
     const repo = selectedRepo || repoSearch.trim()
     let confirmedChange = null
 
-    if (resolveResult?.found && resolveResult.attribute) {
-      confirmedChange = {
-        tf_block_address: resolveResult.tf_block_address,
-        file_path: resolveResult.file_path,
-        file_sha: resolveResult.file_sha,
-        attribute: resolveResult.attribute,
-        new_value: editedValue.trim(),
+    if (resolveResult?.found) {
+      if (resolveResult.action === 'delete') {
+        // Delete: pass the block address so the PR generator removes it
+        confirmedChange = {
+          action: 'delete',
+          tf_block_address: resolveResult.tf_block_address,
+          file_path: resolveResult.file_path,
+          file_sha: resolveResult.file_sha,
+        }
+      } else if (resolveResult.action === 'nsg_review') {
+        // NSG advisory: PR generator handles the actual patch deterministically
+        confirmedChange = null
+      } else if (resolveResult.attribute) {
+        // Config change: pass the human-edited value
+        confirmedChange = {
+          tf_block_address: resolveResult.tf_block_address,
+          file_path: resolveResult.file_path,
+          file_sha: resolveResult.file_sha,
+          attribute: resolveResult.attribute,
+          new_value: editedValue.trim(),
+        }
       }
     }
     // If not found, confirmedChange stays null → stub PR fallback in generator
@@ -158,7 +177,15 @@ export default function TerraformPROverlay({
   }
 
   const canAnalyse = !loading && !resolving && (selectedRepo || repoSearch.trim())
-  const canCreatePR = !loading && editedValue.trim()
+  // Create PR is enabled when:
+  // - delete: checkbox must be ticked
+  // - nsg_review: always enabled (advisory is informational)
+  // - config change: proposed value must be non-empty
+  const canCreatePR = !loading && (
+    resolveResult?.action === 'delete'   ? deleteConfirmed :
+    resolveResult?.action === 'nsg_review' ? true :
+    !!editedValue.trim()
+  )
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -319,64 +346,181 @@ export default function TerraformPROverlay({
           <>
             {resolveResult.found ? (
               <>
-                {/* Block found banner */}
-                <div className="flex items-start gap-2 text-xs text-emerald-300/80 bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2">
-                  <span className="mt-0.5">✓</span>
-                  <span>
-                    Found <code className="font-mono text-emerald-200">{resolveResult.tf_block_address}</code>
-                    {' '}in <code className="font-mono text-emerald-200">{resolveResult.file_path?.split('/').pop()}</code>
-                  </span>
-                  {resolveResult.confidence && (() => {
-                    const cfg = CONFIDENCE_LABEL[resolveResult.confidence] ?? CONFIDENCE_LABEL.low
-                    return (
-                      <span className={`ml-auto shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-medium ${cfg.cls}`}>
-                        {cfg.text}
+                {/* ── DELETE_RESOURCE UI ──────────────────────────────────── */}
+                {resolveResult.action === 'delete' && (
+                  <div className="space-y-4">
+                    {/* Red danger banner */}
+                    <div className="flex items-start gap-2 text-xs text-rose-300/90 bg-rose-500/5 border border-rose-500/30 rounded-lg px-3 py-2">
+                      <span className="mt-0.5 text-base">⚠</span>
+                      <span>
+                        This PR will <strong>permanently delete</strong>{' '}
+                        <code className="font-mono text-rose-200">{resolveResult.tf_block_address}</code>
+                        {' '}from <code className="font-mono text-rose-200">{resolveResult.file_path?.split('/').pop()}</code>.
+                        This cannot be undone without a revert commit.
                       </span>
-                    )
-                  })()}
-                </div>
-
-                {/* Attribute change row */}
-                {resolveResult.attribute && (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-3 gap-3 text-xs">
-                      <div className="space-y-1">
-                        <p className="text-slate-500 uppercase tracking-wide font-medium">Attribute</p>
-                        <code className="block font-mono text-slate-200 bg-slate-800 rounded px-2 py-1.5">
-                          {resolveResult.attribute}
-                        </code>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-slate-500 uppercase tracking-wide font-medium">Current</p>
-                        <code className="block font-mono text-slate-400 bg-slate-800 rounded px-2 py-1.5 line-through">
-                          {resolveResult.current_value || '—'}
-                        </code>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-slate-500 uppercase tracking-wide font-medium">Proposed</p>
-                        <input
-                          type="text"
-                          value={editedValue}
-                          onChange={e => setEditedValue(e.target.value)}
-                          placeholder="new value"
-                          className="w-full font-mono bg-slate-800 border border-blue-500/50 rounded px-2 py-1 text-xs text-blue-200 focus:outline-none focus:ring-1 focus:ring-blue-500/40"
-                        />
-                      </div>
                     </div>
-                    <p className="text-xs text-slate-500">Edit the proposed value if needed, then click Create PR.</p>
+
+                    {/* Block to be deleted */}
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-500 uppercase tracking-wide font-medium">Block to be removed</p>
+                      <pre className="text-[10px] font-mono text-rose-300/80 bg-rose-950/20 border border-rose-500/20 rounded-lg p-3 overflow-x-auto max-h-44 overflow-y-auto whitespace-pre-wrap">
+                        {resolveResult.raw_block_preview}
+                      </pre>
+                    </div>
+
+                    {/* Dangling references warning */}
+                    {resolveResult.dangling_refs?.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs text-amber-300/90">
+                          <span>⚠</span>
+                          <span className="font-medium">
+                            {resolveResult.dangling_refs.length} reference{resolveResult.dangling_refs.length !== 1 ? 's' : ''} to this block found — deletion will break <code className="font-mono">terraform plan</code>
+                          </span>
+                        </div>
+                        <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2 space-y-1 max-h-28 overflow-y-auto">
+                          {resolveResult.dangling_refs.map((ref, i) => (
+                            <div key={i} className="text-[10px] font-mono text-amber-200/80 flex gap-2">
+                              <span className="text-amber-400/60 shrink-0">{ref.file_path}:{ref.line}</span>
+                              <span className="truncate">{ref.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-amber-400/70">Remove these references before merging this PR.</p>
+                      </div>
+                    )}
+
+                    {/* Confirmation checkbox */}
+                    <label className="flex items-start gap-2.5 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={deleteConfirmed}
+                        onChange={e => setDeleteConfirmed(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded accent-rose-500 cursor-pointer"
+                      />
+                      <span className="text-xs text-slate-300 group-hover:text-slate-100 transition-colors leading-relaxed">
+                        I have reviewed the block above and understand that this deletion is <strong>irreversible</strong> without a revert commit.
+                      </span>
+                    </label>
                   </div>
                 )}
 
-                {/* Block preview (collapsible) */}
-                {resolveResult.raw_block_preview && (
-                  <details className="group">
-                    <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300 transition-colors select-none">
-                      View Terraform block preview ▸
-                    </summary>
-                    <pre className="mt-2 text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
-                      {resolveResult.raw_block_preview}
-                    </pre>
-                  </details>
+                {/* ── MODIFY_NSG advisory UI ──────────────────────────────── */}
+                {resolveResult.action === 'nsg_review' && (
+                  <div className="space-y-3">
+                    {/* Block found banner */}
+                    <div className="flex items-start gap-2 text-xs text-emerald-300/80 bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2">
+                      <span className="mt-0.5">✓</span>
+                      <span>
+                        Found <code className="font-mono text-emerald-200">{resolveResult.tf_block_address}</code>
+                        {' '}in <code className="font-mono text-emerald-200">{resolveResult.file_path?.split('/').pop()}</code>
+                      </span>
+                    </div>
+
+                    {/* NSG block preview */}
+                    {resolveResult.raw_block_preview && (
+                      <details className="group">
+                        <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300 transition-colors select-none">
+                          View NSG Terraform block ▸
+                        </summary>
+                        <pre className="mt-2 text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+                          {resolveResult.raw_block_preview}
+                        </pre>
+                      </details>
+                    )}
+
+                    {/* LLM advisory */}
+                    {resolveResult.advisory && (
+                      <div className={`space-y-1.5 rounded-lg px-3 py-2 border text-xs ${
+                        resolveResult.advisory.review_passed
+                          ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-300/80'
+                          : 'bg-amber-500/5 border-amber-500/20 text-amber-300/80'
+                      }`}>
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <span>{resolveResult.advisory.review_passed ? '✓' : '⚠'}</span>
+                          <span>AI Security Review</span>
+                          <span className="ml-auto text-[10px] opacity-60 font-normal">advisory only</span>
+                        </div>
+                        {resolveResult.advisory.message && (
+                          <p className="text-slate-300/80 leading-relaxed">{resolveResult.advisory.message}</p>
+                        )}
+                        {resolveResult.advisory.similar_rules?.length > 0 && (
+                          <div className="mt-1">
+                            <span className="text-amber-400/80 font-medium">Similar exposed rules: </span>
+                            {resolveResult.advisory.similar_rules.map(r => (
+                              <code key={r} className="ml-1 font-mono text-amber-200 bg-amber-500/10 rounded px-1">{r}</code>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <p className="text-xs text-slate-500">The PR will patch the identified rule — change access=Allow to Deny.</p>
+                  </div>
+                )}
+
+                {/* ── CONFIG CHANGE UI (update_config / scale_up / scale_down) ─ */}
+                {!resolveResult.action || (resolveResult.action !== 'delete' && resolveResult.action !== 'nsg_review') && (
+                  <>
+                    {/* Block found banner */}
+                    <div className="flex items-start gap-2 text-xs text-emerald-300/80 bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2">
+                      <span className="mt-0.5">✓</span>
+                      <span>
+                        Found <code className="font-mono text-emerald-200">{resolveResult.tf_block_address}</code>
+                        {' '}in <code className="font-mono text-emerald-200">{resolveResult.file_path?.split('/').pop()}</code>
+                      </span>
+                      {resolveResult.confidence && (() => {
+                        const cfg = CONFIDENCE_LABEL[resolveResult.confidence] ?? CONFIDENCE_LABEL.low
+                        return (
+                          <span className={`ml-auto shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-medium ${cfg.cls}`}>
+                            {cfg.text}
+                          </span>
+                        )
+                      })()}
+                    </div>
+
+                    {/* Attribute change row */}
+                    {resolveResult.attribute && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-3 gap-3 text-xs">
+                          <div className="space-y-1">
+                            <p className="text-slate-500 uppercase tracking-wide font-medium">Attribute</p>
+                            <code className="block font-mono text-slate-200 bg-slate-800 rounded px-2 py-1.5">
+                              {resolveResult.attribute}
+                            </code>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-slate-500 uppercase tracking-wide font-medium">Current</p>
+                            <code className="block font-mono text-slate-400 bg-slate-800 rounded px-2 py-1.5 line-through">
+                              {resolveResult.current_value || '—'}
+                            </code>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-slate-500 uppercase tracking-wide font-medium">Proposed</p>
+                            <input
+                              type="text"
+                              value={editedValue}
+                              onChange={e => setEditedValue(e.target.value)}
+                              placeholder="new value"
+                              className="w-full font-mono bg-slate-800 border border-blue-500/50 rounded px-2 py-1 text-xs text-blue-200 focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-500">Edit the proposed value if needed, then click Create PR.</p>
+                      </div>
+                    )}
+
+                    {/* Block preview (collapsible) */}
+                    {resolveResult.raw_block_preview && (
+                      <details className="group">
+                        <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-300 transition-colors select-none">
+                          View Terraform block preview ▸
+                        </summary>
+                        <pre className="mt-2 text-[10px] font-mono text-slate-400 bg-slate-800/60 border border-slate-700/40 rounded-lg p-3 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap">
+                          {resolveResult.raw_block_preview}
+                        </pre>
+                      </details>
+                    )}
+                  </>
                 )}
               </>
             ) : (
@@ -393,7 +537,7 @@ export default function TerraformPROverlay({
             {/* Actions */}
             <div className="flex justify-between gap-2 pt-1">
               <button
-                onClick={() => { setStep(1); setResolveResult(null); setResolveError(null) }}
+                onClick={() => { setStep(1); setResolveResult(null); setResolveError(null); setDeleteConfirmed(false) }}
                 disabled={loading}
                 className="px-4 py-2 text-sm text-slate-300 hover:text-slate-100 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg transition-colors disabled:opacity-50"
               >← Back</button>
@@ -406,11 +550,17 @@ export default function TerraformPROverlay({
                 >Cancel</button>
                 <button
                   onClick={handleConfirmChange}
-                  disabled={loading || (resolveResult.found && resolveResult.attribute && !editedValue.trim())}
-                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-blue-100 bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={!canCreatePR}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    resolveResult.action === 'delete'
+                      ? 'text-rose-100 bg-rose-600/30 hover:bg-rose-600/50 border border-rose-500/50'
+                      : 'text-blue-100 bg-blue-600/30 hover:bg-blue-600/50 border border-blue-500/50'
+                  }`}
                 >
                   {loading ? (
-                    <><span className="w-3.5 h-3.5 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" /> Creating PR…</>
+                    <><span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" /> Creating PR…</>
+                  ) : resolveResult.action === 'delete' ? (
+                    <>🗑 Create Deletion PR</>
                   ) : (
                     <>📝 Create PR</>
                   )}
