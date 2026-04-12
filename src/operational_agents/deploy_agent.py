@@ -417,6 +417,11 @@ class DeployAgent:
                         ),
                         urgency=Urgency.HIGH,
                         nsg_change_direction="restrict",
+                        nsg_rule_names=[
+                            r.get("name") or r.get("properties", {}).get("name", "")
+                            for r in critical_rules[:5]
+                            if r.get("name") or r.get("properties", {}).get("name")
+                        ],
                     ))
                     logger.info(
                         "DeployAgent: auto-proposed CRITICAL NSG fix — %d rule(s) on %s",

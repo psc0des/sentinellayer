@@ -293,6 +293,76 @@ class TerraformPRGenerator:
         )
         return None
 
+    def _apply_nsg_fix_content_based(self, content: str) -> tuple[str, str] | None:
+        """Find and patch the first dangerous security rule block by content, not name.
+
+        A "dangerous" rule has ALL of:
+        - access = "Allow" (or 'Allow')
+        - source_address_prefix that is broad (*, Any, Internet, 0.0.0.0/0)
+        - destination_port_range that is a sensitive port or wildcard
+
+        Works on BOTH standalone azurerm_network_security_rule resources and
+        inline security_rule {} blocks inside azurerm_network_security_group.
+
+        Returns (patched_content, rule_name) or None if nothing dangerous found.
+        """
+        _broad = {"*", "any", "internet", "0.0.0.0/0"}
+        _sensitive_ports = {"22", "3389", "5985", "5986", "23", "21", "*"}
+
+        lines = content.split("\n")
+
+        def _scan_blocks(start_pattern: str) -> tuple[str, str] | None:
+            block_start: int | None = None
+            brace_depth = 0
+            block_lines: dict[str, str] = {}  # key → value within the block
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+
+                if block_start is None and re.match(start_pattern, stripped):
+                    block_start = i
+                    brace_depth = stripped.count("{") - stripped.count("}")
+                    block_lines = {}
+                    if "{" in stripped and brace_depth > 0:
+                        continue
+
+                if block_start is not None and i > block_start:
+                    brace_depth += stripped.count("{") - stripped.count("}")
+
+                    # Capture key = "value" pairs at depth 1
+                    kv = re.match(r'(\w+)\s*=\s*["\']([^"\']*)["\']', stripped)
+                    if kv and brace_depth == 1:
+                        block_lines[kv.group(1).lower()] = kv.group(2)
+
+                    if brace_depth <= 0:
+                        # Evaluate the completed block
+                        access = block_lines.get("access", "").lower()
+                        source = block_lines.get("source_address_prefix", "").lower()
+                        port = block_lines.get("destination_port_range", "")
+                        rule_name = block_lines.get("name", "")
+                        direction = block_lines.get("direction", "inbound").lower()
+
+                        if (
+                            direction == "inbound"
+                            and access == "allow"
+                            and source in _broad
+                            and port in _sensitive_ports
+                        ):
+                            patched = self._patch_block(lines, block_start, i)
+                            if patched is not None:
+                                return patched, rule_name or f"rule-at-line-{block_start + 1}"
+
+                        block_start = None
+                        block_lines = {}
+
+            return None
+
+        # Try standalone resources first, then inline blocks
+        return (
+            _scan_blocks(r'resource\s+"azurerm_network_security_rule"')
+            or _scan_blocks(r'security_rule\b')
+        )
+
     def _patch_block(self, lines: list[str], start: int, end: int) -> str | None:
         """Change access = "Allow" → "Deny" within lines[start:end+1].
 
@@ -333,50 +403,50 @@ class TerraformPRGenerator:
         if action.action_type != ActionType.MODIFY_NSG:
             return None
 
-        # --- Extract rule name: most reliable source is the resource_id itself ---
-        # ARM ID for security rules ends with /securityRules/<rule-name>
-        rule_name: str | None = None
+        # --- Build candidate rule names, most-reliable sources first ---
+        # 1. Explicitly set by the agent (structured, format-independent)
+        rule_names: list[str] = list(action.nsg_rule_names or [])
+
+        # 2. ARM resource_id ends with /securityRules/<name> when targeting a specific rule
         sr_id_match = re.search(
             r"/securityRules/([^/]+)$", action.target.resource_id, re.IGNORECASE
         )
         if sr_id_match:
-            rule_name = sr_id_match.group(1)
-            logger.info(
-                "TerraformPRGenerator: extracted rule_name='%s' from resource_id", rule_name
-            )
+            name = sr_id_match.group(1)
+            if name not in rule_names:
+                rule_names.append(name)
 
-        # Fallback: parse reason string — multiple formats:
-        # 1. CRITICAL deterministic: "NSG 'nsg-name': 'allow-ssh-anywhere' port=22 src=*"
-        # 2. LLM format: "rule 'allow-ssh-anywhere'" or "rule allow-ssh-anywhere"
-        if not rule_name:
-            rule_match = (
-                # Format 1: quoted string immediately followed by " port="
-                re.search(r"['\"]([^'\"]+)['\"](?:\s+port=)", action.reason, re.IGNORECASE)
-                # Format 2: the word "rule" followed by quoted name
-                or re.search(r"rule\s+['\"]([^'\"]+)['\"]", action.reason, re.IGNORECASE)
-                # Format 3: "rule allow-ssh-anywhere" (unquoted, hyphenated)
-                or re.search(r"\brule\s+([\w][\w]*[-_][\w\-_]+)", action.reason, re.IGNORECASE)
-            )
-            if rule_match:
-                rule_name = rule_match.group(1)
-                logger.info(
-                    "TerraformPRGenerator: extracted rule_name='%s' from reason", rule_name
-                )
+        # 3. Best-effort reason string extraction — try several patterns in order of specificity.
+        #    This is intentionally lenient: we want to find ANY rule name hint in the text,
+        #    regardless of how the agent or human phrased it.
+        if not rule_names:
+            reason = action.reason
+            candidates: list[re.Match] = []
+            for pattern in (
+                r"['\"]([^'\"]{3,})['\"]",           # any quoted string ≥ 3 chars
+                r"\bnamed?\s+(\S+)",                  # "named X" or "name X"
+                r"\b([\w][\w-]{2,}(?:rule|ssh|rdp|ftp|allow|deny)[\w-]*)\b",  # heuristic rule-like words
+            ):
+                m = re.search(pattern, reason, re.IGNORECASE)
+                if m:
+                    candidates.append(m)
+                    break
+            if candidates:
+                extracted = candidates[0].group(1).strip(".,;: ")
+                # Skip if it looks like the NSG name (we want the rule, not the resource)
+                nsg_short = action.target.resource_id.split("/")[-1]
+                if extracted and extracted.lower() != nsg_short.lower():
+                    rule_names.append(extracted)
+                    logger.info(
+                        "TerraformPRGenerator: extracted candidate rule_name='%s' from reason",
+                        extracted,
+                    )
 
-        # Last resort: use the short resource name (last segment of resource_id)
-        if not rule_name:
-            resource_id = action.target.resource_id
-            rule_name = resource_id.split("/")[-1] if "/" in resource_id else resource_id
-            logger.info(
-                "TerraformPRGenerator: using resource_short='%s' as rule_name fallback", rule_name
-            )
+        logger.info(
+            "TerraformPRGenerator: candidate rule_names: %s", rule_names
+        )
 
-        if not rule_name:
-            logger.warning(
-                "TerraformPRGenerator: cannot determine rule name — falling back to stub."
-            )
-            return None
-
+        # --- Fetch .tf files (needed for both name-based and content-based search) ---
         try:
             items = repo.get_contents(iac_path)
         except Exception as exc:  # noqa: BLE001
@@ -385,7 +455,6 @@ class TerraformPRGenerator:
             )
             return None
 
-        # Collect .tf files one level deep (including one layer of subdirectories)
         tf_files = []
         for item in items:
             if item.name.endswith(".tf"):
@@ -397,37 +466,68 @@ class TerraformPRGenerator:
                 except Exception:  # noqa: BLE001
                     pass
 
-        logger.info(
-            "TerraformPRGenerator: scanning %d .tf file(s) in '%s' for rule '%s'",
-            len(tf_files), iac_path, rule_name,
-        )
+        # --- Pass A: patch by explicit rule name (most reliable) ---
+        if rule_names:
+            logger.info(
+                "TerraformPRGenerator: scanning %d .tf file(s) for rules %s",
+                len(tf_files), rule_names,
+            )
+            for tf_file in tf_files:
+                try:
+                    original = tf_file.decoded_content.decode("utf-8")
+                except Exception:  # noqa: BLE001
+                    continue
+                for rule_name in rule_names:
+                    new_content = self._apply_nsg_fix_to_content(original, rule_name)
+                    if new_content is not None:
+                        logger.info(
+                            "TerraformPRGenerator: patched rule '%s' in '%s'",
+                            rule_name, tf_file.path,
+                        )
+                        return {
+                            "path": tf_file.path,
+                            "new_content": new_content,
+                            "sha": tf_file.sha,
+                            "rule_name": rule_name,
+                            "summary": (
+                                f"Changed access = \"Allow\" → \"Deny\" for rule "
+                                f"'{rule_name}' in {tf_file.name}"
+                            ),
+                        }
 
+        # --- Pass B: content-based fallback — no rule name needed ---
+        # Find any security_rule block with access=Allow and a broad source prefix.
+        # Handles any reason format and any agent writing style.
+        logger.info(
+            "TerraformPRGenerator: name-based search exhausted — trying content-based "
+            "dangerous-rule detection across %d .tf file(s)", len(tf_files),
+        )
         for tf_file in tf_files:
             try:
                 original = tf_file.decoded_content.decode("utf-8")
             except Exception:  # noqa: BLE001
                 continue
-            new_content = self._apply_nsg_fix_to_content(original, rule_name)
-            if new_content is not None:
+            result = self._apply_nsg_fix_content_based(original)
+            if result is not None:
+                new_content, matched_rule = result
+                logger.info(
+                    "TerraformPRGenerator: content-based match — patched rule '%s' in '%s'",
+                    matched_rule, tf_file.path,
+                )
                 return {
                     "path": tf_file.path,
                     "new_content": new_content,
                     "sha": tf_file.sha,
-                    "rule_name": rule_name,
+                    "rule_name": matched_rule,
                     "summary": (
-                        f"Changed access = \"Allow\" → \"Deny\" for rule "
-                        f"'{rule_name}' in {tf_file.name}"
+                        f"Changed access = \"Allow\" → \"Deny\" for dangerous inbound rule "
+                        f"'{matched_rule}' in {tf_file.name}"
                     ),
                 }
-            logger.debug(
-                "TerraformPRGenerator: rule '%s' not found (or already Deny) in '%s'",
-                rule_name, tf_file.path,
-            )
 
         logger.warning(
-            "TerraformPRGenerator: rule '%s' not found in any .tf file under '%s' "
-            "— falling back to stub",
-            rule_name, iac_path,
+            "TerraformPRGenerator: no patchable rule found in any .tf file under '%s' "
+            "— falling back to stub", iac_path,
         )
         return None
 
