@@ -2942,7 +2942,10 @@ async def list_github_repos() -> dict:
     """Return GitHub repos accessible via the configured GITHUB_TOKEN.
 
     Used by the "Create Terraform PR" overlay to populate the repo dropdown.
-    Returns at most 100 repos (GitHub API page limit), sorted alphabetically.
+    Only returns repos that match the configured IAC_GITHUB_REPO — if the token
+    has broader access the extras are filtered out and a warning is logged.
+    IAC_GITHUB_REPO is always included as a fallback even if the token cannot
+    list repos (e.g. fine-grained PATs without list permission).
 
     Returns 503 if GitHub token is not configured.
     Returns 502 on GitHub API error.
@@ -2953,16 +2956,36 @@ async def list_github_repos() -> dict:
             status_code=503,
             detail="GITHUB_TOKEN is not configured — cannot list repos",
         )
+
+    configured_repo = settings.iac_github_repo  # e.g. "psc0des/ruriskry-iac-test"
+
     try:
         from github import Github, GithubException  # noqa: PLC0415
-        gh = Github(token, per_page=100)  # per_page on constructor, not get_repos()
+        gh = Github(token, per_page=100)
         user = gh.get_user()
         # Omit `type` — passing type="all" raises 422 for fine-grained PATs.
-        repos = sorted(
-            [r.full_name for r in user.get_repos(sort="updated")],
-            key=str.lower,
-        )
+        all_repos = [r.full_name for r in user.get_repos(sort="updated")]
+
+        # Security guard: warn if the token can see repos beyond the configured one.
+        # This indicates a broader-scope token is in use (e.g. a classic PAT).
+        if configured_repo and any(r != configured_repo for r in all_repos):
+            unexpected = [r for r in all_repos if r != configured_repo]
+            logger.warning(
+                "list_github_repos: GITHUB_TOKEN has access to %d unexpected repo(s): %s. "
+                "Use a fine-grained PAT scoped only to IAC_GITHUB_REPO (%s).",
+                len(unexpected), unexpected, configured_repo,
+            )
+            # Filter to only the intended repo — do not expose unintended access
+            all_repos = [r for r in all_repos if r == configured_repo]
+
+        # Always ensure the configured repo is present (fine-grained PATs may
+        # not return it via list if the token lacks metadata:read on other repos)
+        if configured_repo and configured_repo not in all_repos:
+            all_repos.append(configured_repo)
+
+        repos = sorted(all_repos, key=str.lower)
         return {"repos": repos}
+
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         if "401" in msg or "Bad credentials" in msg:
