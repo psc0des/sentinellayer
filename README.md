@@ -1,17 +1,17 @@
-# 🛡️ RuriSkry — AI Action Governance & Simulation Engine
+# 🛡️ RuriSkry — Azure AI Cloud Ops Agents, Governed by an AI Change Advisory Board
 
-> **Because autonomous AI needs accountable AI.**
+> **AI agents propose the fix. An AI Change Advisory Board decides if it ships.**
 >
-> *Built for Azure. Built on Azure.*
+> *Because autonomous AI needs accountable AI — built for Azure, built on Azure.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Azure](https://img.shields.io/badge/cloud-Azure-0078D4.svg)](https://azure.microsoft.com)
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
-RuriSkry intercepts, simulates, and scores every AI agent action **before** it touches your infrastructure. It sits between operational AI agents (Monitoring bots, cost optimizers, deployment agents) and Azure cloud resources, acting as a production-grade supervisory intelligence layer.
+RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has evolved into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1002 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1002 automated tests.
 
 ---
 
@@ -572,5 +572,5 @@ This is open-source in the truest sense: the code is available, the design is tr
 ---
 
 <p align="center">
-  <b>RuriSkry: Because autonomous AI needs accountable AI. 🛡️</b>
+  <b>RuriSkry: AI agents propose the fix. An AI Change Advisory Board decides if it ships. 🛡️</b>
 </p>
