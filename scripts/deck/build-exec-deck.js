@@ -432,30 +432,54 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 5 — Tagline hero (second garnet slide)
+  // SLIDE 5 — Product reveal (pivot from pain to value)
+  // Names the product concretely, positions it, states mechanism,
+  // addresses adoption concern — all on one hero slide.
   // =============================================================
   {
     const s = pres.addSlide();
     s.background = { color: C.garnet };
 
-    s.addText("RuriSkry", {
-      x: 0, y: 1.8, w: SW, h: 0.9,
-      fontFace: FONT_HEAD, fontSize: 44, italic: true, color: C.brass, align: "center",
+    // Product reveal
+    s.addText("Meet RuriSkry.", {
+      x: 0, y: 1.6, w: SW, h: 1.0,
+      fontFace: FONT_HEAD, fontSize: 60, italic: true, bold: true,
+      color: C.white, align: "center",
     });
 
-    s.addText("AI agents propose the fix.", {
-      x: 0, y: 3.1, w: SW, h: 1.0,
-      fontFace: FONT_HEAD, fontSize: 54, bold: true, color: C.white, align: "center",
-    });
-    s.addText("An AI Change Advisory Board decides if it ships.", {
-      x: 0, y: 4.25, w: SW, h: 1.0,
-      fontFace: FONT_HEAD, fontSize: 40, color: C.white, align: "center",
+    // Positioning — what it IS, in one line
+    s.addText("A judgment layer between your AI agents and Azure.", {
+      x: 0, y: 2.95, w: SW, h: 0.9,
+      fontFace: FONT_HEAD, fontSize: 28, italic: true, color: C.brass, align: "center",
     });
 
-    // Brass divider dot
-    s.addShape("ellipse", {
-      x: SW / 2 - 0.08, y: 5.7, w: 0.16, h: 0.16,
+    // Brass divider (motif)
+    s.addShape("rect", {
+      x: SW / 2 - 0.6, y: 4.25, w: 1.2, h: 0.05,
       fill: { color: C.brass }, line: { color: C.brass, width: 0 },
+    });
+
+    // Mechanism — what it DOES, in three beats
+    s.addText(
+      [
+        { text: "Four agents ", options: { bold: true, color: C.white, breakLine: false } },
+        { text: "score every proposed action. ", options: { color: "CBD5E1", breakLine: false } },
+        { text: "One verdict ", options: { bold: true, color: C.white, breakLine: false } },
+        { text: "the execution pipeline enforces. ", options: { color: "CBD5E1", breakLine: false } },
+        { text: "Full audit trail ", options: { bold: true, color: C.white, breakLine: false } },
+        { text: "for every decision.", options: { color: "CBD5E1" } },
+      ],
+      {
+        x: 1.2, y: 4.55, w: SW - 2.4, h: 1.1,
+        fontFace: FONT_BODY, fontSize: 20,
+        align: "center", valign: "top", margin: 0,
+      }
+    );
+
+    // Adoption reassurance — directly addresses "do I have to change anything?"
+    s.addText("No new process. No new IAM. Just the judgment layer that was missing.", {
+      x: 0, y: 6.05, w: SW, h: 0.5,
+      fontFace: FONT_HEAD, fontSize: 17, italic: true, color: "94A3B8", align: "center",
     });
   }
 
