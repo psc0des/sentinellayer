@@ -203,24 +203,38 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
     s.background = { color: C.garnet };
 
     // Brass gavel icon centered above title
-    s.addImage({ data: icnGavel, x: SW / 2 - 0.5, y: 1.8, w: 1.0, h: 1.0 });
+    s.addImage({ data: icnGavel, x: SW / 2 - 0.45, y: 1.35, w: 0.9, h: 0.9 });
 
     s.addText("RuriSkry", {
-      x: 0, y: 3.0, w: SW, h: 1.0,
-      fontFace: FONT_HEAD, fontSize: 72, italic: true, bold: true,
+      x: 0, y: 2.45, w: SW, h: 1.0,
+      fontFace: FONT_HEAD, fontSize: 68, italic: true, bold: true,
       color: C.white, align: "center",
     });
 
-    s.addText("An AI Change Advisory Board\nfor Autonomous Cloud Agents", {
-      x: 0, y: 4.2, w: SW, h: 1.2,
+    s.addText("Azure AI Cloud Ops Agents,\nGoverned by an AI Change Advisory Board", {
+      x: 0, y: 3.65, w: SW, h: 1.4,
       fontFace: FONT_HEAD, fontSize: 26,
       color: C.brass, align: "center",
     });
 
-    s.addText("Azure-native · Open source · Production-grade", {
-      x: 0, y: 6.2, w: SW, h: 0.3,
-      fontFace: FONT_BODY, fontSize: 14,
-      color: "CBD5E1", align: "center", italic: true,
+    // Tagline (echoes README)
+    s.addText("AI agents propose the fix. An AI Change Advisory Board decides if it ships.", {
+      x: 0, y: 5.25, w: SW, h: 0.5,
+      fontFace: FONT_HEAD, fontSize: 17, italic: true,
+      color: "CBD5E1", align: "center",
+    });
+
+    // Brass divider dot (motif callback)
+    s.addShape("ellipse", {
+      x: SW / 2 - 0.07, y: 6.0, w: 0.14, h: 0.14,
+      fill: { color: C.brass }, line: { color: C.brass, width: 0 },
+    });
+
+    // Metadata line — honest, no "production-grade"
+    s.addText("Azure-native · Open source · Hackathon-born, production-architected", {
+      x: 0, y: 6.35, w: SW, h: 0.3,
+      fontFace: FONT_BODY, fontSize: 13,
+      color: "94A3B8", align: "center", italic: true,
     });
   }
 
@@ -1051,39 +1065,46 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
     const s = pres.addSlide();
     s.background = { color: C.garnet };
 
+    // Small "Thank you" kicker
     s.addText("Thank you", {
-      x: 0, y: 1.3, w: SW, h: 1.0,
-      fontFace: FONT_HEAD, fontSize: 48, italic: true, color: C.white, align: "center",
+      x: 0, y: 1.2, w: SW, h: 0.6,
+      fontFace: FONT_HEAD, fontSize: 26, italic: true, color: "CBD5E1", align: "center",
     });
 
-    s.addText("Questions I would like to explore", {
-      x: 0, y: 2.6, w: SW, h: 0.5,
-      fontFace: FONT_HEAD, fontSize: 20, color: C.brass, align: "center",
+    // Hero tagline — the lingering thought
+    s.addText("AI agents propose the fix.", {
+      x: 0, y: 2.3, w: SW, h: 1.0,
+      fontFace: FONT_HEAD, fontSize: 50, bold: true, color: C.white, align: "center",
     });
-
-    const qs = [
-      "Where does this fit against what we are doing with AI agents internally?",
-      "Is the CAB pattern something we should productise further?",
-      "Is there a fit with customers starting to deploy AI agents?",
-    ];
-    qs.forEach((q, i) => {
-      s.addText(`“${q}”`, {
-        x: 1.5, y: 3.4 + i * 0.65, w: SW - 3.0, h: 0.6,
-        fontFace: FONT_HEAD, fontSize: 17, italic: true, color: C.white,
-        align: "center", valign: "middle", margin: 0,
-      });
+    s.addText("An AI Change Advisory Board decides if it ships.", {
+      x: 0, y: 3.45, w: SW, h: 1.0,
+      fontFace: FONT_HEAD, fontSize: 38, color: C.white, align: "center",
     });
 
     // Brass divider
     s.addShape("rect", {
-      x: SW / 2 - 0.5, y: 5.65, w: 1.0, h: 0.04,
+      x: SW / 2 - 0.6, y: 4.9, w: 1.2, h: 0.05,
       fill: { color: C.brass }, line: { color: C.brass, width: 0 },
     });
 
-    s.addText("github.com/psc0des/ruriskry", {
-      x: 0, y: 6.0, w: SW, h: 0.5,
-      fontFace: FONT_BODY, fontSize: 16, bold: true, color: C.brass, align: "center",
-    });
+    // Call to action — three ways to engage, each concrete
+    s.addText(
+      [
+        { text: "Try it", options: { bold: true, color: C.brass, breakLine: false } },
+        { text: "   →   github.com/psc0des/ruriskry", options: { color: C.white, breakLine: true } },
+        { text: " ", options: { fontSize: 6, breakLine: true } },
+        { text: "Dig into the scoring", options: { bold: true, color: C.brass, breakLine: false } },
+        { text: "   →   src/core/governance_engine.py", options: { color: C.white, breakLine: true } },
+        { text: " ", options: { fontSize: 6, breakLine: true } },
+        { text: "Push back", options: { bold: true, color: C.brass, breakLine: false } },
+        { text: "   →   open an issue on GitHub", options: { color: C.white } },
+      ],
+      {
+        x: 0, y: 5.35, w: SW, h: 1.6,
+        fontFace: FONT_BODY, fontSize: 16,
+        align: "center", valign: "top", margin: 0, paraSpaceAfter: 2,
+      }
+    );
   }
 
   // -----------------------------------------------------------
