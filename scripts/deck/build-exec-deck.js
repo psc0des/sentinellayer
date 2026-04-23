@@ -446,10 +446,58 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 6 — Architecture: two systems, one platform (2-col + arrow)
+  // SLIDE 6 — Why this matters (business value, paired with pain)
   // =============================================================
   {
-    const s = contentSlideBase(pres, 6, TOTAL, "Two systems, one platform");
+    const s = contentSlideBase(pres, 6, TOTAL, "Why this matters to the business");
+
+    // Pre-render parchment-coloured icon variants so they pop on charcoal circles.
+    const [oShield, oFile, oBolt, oPiggy, oClipboard] = await Promise.all([
+      iconPng(FaShieldAlt, "#" + C.parchment),
+      iconPng(FaFileAlt, "#" + C.parchment),
+      iconPng(FaBolt, "#" + C.parchment),
+      iconPng(FaPiggyBank, "#" + C.parchment),
+      iconPng(FaClipboardList, "#" + C.parchment),
+    ]);
+
+    const outcomes = [
+      { icon: oShield, title: "Containment of AI-driven incidents", body: "Every agent action pre-scored before it reaches Azure." },
+      { icon: oFile, title: "Audit-ready on day one", body: "Cosmos DB lineage — every decision reconstructable from inputs." },
+      { icon: oBolt, title: "Faster incident response", body: "Azure Monitor alerts route through the same pipeline; LLM-verified remediation plan in minutes, rollback pre-staged." },
+      { icon: oPiggy, title: "Cost discipline", body: "Cost agent surfaces waste; governance ensures DR and compliance tags aren't stripped by over-optimisation." },
+      { icon: oClipboard, title: "Compliance evidence", body: "Policy engine + full lineage supports SOC 2, ISO 27001, and PCI change-control obligations." },
+    ];
+    const rowY = 1.9, rowH = 0.9, rowGap = 0.1;
+    outcomes.forEach((o, i) => {
+      const y = rowY + i * (rowH + rowGap);
+      s.addShape("rect", {
+        x: MARGIN, y, w: SW - 2 * MARGIN, h: rowH,
+        fill: { color: i % 2 === 0 ? C.parchmentDeep : C.parchment },
+        line: { color: C.parchmentDeep, width: 0 },
+      });
+      s.addShape("ellipse", {
+        x: MARGIN + 0.2, y: y + 0.15, w: 0.6, h: 0.6,
+        fill: { color: C.garnet }, line: { color: C.garnet, width: 0 },
+      });
+      s.addImage({ data: o.icon, x: MARGIN + 0.3, y: y + 0.25, w: 0.4, h: 0.4 });
+      s.addText(o.title, {
+        x: MARGIN + 1.0, y, w: 4.8, h: rowH,
+        fontFace: FONT_HEAD, fontSize: 16, bold: true, color: C.garnet,
+        align: "left", valign: "middle", margin: 0,
+      });
+      s.addText(o.body, {
+        x: MARGIN + 5.9, y, w: SW - MARGIN - 5.9 - MARGIN - 0.2, h: rowH,
+        fontFace: FONT_BODY, fontSize: 13, color: C.walnut,
+        align: "left", valign: "middle", margin: 0,
+      });
+    });
+  }
+
+  // =============================================================
+  // SLIDE 7 — Architecture: two systems, one platform (2-col + arrow)
+  // =============================================================
+  {
+    const s = contentSlideBase(pres, 7, TOTAL, "Two systems, one platform");
 
     s.addText("Ops agents supply the changes. The CAB decides whether they ship.", {
       x: MARGIN, y: 1.75, w: SW - 2 * MARGIN, h: 0.5,
@@ -540,10 +588,10 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 7 — SRI™ framework (styled table)
+  // SLIDE 8 — SRI™ framework (styled table)
   // =============================================================
   {
-    const s = contentSlideBase(pres, 7, TOTAL, "The SRI™ framework");
+    const s = contentSlideBase(pres, 8, TOTAL, "The SRI™ framework");
 
     s.addText(
       "Four independent dimensions. One weighted composite. One defensible verdict.",
@@ -596,10 +644,10 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 8 — Decision surface (3 horizontal verdict bars)
+  // SLIDE 9 — Decision surface (3 horizontal verdict bars)
   // =============================================================
   {
-    const s = contentSlideBase(pres, 8, TOTAL, "The decision surface");
+    const s = contentSlideBase(pres, 9, TOTAL, "The decision surface");
 
     s.addText(
       "Deterministic rules first. The LLM adjusts within a bounded ±30 range — with a guardrail that prevents model drift from ever dominating the verdict.",
@@ -657,10 +705,10 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 9 — What's architecturally different (3-col cards)
+  // SLIDE 10 — What's architecturally different (3-col cards)
   // =============================================================
   {
-    const s = contentSlideBase(pres, 9, TOTAL, "Architecturally different");
+    const s = contentSlideBase(pres, 10, TOTAL, "Architecturally different");
 
     const cardY = 2.0, cardH = 4.5, gap = 0.3;
     const cardW = (SW - 2 * MARGIN - 2 * gap) / 3;
@@ -710,10 +758,10 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 10 — Where it fits in an enterprise stack (horizontal flow)
+  // SLIDE 11 — Where it fits in an enterprise stack (horizontal flow)
   // =============================================================
   {
-    const s = contentSlideBase(pres, 10, TOTAL, "Where it fits in an enterprise stack");
+    const s = contentSlideBase(pres, 11, TOTAL, "Where it fits in an enterprise stack");
 
     // Horizontal pipeline: Ops Agent → RuriSkry → IaC/Azure → Change
     const flowY = 2.2, boxH = 1.2;
@@ -789,59 +837,6 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 11 — Why this matters (icon + label + description rows)
-  // =============================================================
-  {
-    const s = contentSlideBase(pres, 11, TOTAL, "Why this matters to the business");
-
-    // Pre-render parchment-coloured icon variants so they pop on garnet circles.
-    const [oShield, oFile, oBolt, oPiggy, oClipboard] = await Promise.all([
-      iconPng(FaShieldAlt, "#" + C.parchment),
-      iconPng(FaFileAlt, "#" + C.parchment),
-      iconPng(FaBolt, "#" + C.parchment),
-      iconPng(FaPiggyBank, "#" + C.parchment),
-      iconPng(FaClipboardList, "#" + C.parchment),
-    ]);
-
-    const outcomes = [
-      { icon: oShield, title: "Containment of AI-driven incidents", body: "Every agent action pre-scored before it reaches Azure." },
-      { icon: oFile, title: "Audit-ready on day one", body: "Cosmos DB lineage — every decision reconstructable from inputs." },
-      { icon: oBolt, title: "Faster incident response", body: "Azure Monitor alerts route through the same pipeline; LLM-verified remediation plan in minutes, rollback pre-staged." },
-      { icon: oPiggy, title: "Cost discipline", body: "Cost agent surfaces waste; governance ensures DR and compliance tags aren't stripped by over-optimisation." },
-      { icon: oClipboard, title: "Compliance evidence", body: "Policy engine + full lineage supports SOC 2, ISO 27001, and PCI change-control obligations." },
-    ];
-    const rowY = 1.9, rowH = 0.9, rowGap = 0.1;
-    outcomes.forEach((o, i) => {
-      const y = rowY + i * (rowH + rowGap);
-      // Alternating band surfaces
-      s.addShape("rect", {
-        x: MARGIN, y, w: SW - 2 * MARGIN, h: rowH,
-        fill: { color: i % 2 === 0 ? C.parchmentDeep : C.parchment },
-        line: { color: C.parchmentDeep, width: 0 },
-      });
-      // Garnet icon-circle bookmark (left)
-      s.addShape("ellipse", {
-        x: MARGIN + 0.2, y: y + 0.15, w: 0.6, h: 0.6,
-        fill: { color: C.garnet }, line: { color: C.garnet, width: 0 },
-      });
-      // Parchment-coloured icon inside the circle for high contrast
-      s.addImage({ data: o.icon, x: MARGIN + 0.3, y: y + 0.25, w: 0.4, h: 0.4 });
-      // Title (garnet, bold)
-      s.addText(o.title, {
-        x: MARGIN + 1.0, y, w: 4.8, h: rowH,
-        fontFace: FONT_HEAD, fontSize: 16, bold: true, color: C.garnet,
-        align: "left", valign: "middle", margin: 0,
-      });
-      // Body (walnut)
-      s.addText(o.body, {
-        x: MARGIN + 5.9, y, w: SW - MARGIN - 5.9 - MARGIN - 0.2, h: rowH,
-        fontFace: FONT_BODY, fontSize: 13, color: C.walnut,
-        align: "left", valign: "middle", margin: 0,
-      });
-    });
-  }
-
-  // =============================================================
   // SLIDE 12 — Status today (badge grid 2x3)
   // =============================================================
   {
@@ -850,7 +845,7 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
     const items = [
       { icon: icnGithub, title: "Open source", body: "MIT licensed · public on GitHub" },
       { icon: icnCloud, title: "Azure-native", body: "Container Apps · Cosmos DB · AI Search · Key Vault · Resource Graph · Monitor" },
-      { icon: icnShield, title: "Production-grade", body: "1,000+ test suite · deployed end-to-end · live Azure topology" },
+      { icon: icnShield, title: "Production-architected", body: "1,000+ test suite · deployed end-to-end on Azure · small-scale validated, ready for broader field testing" },
       { icon: icnBolt, title: "Fully async", body: "7 agents · parallel orchestration · sub-10-second verdicts" },
       { icon: icnEye, title: "Dashboard included", body: "6-page React UI · SSE-streamed · enterprise design system" },
       { icon: icnCogs, title: "One-command deploy", body: "Terraform + Container Apps + Static Web App in a single script" },
@@ -888,7 +883,7 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
     });
 
     s.addText(
-      "Originally built for the Microsoft AI Dev Days Hackathon 2026 (Feb – Mar 2026). Since matured into production-capable governance infrastructure.",
+      "Originally built for the Microsoft AI Dev Days Hackathon 2026 (Feb – Mar 2026). Validated at small scale; the architecture is ready for broader real-world testing.",
       {
         x: MARGIN, y: 6.4, w: SW - 2 * MARGIN, h: 0.5,
         fontFace: FONT_BODY, fontSize: 13, italic: true, color: C.mutedBrown,
@@ -973,33 +968,78 @@ function contentSlideBase(pres, pageNum, totalPages, title) {
   }
 
   // =============================================================
-  // SLIDE 14 — The thesis (large quote)
+  // SLIDE 14 — Where this is heading (3 numbered claims + closing)
   // =============================================================
   {
-    const s = contentSlideBase(pres, 14, TOTAL, "The thesis");
-
-    // Quote mark (brass)
-    s.addText("“", {
-      x: MARGIN + 0.5, y: 2.0, w: 1.2, h: 1.4,
-      fontFace: FONT_HEAD, fontSize: 140, bold: true, color: C.brass,
-      align: "left", valign: "top", margin: 0,
-    });
+    const s = contentSlideBase(pres, 14, TOTAL, "Where this is heading");
 
     s.addText(
-      "Every autonomous system in the enterprise eventually acquires a governance layer. For infrastructure AI, that layer is missing today — and will be required procurement in eighteen months.",
+      "AI agents are being deployed into production infrastructure faster than governance can catch up. Three beats to watch:",
       {
-        x: MARGIN + 1.9, y: 2.3, w: SW - 2 * MARGIN - 2.5, h: 2.5,
-        fontFace: FONT_HEAD, fontSize: 24, italic: true, color: C.walnut,
+        x: MARGIN, y: 1.75, w: SW - 2 * MARGIN, h: 0.55,
+        fontFace: FONT_BODY, fontSize: 15, color: C.walnut,
         align: "left", valign: "top", margin: 0,
       }
     );
 
-    s.addText(
-      "RuriSkry is a working reference implementation of what that layer looks like on Azure. Open source, because the pattern matters more than the product. Azure-native, because that is where we work. Production-grade, because anything less does not count.",
+    const claims = [
       {
-        x: MARGIN + 1.9, y: 5.0, w: SW - 2 * MARGIN - 2.5, h: 1.5,
-        fontFace: FONT_BODY, fontSize: 15, color: C.walnut,
+        n: "1",
+        title: "Adoption is accelerating.",
+        body: "Every major cloud now ships operational AI agents. Enterprises are wiring them into production, whether or not governance is ready.",
+      },
+      {
+        n: "2",
+        title: "Capability controls are commoditising.",
+        body: "IAM, permission scopes, rate limits — every vendor ships them. The judgment layer (blast radius, policy fit, precedent, cost) does not exist.",
+      },
+      {
+        n: "3",
+        title: "Procurement will follow.",
+        body: "Same pattern as IAM, endpoint detection, and cloud security posture management: a missing control layer becomes required procurement within 12–18 months.",
+      },
+    ];
+
+    const rowY = 2.55, rowH = 1.15, rowGap = 0.12;
+    claims.forEach((c, i) => {
+      const y = rowY + i * (rowH + rowGap);
+      // Row surface
+      s.addShape("rect", {
+        x: MARGIN, y, w: SW - 2 * MARGIN, h: rowH,
+        fill: { color: C.parchmentDeep }, line: { color: C.parchmentDeep, width: 0 },
+      });
+      // Left accent band
+      s.addShape("rect", {
+        x: MARGIN, y, w: 0.1, h: rowH,
+        fill: { color: C.brass }, line: { color: C.brass, width: 0 },
+      });
+      // Numeral
+      s.addText(c.n, {
+        x: MARGIN + 0.35, y, w: 1.0, h: rowH,
+        fontFace: FONT_HEAD, fontSize: 52, bold: true, color: C.garnet,
+        align: "left", valign: "middle", margin: 0,
+      });
+      // Title
+      s.addText(c.title, {
+        x: MARGIN + 1.45, y: y + 0.18, w: SW - MARGIN - 1.45 - MARGIN - 0.2, h: 0.45,
+        fontFace: FONT_HEAD, fontSize: 19, bold: true, color: C.garnet,
+        align: "left", valign: "middle", margin: 0,
+      });
+      // Body
+      s.addText(c.body, {
+        x: MARGIN + 1.45, y: y + 0.6, w: SW - MARGIN - 1.45 - MARGIN - 0.2, h: rowH - 0.7,
+        fontFace: FONT_BODY, fontSize: 13, color: C.walnut,
         align: "left", valign: "top", margin: 0,
+      });
+    });
+
+    // Closing line
+    s.addText(
+      "RuriSkry is our working answer for Azure — open source, so the pattern can spread while the category gets built out.",
+      {
+        x: MARGIN, y: 6.4, w: SW - 2 * MARGIN, h: 0.45,
+        fontFace: FONT_HEAD, fontSize: 15, italic: true, color: C.garnet,
+        align: "center", valign: "middle", margin: 0,
       }
     );
   }
