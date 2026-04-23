@@ -48,6 +48,9 @@ dashboard/dist/
 dashboard/build/
 dashboard/.env
 
+# Node — deck builder
+scripts/deck/node_modules/
+
 # Testing
 .coverage
 htmlcov/
