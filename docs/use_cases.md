@@ -23,11 +23,12 @@
 │    - Historical Agent    → has this gone wrong before?             │
 │    - Financial Agent     → what does this cost / save?             │
 │       ↓                                                             │
-│  SRI™ Score (0–100) → APPROVED / ESCALATED / DENIED               │
+│  SRI™ Score (0–100) → APPROVED / APPROVED_IF / ESCALATED / DENIED  │
 │       ↓                                                             │
 │  Execution Gateway                                                  │
 │    - APPROVED + IaC tags  → Terraform PR on GitHub                 │
 │    - APPROVED + no IaC    → manual_required (HITL panel)           │
+│    - APPROVED_IF          → conditional (conditions panel in UI)   │
 │    - ESCALATED            → awaiting_review (HITL panel)           │
 │    - DENIED               → blocked, logged                        │
 └─────────────────────────────────────────────────────────────────────┘
@@ -315,6 +316,7 @@ decides whether a rule is genuinely dangerous before proposing removal.
 | SRI Score | Verdict | What the engine does |
 |-----------|---------|---------------------|
 | 0–25 | **APPROVED** | Routes to Terraform PR (IaC) or `manual_required` (no IaC) |
+| 0–25 + conditions | **APPROVED_IF** | Score is within the approval threshold but structured conditions must be met first (e.g. time window, blast radius confirmation). Shown as `conditional` in the dashboard with a per-condition checklist. Auto-promotes to APPROVED once all conditions are satisfied. |
 | 26–60 | **ESCALATED** | `awaiting_review` — HITL buttons in dashboard, Slack notification sent |
 | 61–100 | **DENIED** | `blocked` — logged to audit trail, no execution path opened |
 

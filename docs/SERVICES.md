@@ -43,6 +43,8 @@ Database: `azurerm_cosmosdb_sql_database.ruriskry` → `COSMOS_DATABASE` (defaul
 | `governance-alerts` | `azurerm_cosmosdb_sql_container.governance_alerts` | `/severity` | `COSMOS_CONTAINER_ALERTS` | `AlertTracker` |
 | `governance-scan-runs` | `azurerm_cosmosdb_sql_container.governance_scan_runs` | `/agent_type` | `COSMOS_CONTAINER_SCAN_RUNS` | `ScanRunTracker` |
 | `governance-executions` | `azurerm_cosmosdb_sql_container.governance_executions` | `/resource_id` | `COSMOS_CONTAINER_EXECUTIONS` | `CosmosExecutionClient` → `ExecutionGateway` |
+| `resource-inventory` | `azurerm_cosmosdb_sql_container.resource_inventory` | `/subscription_id` | `COSMOS_CONTAINER_INVENTORY` | `InventoryBuilder` |
+| `governance-checkpoints` | `azurerm_cosmosdb_sql_container.governance_checkpoints` | `/id` | `COSMOS_CONTAINER_CHECKPOINTS` | `CosmosCheckpointStore` (Phase 33C — scan resume) |
 
 ### Security & Secrets
 
@@ -133,6 +135,8 @@ All variables read by `src/config.py` from `.env` or Azure Container App environ
 | `COSMOS_CONTAINER_SCAN_RUNS` | `governance-scan-runs` | `config.py` | |
 | `COSMOS_CONTAINER_ALERTS` | `governance-alerts` | `config.py` | |
 | `COSMOS_CONTAINER_EXECUTIONS` | `governance-executions` | `config.py` | |
+| `COSMOS_CONTAINER_INVENTORY` | `resource-inventory` | `config.py` | Resource inventory snapshots |
+| `COSMOS_CONTAINER_CHECKPOINTS` | `governance-checkpoints` | `config.py` | Scan-level workflow checkpoints (Phase 33C) |
 | `AZURE_KEYVAULT_URL` | `""` | `deploy.sh` | Required for secret resolution |
 | `AZURE_MANAGED_IDENTITY_CLIENT_ID` | `""` | Terraform (Container App env) | User-Assigned MI client ID for ACR pull |
 | `AZURE_SUBSCRIPTION_ID` | `""` | `.env` / tfvars | Required for Resource Graph scanning |
@@ -146,8 +150,9 @@ All variables read by `src/config.py` from `.env` or Azure Container App environ
 | `IAC_GITHUB_REPO` | `""` | `.env` / tfvars | e.g. `your-org/your-iac-repo` |
 | `IAC_TERRAFORM_PATH` | `infrastructure/terraform-demo` | `config.py` | Path within IaC repo |
 | `EXECUTION_GATEWAY_ENABLED` | `false` | `.env` / tfvars | `true` to enable PR creation |
-| `USE_LOCAL_MOCKS` | `true` | `.env` | `false` for live Azure mode |
+| `USE_LOCAL_MOCKS` | `false` | `.env` | `true` = local JSON fixtures (offline/CI). `false` = live Azure (production default). Startup logs `⚠ MOCK MODE ACTIVE` when true. |
 | `USE_LIVE_TOPOLOGY` | `false` | `.env` | `true` for real Resource Graph topology queries |
+| `USE_WORKFLOWS` | `true` | `.env` | `true` (default as of Phase 33D) = 7-executor WorkflowBuilder graph. `false` = legacy `asyncio.gather()` path (deprecated). |
 | `DEMO_MODE` | `false` | `.env` | Returns hardcoded proposals without Azure OpenAI |
 | `LLM_CONCURRENCY_LIMIT` | `6` | `.env` | Max simultaneous LLM calls across all agents |
 | `LLM_TIMEOUT` | `600` | `.env` | Wall-clock timeout (seconds) per agentic LLM call |
