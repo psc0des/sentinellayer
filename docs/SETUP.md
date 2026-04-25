@@ -79,8 +79,26 @@ cp infrastructure/terraform-core/terraform.tfvars.example \
 Edit `terraform.tfvars` — at minimum set:
 ```hcl
 subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # az account show --query id -o tsv
-suffix          = "<suffix>"   # short unique string used in all Azure resource names
+suffix          = "<suffix>"   # see suffix rules below
 ```
+
+**Choosing a suffix — read this before deploying:**
+
+The suffix is appended to every Azure resource name (ACR, Key Vault, Container App, storage accounts, etc.). Several of these resource types have **globally unique** names across all of Azure — not just within your subscription. If two users pick the same suffix, the second deploy will fail with a `name already taken` error.
+
+Rules:
+- **Lowercase letters and digits only** — no hyphens, underscores, or uppercase (storage account name restriction)
+- **6–10 characters** — shorter risks collision, longer risks hitting Azure name length limits
+- **Must be globally unique** — use something personal and unlikely to be taken: your initials + a few digits works well (e.g. `jd4821`, `as9302`)
+- **Do not use** generic words like `test`, `demo`, `dev`, `prod`, or `ruriskry` — these are almost certainly already taken
+
+Resource types where the suffix must be globally unique:
+| Resource | Name pattern | Azure scope |
+|---|---|---|
+| Storage account (Terraform state) | `ruriskrytf<suffix>` | Global |
+| Key Vault | `ruriskry-core-kv-<suffix>` | Global |
+| Azure Container Registry | `ruriskryacr<suffix>` | Global |
+| Cognitive Services (Foundry) | `ruriskry-core-foundry-<suffix>` | Global |
 
 **Cross-subscription scanning (optional):** if you want RuriSkry to scan a *different* subscription
 than the one it deploys into (hub-spoke model), also set:

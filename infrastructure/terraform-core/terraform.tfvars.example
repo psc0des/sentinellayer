@@ -34,7 +34,10 @@ subscription_id        = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"   # az account s
 resource_group_name = "ruriskry-core-engine-rg"
 location            = "eastus2"
 env                 = "core"
-suffix              = "replace-me"   # e.g. "jd4821" — short, globally unique, no spaces
+suffix              = "replace-me"   # REQUIRED: 6-10 lowercase letters+digits, globally unique across all of Azure
+                                     # Bad: test, demo, prod, ruriskry (likely taken)
+                                     # Good: your initials + digits, e.g. "jd4821", "as9302"
+                                     # Used in: storage account, Key Vault, ACR, Foundry — all globally unique resource types
 enable_rg_lock      = false          # set true in production to protect against accidental deletion
 
 # Search and Cosmos
