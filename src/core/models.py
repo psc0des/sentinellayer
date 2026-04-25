@@ -20,6 +20,7 @@ class ActionType(str, Enum):
     MODIFY_NSG = "modify_nsg"
     CREATE_RESOURCE = "create_resource"
     UPDATE_CONFIG = "update_config"
+    ROTATE_STORAGE_KEY = "rotate_storage_key"  # Phase 34A — storage account key rotation
 
 
 class Urgency(str, Enum):
@@ -386,6 +387,7 @@ class ExecutionRecord(BaseModel):
     force_executed_by: Optional[str] = None        # admin who bypassed unmet conditions
     force_executed_at: Optional[datetime] = None
     force_execute_justification: Optional[str] = None
+    mode: str = "live"                             # "live" | "dry_run" (Phase 34A)
 
 
 # ============================================

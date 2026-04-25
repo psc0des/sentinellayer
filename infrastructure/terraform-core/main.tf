@@ -898,6 +898,56 @@ resource "azurerm_role_assignment" "vm_contributor" {
 }
 
 # =============================================================================
+# 10f. Website Contributor — restart App Service and Function App via SDK
+# =============================================================================
+# Phase 34A adds tool_restart_app_service and tool_restart_function_app which
+# call WebSiteManagementClient.web_apps.restart().
+# Website Contributor grants:
+#   Microsoft.Web/sites/restart/action
+#   Microsoft.Web/sites/read
+#   Microsoft.Web/serverfarms/write  (needed by scale_app_service_plan)
+#   Microsoft.Web/serverfarms/read
+#
+# Scope: subscription-level to cover all App Services in managed resource groups.
+resource "azurerm_role_assignment" "website_contributor" {
+  scope                = "/subscriptions/${local.scan_subscription_id}"
+  role_definition_name = "Website Contributor"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+
+  depends_on = [azurerm_container_app.backend]
+}
+
+# =============================================================================
+# 10g. Azure Kubernetes Service Contributor — scale AKS node pools via SDK
+# =============================================================================
+# Phase 34A adds tool_scale_aks_nodepool which calls
+# ContainerServiceClient.agent_pools.begin_create_or_update().
+# AKS Contributor grants:
+#   Microsoft.ContainerService/managedClusters/agentPools/write
+#   Microsoft.ContainerService/managedClusters/agentPools/read
+#
+# Scope: subscription-level to cover all AKS clusters in managed resource groups.
+resource "azurerm_role_assignment" "aks_contributor" {
+  scope                = "/subscriptions/${local.scan_subscription_id}"
+  role_definition_name = "Azure Kubernetes Service Contributor Role"
+  principal_id         = azurerm_container_app.backend.identity[0].principal_id
+
+  depends_on = [azurerm_container_app.backend]
+}
+
+# NOTE — Storage Account Key Operator Service Role (Phase 34A):
+# tool_rotate_storage_keys requires "Storage Account Key Operator Service Role"
+# but Azure rejects this role at subscription scope. It must be granted per
+# storage account. Grant manually after identifying which accounts need rotation:
+#
+#   az role assignment create \
+#     --assignee <backend-mi-principal-id> \
+#     --role "Storage Account Key Operator Service Role" \
+#     --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>
+#
+# This is documented in docs/SETUP.md under "Storage Key Rotation RBAC".
+
+# =============================================================================
 # 11. Static Web App — React Dashboard
 # =============================================================================
 # Hosts the compiled React dashboard (dashboard/dist/).

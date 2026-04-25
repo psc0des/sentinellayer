@@ -68,6 +68,11 @@ OPERATION DECISION TREE — apply in order, stop at first match:
      - NSG rule create: use create_nsg_rule
      - VM start/restart: use start_vm or restart_vm
      - VM resize: use resize_vm
+     - App Service (Web/sites) restart: use restart_app_service
+     - Function App (Web/sites kind=functionapp) restart: use restart_function_app
+     - App Service Plan scale (SKU or worker count): use scale_app_service_plan
+     - AKS nodepool scale (node count): use scale_aks_nodepool
+     - Storage account key rotation: use rotate_storage_keys
      - Resource deletion: use delete_resource
      - Tag update only: use update_resource_tags
      → These are the safest, most tested paths. Use them when they fit.
@@ -238,6 +243,10 @@ _AUTO_FIX_OPS: frozenset[str] = frozenset({
     "start_vm", "restart_vm", "resize_vm",
     "delete_nsg_rule", "create_nsg_rule",
     "delete_resource", "update_resource_tags",
+    # Phase 34A — Tier 1 SDK expansion
+    "restart_app_service", "restart_function_app",
+    "scale_app_service_plan", "scale_aks_nodepool",
+    "rotate_storage_keys",
 })
 
 
@@ -507,32 +516,38 @@ class ExecutionAgent:
             )
             return self._build_mock_plan(action)
 
-    async def execute(self, plan: dict, action: ProposedAction) -> dict:
+    async def execute(self, plan: dict, action: ProposedAction, dry_run: bool = False) -> dict:
         """Execute a pre-approved plan.
 
         Args:
-            plan:   Plan dict previously returned by plan().
-            action: The original ProposedAction (for context).
+            plan:     Plan dict previously returned by plan().
+            action:   The original ProposedAction (for context).
+            dry_run:  If True, resolve and validate all SDK calls but skip mutating
+                      operations. Returns a structured "would have run" result.
+                      Audit record is written with mode="dry_run" in both cases.
 
         Returns a dict with:
             success         — True if all steps completed
             steps_completed — list of {step, operation, success, message}
             summary         — human-readable result
+            mode            — "live" | "dry_run"
         """
         if not self._use_framework:
             logger.info(
-                "ExecutionAgent: mock/no-framework mode — simulating execution of %d step(s)",
-                len(plan.get("steps", [])),
+                "ExecutionAgent: mock/no-framework mode — simulating execution of %d step(s) "
+                "(dry_run=%s)",
+                len(plan.get("steps", [])), dry_run,
             )
-            return self._execute_mock(plan)
+            return self._execute_mock(plan, dry_run=dry_run)
         try:
-            return await self._execute_with_framework(plan, action)
+            return await self._execute_with_framework(plan, action, dry_run=dry_run)
         except Exception as exc:  # noqa: BLE001
             logger.warning("ExecutionAgent: execute LLM failed (%s)", exc)
             return {
                 "success": False,
                 "steps_completed": [],
                 "summary": f"LLM execution error: {exc}",
+                "mode": "dry_run" if dry_run else "live",
             }
 
     async def verify(self, action: ProposedAction, execute_result: dict) -> dict:
@@ -731,22 +746,83 @@ class ExecutionAgent:
         elif action.action_type in (ActionType.SCALE_DOWN, ActionType.SCALE_UP):
             proposed = action.target.proposed_sku or "<NEW_SKU>"
             original = action.target.current_sku or "<ORIGINAL_SKU>"
-            steps.append({
-                "operation": "resize_vm",
-                "target": action.target.resource_id,
-                "params": {"resource_group": rg, "vm_name": name, "new_size": proposed},
-                "reason": f"Resize VM from {original} to {proposed}",
-            })
-            commands.append(
-                f"az vm resize"
-                f" --resource-group {rg}"
-                f" --name {name}"
-                f" --size {proposed}"
-            )
-            rollback_hint = (
-                f"Resize VM '{name}' back to {original} using resize_vm "
-                f"(resource group: {rg}, vm_name: {name}, new_size: {original})."
-            )
+            resource_type = action.target.resource_type or ""
+
+            if "Web/serverfarms" in resource_type:
+                # App Service Plan vertical or horizontal scale
+                steps.append({
+                    "operation": "scale_app_service_plan",
+                    "target": action.target.resource_id,
+                    "params": {
+                        "resource_group": rg,
+                        "plan_name": name,
+                        "new_sku_name": proposed,
+                        "worker_count": 0,
+                    },
+                    "reason": f"Scale App Service Plan '{name}' to SKU {proposed}",
+                })
+                commands.append(
+                    f"az appservice plan update"
+                    f" --resource-group {rg}"
+                    f" --name {name}"
+                    f" --sku {proposed}"
+                )
+                rollback_hint = (
+                    f"Scale App Service Plan '{name}' back to {original} using "
+                    f"scale_app_service_plan (resource_group: {rg}, plan_name: {name}, "
+                    f"new_sku_name: {original})."
+                )
+
+            elif "ContainerService" in resource_type:
+                # AKS nodepool scale
+                config = action.config_changes or {}
+                nodepool_name = config.get("nodepool_name", "agentpool")
+                try:
+                    node_count = int(proposed)
+                except (ValueError, TypeError):
+                    node_count = 3
+                steps.append({
+                    "operation": "scale_aks_nodepool",
+                    "target": action.target.resource_id,
+                    "params": {
+                        "resource_group": rg,
+                        "cluster_name": name,
+                        "nodepool_name": nodepool_name,
+                        "node_count": node_count,
+                    },
+                    "reason": f"Scale AKS nodepool '{nodepool_name}' on '{name}' to {node_count} nodes",
+                })
+                commands.append(
+                    f"az aks nodepool scale"
+                    f" --resource-group {rg}"
+                    f" --cluster-name {name}"
+                    f" --name {nodepool_name}"
+                    f" --node-count {node_count}"
+                )
+                rollback_hint = (
+                    f"Scale AKS nodepool '{nodepool_name}' back to its original count using "
+                    f"scale_aks_nodepool (resource_group: {rg}, cluster_name: {name}, "
+                    f"nodepool_name: {nodepool_name}, node_count: {original})."
+                )
+
+            else:
+                # VM resize (default)
+                steps.append({
+                    "operation": "resize_vm",
+                    "target": action.target.resource_id,
+                    "params": {"resource_group": rg, "vm_name": name, "new_size": proposed},
+                    "reason": f"Resize VM from {original} to {proposed}",
+                })
+                commands.append(
+                    f"az vm resize"
+                    f" --resource-group {rg}"
+                    f" --name {name}"
+                    f" --size {proposed}"
+                )
+                rollback_hint = (
+                    f"Resize VM '{name}' back to {original} using resize_vm "
+                    f"(resource group: {rg}, vm_name: {name}, new_size: {original})."
+                )
 
         elif action.action_type == ActionType.DELETE_RESOURCE:
             steps.append({
@@ -770,20 +846,76 @@ class ExecutionAgent:
             )
 
         elif action.action_type == ActionType.RESTART_SERVICE:
+            resource_type = action.target.resource_type or ""
+
+            if "Web/sites" in resource_type:
+                # App Service or Function App restart
+                is_function = (
+                    "functionapp" in resource_type.lower()
+                    or "function" in action.reason.lower()
+                    or "function" in name.lower()
+                )
+                op = "restart_function_app" if is_function else "restart_app_service"
+                cmd_verb = "functionapp" if is_function else "webapp"
+                steps.append({
+                    "operation": op,
+                    "target": action.target.resource_id,
+                    "params": {"resource_group": rg, "app_name": name},
+                    "reason": f"Restart {'Function App' if is_function else 'App Service'} '{name}'",
+                })
+                commands.append(
+                    f"az {cmd_verb} restart"
+                    f" --resource-group {rg}"
+                    f" --name {name}"
+                )
+                rollback_hint = (
+                    f"{'Function App' if is_function else 'App Service'} restart is idempotent — "
+                    f"no rollback required. To stop '{name}': "
+                    f"az {cmd_verb} stop --resource-group {rg} --name {name}"
+                )
+
+            else:
+                # VM (default)
+                steps.append({
+                    "operation": "start_vm",
+                    "target": action.target.resource_id,
+                    "params": {"resource_group": rg, "vm_name": name},
+                    "reason": f"Start VM '{name}' (may be deallocated or stopped)",
+                })
+                commands.append(
+                    f"az vm start"
+                    f" --resource-group {rg}"
+                    f" --name {name}"
+                )
+                rollback_hint = (
+                    f"Deallocate VM '{name}' to return it to stopped state using deallocate_vm "
+                    f"(resource group: {rg}, vm_name: {name})."
+                )
+
+        elif action.action_type == ActionType.ROTATE_STORAGE_KEY:
+            config = action.config_changes or {}
+            key_name = config.get("key_name", "key1")
             steps.append({
-                "operation": "start_vm",
+                "operation": "rotate_storage_keys",
                 "target": action.target.resource_id,
-                "params": {"resource_group": rg, "vm_name": name},
-                "reason": f"Start VM '{name}' (may be deallocated or stopped)",
+                "params": {
+                    "resource_group": rg,
+                    "account_name": name,
+                    "key_name": key_name,
+                },
+                "reason": f"Rotate storage account key '{key_name}' on '{name}'",
             })
             commands.append(
-                f"az vm start"
+                f"az storage account keys renew"
                 f" --resource-group {rg}"
-                f" --name {name}"
+                f" --account-name {name}"
+                f" --key {key_name}"
             )
             rollback_hint = (
-                f"Deallocate VM '{name}' to return it to stopped state using deallocate_vm "
-                f"(resource group: {rg}, vm_name: {name})."
+                f"Key rotation cannot be automatically reversed — the old key value is gone. "
+                f"Update all dependents (connection strings, SAS tokens) that used the rotated key. "
+                f"To rotate the other key: az storage account keys renew"
+                f" --resource-group {rg} --account-name {name} --key key2"
             )
 
         elif action.action_type == ActionType.UPDATE_CONFIG:
@@ -921,24 +1053,30 @@ class ExecutionAgent:
             "remediation_confidence": _compute_confidence(steps),
         }
 
-    def _execute_mock(self, plan: dict) -> dict:
-        """Simulate successful execution of all plan steps (no Azure SDK)."""
+    def _execute_mock(self, plan: dict, dry_run: bool = False) -> dict:
+        """Simulate successful execution of all plan steps (no Azure SDK).
+
+        When dry_run=True, annotates results with [dry_run] prefix and sets mode="dry_run".
+        """
         steps_completed = []
+        prefix = "[dry_run]" if dry_run else "[mock]"
         for i, step in enumerate(plan.get("steps", [])):
             steps_completed.append({
                 "step": i,
                 "operation": step.get("operation", "unknown"),
                 "success": True,
                 "message": (
-                    f"[mock] {step.get('reason', step.get('operation', 'step'))} "
+                    f"{prefix} {step.get('reason', step.get('operation', 'step'))} "
                     "— simulated success"
                 ),
             })
         n = len(steps_completed)
+        mode_label = "dry-run" if dry_run else "mock"
         return {
             "success": True,
             "steps_completed": steps_completed,
-            "summary": f"[mock] All {n} step{'s' if n != 1 else ''} completed successfully",
+            "summary": f"[{mode_label}] All {n} step{'s' if n != 1 else ''} completed successfully",
+            "mode": "dry_run" if dry_run else "live",
         }
 
     # ------------------------------------------------------------------
@@ -1162,7 +1300,7 @@ class ExecutionAgent:
         return self._build_mock_plan(action)
 
     async def _execute_with_framework(
-        self, plan: dict, action: ProposedAction
+        self, plan: dict, action: ProposedAction, dry_run: bool = False
     ) -> dict:
         """Use GPT-4.1 to execute the approved plan using Azure SDK write tools."""
         from openai import AsyncAzureOpenAI  # noqa: PLC0415
@@ -1470,6 +1608,222 @@ class ExecutionAgent:
             except Exception as exc:  # noqa: BLE001
                 return json.dumps({"success": False, "error": str(exc)})
 
+        # ------------------------------------------------------------------
+        # Phase 34A — Tier 1 SDK expansion tools
+        # Each accepts dry_run: bool — when True, validates the call but
+        # skips the mutating SDK operation and returns a "would have run" result.
+        # The outer-scope _dry_run captures the user's intent; the parameter
+        # allows the LLM to see and pass it explicitly.
+        # ------------------------------------------------------------------
+        _dry_run = dry_run
+
+        @af.tool(
+            name="restart_app_service",
+            description=(
+                "Restart an Azure App Service web app. "
+                "dry_run=True validates the call without restarting."
+            ),
+        )
+        async def tool_restart_app_service(
+            resource_group: str, app_name: str, dry_run: bool = False
+        ) -> str:
+            if _dry_run or dry_run:
+                return json.dumps({
+                    "success": True,
+                    "mode": "dry_run",
+                    "message": (
+                        f"[dry_run] Would restart App Service '{app_name}' "
+                        f"in '{resource_group}'"
+                    ),
+                })
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
+            from azure.mgmt.web.aio import WebSiteManagementClient  # noqa: PLC0415
+            try:
+                async with AioCredential() as cred:
+                    async with WebSiteManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        await client_.web_apps.restart(resource_group, app_name)
+                return json.dumps({
+                    "success": True,
+                    "message": f"Restarted App Service '{app_name}' in '{resource_group}'",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
+
+        @af.tool(
+            name="restart_function_app",
+            description=(
+                "Restart an Azure Function App. "
+                "dry_run=True validates the call without restarting."
+            ),
+        )
+        async def tool_restart_function_app(
+            resource_group: str, app_name: str, dry_run: bool = False
+        ) -> str:
+            if _dry_run or dry_run:
+                return json.dumps({
+                    "success": True,
+                    "mode": "dry_run",
+                    "message": (
+                        f"[dry_run] Would restart Function App '{app_name}' "
+                        f"in '{resource_group}'"
+                    ),
+                })
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
+            from azure.mgmt.web.aio import WebSiteManagementClient  # noqa: PLC0415
+            try:
+                async with AioCredential() as cred:
+                    async with WebSiteManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        await client_.web_apps.restart(resource_group, app_name)
+                return json.dumps({
+                    "success": True,
+                    "message": f"Restarted Function App '{app_name}' in '{resource_group}'",
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
+
+        @af.tool(
+            name="scale_app_service_plan",
+            description=(
+                "Scale an Azure App Service Plan to a new SKU tier or worker count. "
+                "new_sku_name: e.g. 'P2v2', 'S2', 'B3'. "
+                "worker_count: number of workers (0 = leave unchanged). "
+                "dry_run=True validates the call without scaling."
+            ),
+        )
+        async def tool_scale_app_service_plan(
+            resource_group: str,
+            plan_name: str,
+            new_sku_name: str,
+            worker_count: int = 0,
+            dry_run: bool = False,
+        ) -> str:
+            if _dry_run or dry_run:
+                return json.dumps({
+                    "success": True,
+                    "mode": "dry_run",
+                    "message": (
+                        f"[dry_run] Would scale App Service Plan '{plan_name}' "
+                        f"to SKU '{new_sku_name}'"
+                        + (f", {worker_count} workers" if worker_count else "")
+                        + f" in '{resource_group}'"
+                    ),
+                })
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
+            from azure.mgmt.web.aio import WebSiteManagementClient  # noqa: PLC0415
+            try:
+                async with AioCredential() as cred:
+                    async with WebSiteManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        existing = await client_.app_service_plans.get(resource_group, plan_name)
+                        sku = existing.sku
+                        sku.name = new_sku_name
+                        if worker_count > 0:
+                            sku.capacity = worker_count
+                        poller = await client_.app_service_plans.begin_create_or_update(
+                            resource_group, plan_name,
+                            {"location": existing.location, "sku": sku},
+                        )
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": (
+                        f"Scaled App Service Plan '{plan_name}' to SKU '{new_sku_name}' "
+                        f"in '{resource_group}'"
+                    ),
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
+
+        @af.tool(
+            name="scale_aks_nodepool",
+            description=(
+                "Scale an AKS node pool to a new node count. "
+                "dry_run=True validates the call without scaling."
+            ),
+        )
+        async def tool_scale_aks_nodepool(
+            resource_group: str,
+            cluster_name: str,
+            nodepool_name: str,
+            node_count: int,
+            dry_run: bool = False,
+        ) -> str:
+            if _dry_run or dry_run:
+                return json.dumps({
+                    "success": True,
+                    "mode": "dry_run",
+                    "message": (
+                        f"[dry_run] Would scale AKS nodepool '{nodepool_name}' on "
+                        f"'{cluster_name}' to {node_count} nodes in '{resource_group}'"
+                    ),
+                })
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
+            from azure.mgmt.containerservice.aio import ContainerServiceClient  # noqa: PLC0415
+            try:
+                async with AioCredential() as cred:
+                    async with ContainerServiceClient(cred, cfg.azure_subscription_id) as client_:
+                        existing = await client_.agent_pools.get(
+                            resource_group, cluster_name, nodepool_name
+                        )
+                        existing.count = node_count
+                        poller = await client_.agent_pools.begin_create_or_update(
+                            resource_group, cluster_name, nodepool_name, existing
+                        )
+                        await poller.result()
+                return json.dumps({
+                    "success": True,
+                    "message": (
+                        f"Scaled AKS nodepool '{nodepool_name}' to {node_count} nodes "
+                        f"on cluster '{cluster_name}' in '{resource_group}'"
+                    ),
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
+
+        @af.tool(
+            name="rotate_storage_keys",
+            description=(
+                "Rotate (regenerate) an Azure Storage Account key. "
+                "key_name: 'key1' or 'key2'. "
+                "IMPORTANT: Requires 'Storage Account Key Operator Service Role' "
+                "scoped to the specific storage account — not subscription-wide. "
+                "dry_run=True validates the call without rotating."
+            ),
+        )
+        async def tool_rotate_storage_keys(
+            resource_group: str,
+            account_name: str,
+            key_name: str = "key1",
+            dry_run: bool = False,
+        ) -> str:
+            if _dry_run or dry_run:
+                return json.dumps({
+                    "success": True,
+                    "mode": "dry_run",
+                    "message": (
+                        f"[dry_run] Would rotate storage account key '{key_name}' "
+                        f"on '{account_name}' in '{resource_group}'"
+                    ),
+                })
+            from azure.identity.aio import DefaultAzureCredential as AioCredential  # noqa: PLC0415
+            from azure.mgmt.storage.aio import StorageManagementClient  # noqa: PLC0415
+            try:
+                async with AioCredential() as cred:
+                    async with StorageManagementClient(cred, cfg.azure_subscription_id) as client_:
+                        result = await client_.storage_accounts.regenerate_key(
+                            resource_group,
+                            account_name,
+                            {"key_name": key_name},
+                        )
+                return json.dumps({
+                    "success": True,
+                    "message": (
+                        f"Rotated storage key '{key_name}' on '{account_name}' "
+                        f"in '{resource_group}' — update all dependents with the new key"
+                    ),
+                })
+            except Exception as exc:  # noqa: BLE001
+                return json.dumps({"success": False, "error": str(exc)})
+
         @af.tool(
             name="report_step_result",
             description=(
@@ -1502,15 +1856,25 @@ class ExecutionAgent:
                 tool_update_resource_tags,
                 tool_fetch_azure_docs_execute,
                 tool_update_resource_property,
+                # Phase 34A — Tier 1 SDK expansion
+                tool_restart_app_service,
+                tool_restart_function_app,
+                tool_scale_app_service_plan,
+                tool_scale_aks_nodepool,
+                tool_rotate_storage_keys,
                 tool_report_step_result,
             ],
         )
 
         plan_json = json.dumps(plan, indent=2, default=str)
+        dry_run_clause = (
+            " Pass dry_run=True to every action tool call — this is a dry run."
+            if dry_run else ""
+        )
         prompt = (
             f"Execute the following pre-approved plan:\n\n{plan_json}\n\n"
-            "For each step, call the appropriate tool then call report_step_result. "
-            "Stop immediately if any step fails."
+            f"For each step, call the appropriate tool then call report_step_result. "
+            f"Stop immediately if any step fails.{dry_run_clause}"
         )
 
         await run_with_throttle(agent.run, prompt)
@@ -1525,6 +1889,7 @@ class ExecutionAgent:
                 "success": False,
                 "steps_completed": [],
                 "summary": "No steps were executed — LLM did not call any tools",
+                "mode": "dry_run" if dry_run else "live",
             }
 
         all_ok = all(s["success"] for s in execution_log)
@@ -1539,6 +1904,7 @@ class ExecutionAgent:
                 if all_ok
                 else f"{n_ok}/{n_total} steps completed — execution stopped on failure"
             ),
+            "mode": "dry_run" if dry_run else "live",
         }
 
     async def _verify_with_framework(

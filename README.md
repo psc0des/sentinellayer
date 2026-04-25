@@ -11,7 +11,7 @@
 
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1112 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1131 automated tests.
 
 ---
 
@@ -469,7 +469,7 @@ python examples/demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 1112 passed, 0 failed
+# Expected: 1131 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 ```
@@ -593,7 +593,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 1112-test suite.
+drilldowns, and a comprehensive 1131-test suite.
 
 ---
 
@@ -615,9 +615,23 @@ RuriSkry is a genuine attempt at solving a real and underserved problem: holding
 - The agent execution paths (plan → execute → verify → rollback) work, but may behave unexpectedly on resource configurations or Azure environments I haven't tested against
 - You will likely find bugs. That's expected and welcome — every issue reported makes this better for everyone
 
-**Known scope limitation — direct remediation coverage:**
+**Direct remediation coverage (Phase 34A Tier 1 SDK):**
 
-RuriSkry **scans every resource type** in Azure (VMs, App Services, AKS, SQL, Storage, Cosmos, Function Apps, etc.) — `Reader` is the only role needed for that. But **direct API remediation is currently limited to Virtual Machines and Network Security Groups**. For all other resource types, the Execution Gateway creates a Terraform PR for human review and merge. If your environment is not Terraform-managed (e.g. portal-only, ad-hoc `az` CLI, custom scripts), you will not have an automated remediation path for resources outside VMs/NSGs — RuriSkry will still surface verdicts and recommendations, but the action has to be applied manually. Expanding direct execution coverage (App Services, AKS, generic playbook approach) is on the roadmap.
+RuriSkry **scans every resource type** in Azure (`Reader` is the only role for scanning). **Direct API remediation (Tier 1)** now covers 7 resource categories:
+
+| Resource | Operation | Role required |
+|---|---|---|
+| Virtual Machines | start / restart / resize | `Virtual Machine Contributor` |
+| Network Security Groups | create / modify / delete rules | `Network Contributor` |
+| App Services | restart | `Website Contributor` |
+| Function Apps | restart | `Website Contributor` |
+| App Service Plans | scale SKU / worker count | `Website Contributor` |
+| AKS node pools | scale node count | `Azure Kubernetes Service Contributor Role` |
+| Storage Accounts | rotate keys | `Storage Account Key Operator` (per account — can't be subscription-scoped) |
+
+All Tier 1 tools support **dry-run mode** — pass `dry_run=True` in the execute call to validate the full call path and write an audit record without making the mutating API call.
+
+For SQL, Cosmos DB, Key Vault, and all other resource types, the Execution Gateway still creates a Terraform PR for human review and merge. If your environment is not Terraform-managed, RuriSkry will still surface verdicts and recommendations for those types, but the action must be applied manually.
 
 **If you're deploying RuriSkry:**
 - Start with mock mode (`USE_LOCAL_MOCKS=true`) to understand how the decision pipeline works before connecting live Azure credentials

@@ -42,29 +42,43 @@ Once deployed, RuriSkry governs your resources using its own Managed Identity, n
 
 `Reader` covers every resource type in Azure — VMs, App Services, AKS, SQL, Storage, Cosmos, Function Apps, etc. RuriSkry can scan and make governance decisions on all of them.
 
-Direct remediation (executing the action via Azure SDK) is intentionally limited to two resource types:
+Direct remediation (executing the action via Azure SDK — Phase 34A Tier 1) now covers seven resource types:
 
 | Resource type | Can scan? | Can directly remediate? |
 |---|---|---|
-| Virtual Machines | ✓ | ✓ start / restart via `VM Contributor` |
+| Virtual Machines | ✓ | ✓ start / restart / resize via `VM Contributor` |
 | Network Security Groups | ✓ | ✓ add / modify / delete rules via `Network Contributor` |
-| App Services, AKS, SQL, Storage, and everything else | ✓ | ✗ — proposes action + creates Terraform PR via Execution Gateway |
+| App Services (`Microsoft.Web/sites`) | ✓ | ✓ restart via `Website Contributor` |
+| Function Apps (`Microsoft.Web/sites` kind=functionapp) | ✓ | ✓ restart via `Website Contributor` |
+| App Service Plans (`Microsoft.Web/serverfarms`) | ✓ | ✓ scale (SKU / worker count) via `Website Contributor` |
+| AKS node pools | ✓ | ✓ scale node count via `Azure Kubernetes Service Contributor Role` |
+| Storage Accounts (key rotation) | ✓ | ✓ rotate key — requires `Storage Account Key Operator Service Role` **per account** (see note below) |
+| SQL, Cosmos DB, Key Vault, and everything else | ✓ | ✗ — proposes action + creates Terraform PR via Execution Gateway |
 
-For all other resource types, RuriSkry raises a governance verdict and the Execution Gateway opens a Terraform PR in your IaC repo. A human reviews and merges it — the change happens through your normal IaC pipeline, not via direct Azure API calls. This is by design: direct API access is only granted for the two operations that are fast, reversible, and well-understood (restarting a VM, patching an NSG rule).
+For all other resource types, RuriSkry raises a governance verdict and the Execution Gateway opens a Terraform PR in your IaC repo. A human reviews and merges it — the change happens through your normal IaC pipeline, not via direct Azure API calls.
 
-> **Known limitation — be aware before adopting.** If your environment is **not Terraform-managed** (no IaC repo, or you manage Azure via portal / `az` CLI / scripts), you currently have no automated remediation path for App Services, AKS, SQL, Storage, Function Apps, etc. RuriSkry will still scan and propose actions for these resource types, but you will have to execute the remediations manually based on its recommendations. Direct execution coverage will expand in a future release — track [the roadmap](https://github.com/psc0des/ruriskry/issues) or open an issue if a specific resource type is blocking your adoption.
+> **Storage key rotation RBAC:** Azure rejects `Storage Account Key Operator Service Role` at subscription scope. Grant it per storage account after identifying which accounts are under RuriSkry management:
+> ```bash
+> az role assignment create \
+>   --assignee <backend-mi-principal-id> \
+>   --role "Storage Account Key Operator Service Role" \
+>   --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>
+> ```
 
-**The five roles and which part of RuriSkry uses each:**
+> **Dry-run mode (Phase 34A):** Every Tier 1 SDK tool accepts `dry_run=True`. In dry-run mode the SDK call is not made, but a full audit record is written to `governance-executions` with `mode="dry_run"`. Use dry-run to verify a remediation path without touching the resource.
+
+**The seven roles and which part of RuriSkry uses each:**
 
 | Role | Scope | Used by | What it enables |
 |---|---|---|---|
 | `Reader` | Target subscription | All agents — scans all resource types for cost, security, availability, and deployment analysis. Also covers Azure Advisor, Defender for Cloud, and Azure Policy APIs. | Discovery and analysis across your entire subscription. |
 | `Network Contributor` | Target subscription | Execution Agent — directly calls `NetworkManagementClient` to create/delete NSG rules when a security remediation is approved. | Live NSG rule patching without a Terraform PR. |
-| `Virtual Machine Contributor` | Target subscription | Execution Agent — directly calls `ComputeManagementClient` to `start_vm` / `restart_vm` when a monitoring remediation is approved. | Live VM start/restart without a Terraform PR. |
+| `Virtual Machine Contributor` | Target subscription | Execution Agent — directly calls `ComputeManagementClient` to `start_vm` / `restart_vm` / `resize_vm` when a monitoring remediation is approved. | Live VM operations without a Terraform PR. |
+| `Website Contributor` | Target subscription | Execution Agent — calls `WebSiteManagementClient` to restart App Services / Function Apps and scale App Service Plans. | Live App Service and App Service Plan operations without a Terraform PR. |
+| `Azure Kubernetes Service Contributor Role` | Target subscription | Execution Agent — calls `ContainerServiceClient` to scale AKS node pool counts. | Live AKS nodepool scaling without a Terraform PR. |
+| `Storage Account Key Operator Service Role` | Per storage account | Execution Agent — calls `StorageManagementClient.regenerate_key()`. Cannot be subscription-scoped (Azure limitation). Grant per account — see note above. | Storage key rotation per account. |
 | `Cognitive Services OpenAI User` | Foundry account (internal) | All four governance agents — required to call `gpt-4.1-mini` for every governance decision. Without this, all LLM decisions fail with 401. | LLM-based governance decisions. |
 | `AcrPull` | ACR (internal) | Container App runtime — pulls the backend image on every start and restart. | Container startup. |
-| `Cognitive Services OpenAI User` | Foundry account (internal) | Call the LLM (`gpt-4.1-mini`) to make governance decisions. Every agent scan that reaches the LLM step requires this. Without it, all LLM decisions fail with 401 PermissionDenied. |
-| `AcrPull` | ACR (internal) | Pull the backend Docker image from the private registry. The Container App uses this on every start and restart. |
 
 > **Note on scope:** `Reader`, `Network Contributor`, and `VM Contributor` are granted at subscription scope — meaning RuriSkry can govern resources across all resource groups in your subscription. If you want tighter scope (e.g., only a specific resource group), change the `scope` in `infrastructure/terraform-core/main.tf` on the relevant `azurerm_role_assignment` resources before deploying.
 

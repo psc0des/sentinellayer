@@ -14,6 +14,7 @@ import pytest
 
 from src.core.execution_agent import ExecutionAgent
 from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+# ActionTarget and ProposedAction are used directly in Phase 34A tests
 
 
 # ---------------------------------------------------------------------------
@@ -979,3 +980,346 @@ class TestGuidedManualSteps:
         plan = await agent.plan(action, {})
         step = plan["steps"][0]
         assert reason_text[:40] in step["reason"] or "guided" in step["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 34A — Tier 1 SDK Expansion: new tools + dry_run support
+# ---------------------------------------------------------------------------
+
+
+class TestPhase34ATier1Expansion:
+    """Phase 34A: 5 new Tier 1 SDK tools (App Service, Function App, App Service Plan,
+    AKS nodepool, Storage key rotation) + dry_run support across execute()."""
+
+    @pytest.fixture
+    def agent(self):
+        return ExecutionAgent(cfg=_make_cfg(use_local_mocks=True))
+
+    # -- plan() resource-type discrimination ----------------------------------
+
+    @pytest.mark.asyncio
+    async def test_plan_restart_app_service(self, agent):
+        """RESTART_SERVICE on Microsoft.Web/sites → restart_app_service operation."""
+        action = _make_action(
+            ActionType.RESTART_SERVICE,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Web/sites/api-prod"
+            ),
+            resource_type="Microsoft.Web/sites",
+            reason="App Service unhealthy — Http5xx rate > 5%",
+        )
+        plan = await agent.plan(action, {})
+
+        assert len(plan["steps"]) == 1
+        step = plan["steps"][0]
+        assert step["operation"] == "restart_app_service"
+        assert step["params"]["app_name"] == "api-prod"
+        assert step["params"]["resource_group"] == "rg"
+        assert "webapp restart" in plan["commands"][0]
+        assert plan["remediation_confidence"] == "auto_fix"
+
+    @pytest.mark.asyncio
+    async def test_plan_restart_function_app(self, agent):
+        """RESTART_SERVICE with 'function' in resource name → restart_function_app."""
+        action = _make_action(
+            ActionType.RESTART_SERVICE,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Web/sites/func-processor"
+            ),
+            resource_type="Microsoft.Web/sites",
+            reason="Function app crashing — restart needed",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "restart_function_app"
+        assert step["params"]["app_name"] == "func-processor"
+        assert "functionapp restart" in plan["commands"][0]
+
+    @pytest.mark.asyncio
+    async def test_plan_restart_function_app_by_reason(self, agent):
+        """RESTART_SERVICE with 'function' in reason → restart_function_app."""
+        action = _make_action(
+            ActionType.RESTART_SERVICE,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Web/sites/worker-01"
+            ),
+            resource_type="Microsoft.Web/sites",
+            reason="Function app worker-01 health check failing",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "restart_function_app"
+
+    @pytest.mark.asyncio
+    async def test_plan_restart_service_vm_unchanged(self, agent):
+        """RESTART_SERVICE on a VM still uses start_vm (existing behavior preserved)."""
+        action = _make_action(ActionType.RESTART_SERVICE)
+        plan = await agent.plan(action, {})
+
+        assert plan["steps"][0]["operation"] == "start_vm"
+
+    @pytest.mark.asyncio
+    async def test_plan_scale_app_service_plan(self, agent):
+        """SCALE_UP on Microsoft.Web/serverfarms → scale_app_service_plan."""
+        action = _make_action(
+            ActionType.SCALE_UP,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Web/serverfarms/asp-prod"
+            ),
+            resource_type="Microsoft.Web/serverfarms",
+            proposed_sku="P2v2",
+            current_sku="P1v2",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "scale_app_service_plan"
+        assert step["params"]["plan_name"] == "asp-prod"
+        assert step["params"]["new_sku_name"] == "P2v2"
+        assert "appservice plan update" in plan["commands"][0]
+        assert "P2v2" in plan["commands"][0]
+        assert plan["remediation_confidence"] == "auto_fix"
+
+    @pytest.mark.asyncio
+    async def test_plan_scale_down_app_service_plan(self, agent):
+        """SCALE_DOWN on Microsoft.Web/serverfarms → scale_app_service_plan."""
+        action = _make_action(
+            ActionType.SCALE_DOWN,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Web/serverfarms/asp-staging"
+            ),
+            resource_type="Microsoft.Web/serverfarms",
+            proposed_sku="B2",
+            current_sku="P1v2",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "scale_app_service_plan"
+        assert step["params"]["new_sku_name"] == "B2"
+
+    @pytest.mark.asyncio
+    async def test_plan_scale_aks_nodepool(self, agent):
+        """SCALE_UP on Microsoft.ContainerService/managedClusters → scale_aks_nodepool."""
+        action = _make_action(
+            ActionType.SCALE_UP,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.ContainerService/managedClusters/aks-prod"
+            ),
+            resource_type="Microsoft.ContainerService/managedClusters",
+            proposed_sku="5",
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["operation"] == "scale_aks_nodepool"
+        assert step["params"]["cluster_name"] == "aks-prod"
+        assert step["params"]["node_count"] == 5
+        assert "aks nodepool scale" in plan["commands"][0]
+        assert plan["remediation_confidence"] == "auto_fix"
+
+    @pytest.mark.asyncio
+    async def test_plan_scale_aks_nodepool_custom_pool(self, agent):
+        """AKS scale uses nodepool_name from config_changes when provided."""
+        action = ProposedAction(
+            agent_id="test",
+            action_type=ActionType.SCALE_UP,
+            target=ActionTarget(
+                resource_id=(
+                    "/subscriptions/sub/resourceGroups/rg/providers/"
+                    "Microsoft.ContainerService/managedClusters/aks-prod"
+                ),
+                resource_type="Microsoft.ContainerService/managedClusters",
+                proposed_sku="4",
+            ),
+            reason="AKS CPU high",
+            config_changes={"nodepool_name": "workerpool", "node_count": "4"},
+        )
+        plan = await agent.plan(action, {})
+
+        step = plan["steps"][0]
+        assert step["params"]["nodepool_name"] == "workerpool"
+        assert step["params"]["node_count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_plan_scale_vm_unchanged(self, agent):
+        """SCALE_DOWN on a VM still uses resize_vm (existing behavior preserved)."""
+        action = _make_action(ActionType.SCALE_DOWN, proposed_sku="Standard_B2ms")
+        plan = await agent.plan(action, {})
+
+        assert plan["steps"][0]["operation"] == "resize_vm"
+
+    @pytest.mark.asyncio
+    async def test_plan_rotate_storage_key(self, agent):
+        """ROTATE_STORAGE_KEY → rotate_storage_keys operation."""
+        action = ProposedAction(
+            agent_id="test",
+            action_type=ActionType.ROTATE_STORAGE_KEY,
+            target=ActionTarget(
+                resource_id=(
+                    "/subscriptions/sub/resourceGroups/rg/providers/"
+                    "Microsoft.Storage/storageAccounts/stproddata"
+                ),
+                resource_type="Microsoft.Storage/storageAccounts",
+            ),
+            reason="Storage key not rotated in 120 days",
+            config_changes={"key_name": "key1"},
+        )
+        plan = await agent.plan(action, {})
+
+        assert len(plan["steps"]) == 1
+        step = plan["steps"][0]
+        assert step["operation"] == "rotate_storage_keys"
+        assert step["params"]["account_name"] == "stproddata"
+        assert step["params"]["key_name"] == "key1"
+        assert "storage account keys renew" in plan["commands"][0]
+        assert plan["remediation_confidence"] == "auto_fix"
+
+    # -- _compute_confidence includes new ops ---------------------------------
+
+    def test_new_ops_are_auto_fix(self):
+        """All 5 Phase 34A operations must register as auto_fix confidence."""
+        from src.core.execution_agent import _compute_confidence
+        new_ops = [
+            "restart_app_service",
+            "restart_function_app",
+            "scale_app_service_plan",
+            "scale_aks_nodepool",
+            "rotate_storage_keys",
+        ]
+        for op in new_ops:
+            steps = [{"operation": op}]
+            result = _compute_confidence(steps)
+            assert result == "auto_fix", f"Expected auto_fix for '{op}', got '{result}'"
+
+    # -- execute() dry_run mode -----------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_execute_dry_run_returns_mode_dry_run(self, agent):
+        """execute(dry_run=True) sets mode='dry_run' in the result."""
+        plan = {
+            "steps": [{
+                "operation": "restart_app_service",
+                "target": "/subscriptions/sub/rg/rg/providers/Microsoft.Web/sites/api",
+                "params": {"resource_group": "rg", "app_name": "api"},
+                "reason": "Restart App Service",
+            }]
+        }
+        action = _make_action(
+            ActionType.RESTART_SERVICE,
+            resource_type="Microsoft.Web/sites",
+        )
+        result = await agent.execute(plan, action, dry_run=True)
+
+        assert result["mode"] == "dry_run"
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_execute_live_returns_mode_live(self, agent):
+        """execute() without dry_run sets mode='live'."""
+        plan = {
+            "steps": [{
+                "operation": "start_vm",
+                "target": "vm-01",
+                "params": {"resource_group": "rg", "vm_name": "vm-01"},
+                "reason": "Start VM",
+            }]
+        }
+        result = await agent.execute(plan, _make_action())
+
+        assert result["mode"] == "live"
+
+    @pytest.mark.asyncio
+    async def test_execute_dry_run_step_annotated_with_dry_run_prefix(self, agent):
+        """In dry_run mode, step messages include [dry_run] prefix."""
+        plan = {
+            "steps": [{
+                "operation": "rotate_storage_keys",
+                "params": {},
+                "reason": "Rotate key1",
+            }]
+        }
+        action = _make_action(ActionType.ROTATE_STORAGE_KEY)
+        result = await agent.execute(plan, action, dry_run=True)
+
+        msg = result["steps_completed"][0]["message"]
+        assert "[dry_run]" in msg
+
+    @pytest.mark.asyncio
+    async def test_execute_dry_run_does_not_mutate_success(self, agent):
+        """dry_run=True still returns success=True in mock mode."""
+        plan = {
+            "steps": [
+                {"operation": "scale_app_service_plan", "params": {}, "reason": "Scale"},
+                {"operation": "scale_aks_nodepool", "params": {}, "reason": "Scale"},
+            ]
+        }
+        result = await agent.execute(plan, _make_action(), dry_run=True)
+
+        assert result["success"] is True
+        assert len(result["steps_completed"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_plan_then_execute_dry_run_app_service(self, agent):
+        """Full plan→execute dry_run flow for App Service restart."""
+        action = _make_action(
+            ActionType.RESTART_SERVICE,
+            resource_id=(
+                "/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Web/sites/api-prod"
+            ),
+            resource_type="Microsoft.Web/sites",
+            reason="App Service unhealthy",
+        )
+        plan = await agent.plan(action, {})
+        result = await agent.execute(plan, action, dry_run=True)
+
+        assert result["success"] is True
+        assert result["mode"] == "dry_run"
+        assert result["steps_completed"][0]["operation"] == "restart_app_service"
+        assert "[dry_run]" in result["steps_completed"][0]["message"]
+
+    # -- ActionType.ROTATE_STORAGE_KEY exists in model ------------------------
+
+    def test_rotate_storage_key_action_type_exists(self):
+        """ROTATE_STORAGE_KEY is a valid ActionType value."""
+        assert ActionType.ROTATE_STORAGE_KEY == "rotate_storage_key"
+
+    # -- ExecutionRecord.mode field exists ------------------------------------
+
+    def test_execution_record_has_mode_field(self):
+        """ExecutionRecord has mode field defaulting to 'live'."""
+        from src.core.models import ExecutionRecord, ExecutionStatus, SRIVerdict
+        from datetime import datetime, timezone
+        record = ExecutionRecord(
+            execution_id="test-id",
+            action_id="action-id",
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.applied,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        assert record.mode == "live"
+
+    def test_execution_record_mode_can_be_set_dry_run(self):
+        """ExecutionRecord.mode can be set to 'dry_run'."""
+        from src.core.models import ExecutionRecord, ExecutionStatus, SRIVerdict
+        from datetime import datetime, timezone
+        record = ExecutionRecord(
+            execution_id="test-id",
+            action_id="action-id",
+            verdict=SRIVerdict.APPROVED,
+            status=ExecutionStatus.applied,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            mode="dry_run",
+        )
+        assert record.mode == "dry_run"

@@ -102,6 +102,10 @@ STORAGE ACCOUNT SECURITY — for each storage account, call get_resource_details
     Reason: "HTTP traffic allowed — data transmitted in plaintext."
   - minimumTlsVersion < TLS1_2 → propose update_config (MEDIUM urgency).
   - defaultAction = Allow (no network ACL) → propose update_config (MEDIUM).
+  - Storage key not rotated in > 90 days (check lastKeyRotation in activity log or
+    resource properties) → propose rotate_storage_key (MEDIUM urgency); set
+    config_changes={"key_name": "key1"}. The Execution Agent uses rotate_storage_keys
+    automatically. NOTE: requires per-account RBAC — see deployment docs.
 
 DATABASE & KEY VAULT — for each Cosmos DB, SQL server, Key Vault:
   - publicNetworkAccess = Enabled → propose update_config (MEDIUM/HIGH).

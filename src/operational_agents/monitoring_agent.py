@@ -78,14 +78,18 @@ extract the actual VM or resource name from the alertRule or description field.
 STEP 2 — INVESTIGATE BY ALERT TYPE
 
 A. AVAILABILITY / HEARTBEAT (VM stopped, heartbeat = 0, service unavailable):
-   - Call get_resource_details on the resource. Read power state.
+   - Call get_resource_details on the resource. Read power state and resource type.
    - A deallocated/stopped VM WILL have no metrics — this IS confirmation,
      not ambiguity. Do NOT skip action because metrics are empty.
    - Call query_activity_log for the resource group (last 24h) to determine:
      * Was it stopped manually? By auto-shutdown policy? By an Azure incident?
      * Any failed operations before the stop?
-   - Propose restart_service (HIGH urgency). Reason must include:
-     confirmed power state, activity log findings, downstream dependencies.
+   - For VMs (Microsoft.Compute/virtualMachines): propose restart_service (HIGH urgency).
+   - For App Services (Microsoft.Web/sites) or Function Apps: also propose restart_service
+     (HIGH urgency) — the Execution Agent will use restart_app_service or
+     restart_function_app tools automatically based on resource_type.
+   - Reason must include: confirmed power state/health, activity log findings,
+     downstream dependencies.
 
 B. CPU / MEMORY METRIC ALERTS:
    - Call query_metrics for "Percentage CPU" over P1D and P7D.
@@ -163,7 +167,14 @@ DATABASE & DATA SERVICE HEALTH:
 
 CONTAINER APPS & APP SERVICES:
   - Replica count < 2 in non-dev → propose update_config (MEDIUM).
-  - Http5xx error rate > 1% → propose update_config (MEDIUM).
+  - Http5xx error rate > 1% → propose restart_service (MEDIUM); resource_type="Microsoft.Web/sites".
+  - App Service Plan CpuPercentage > 70% → propose scale_up (MEDIUM);
+    resource_type="Microsoft.Web/serverfarms"; put proposed SKU in proposed_sku.
+
+AKS CLUSTERS:
+  - Node CPU > 70% across nodes (P7D) → propose scale_up (MEDIUM);
+    resource_type="Microsoft.ContainerService/managedClusters";
+    put target node_count in config_changes as {"nodepool_name": "<name>", "node_count": "<n>"}.
 
 MONITORING GAPS:
   - VM without AMA extension → propose update_config (MEDIUM).
@@ -229,7 +240,14 @@ DATABASE & DATA SERVICE HEALTH:
 
 CONTAINER APPS & APP SERVICES:
   - Replica count < 2 in non-dev → propose update_config (MEDIUM).
-  - Http5xx error rate > 1% → propose update_config (MEDIUM).
+  - Http5xx error rate > 1% → propose restart_service (MEDIUM); resource_type="Microsoft.Web/sites".
+  - App Service Plan CpuPercentage > 70% → propose scale_up (MEDIUM);
+    resource_type="Microsoft.Web/serverfarms"; put proposed SKU in proposed_sku.
+
+AKS CLUSTERS:
+  - Node CPU > 70% across nodes (P7D) → propose scale_up (MEDIUM);
+    resource_type="Microsoft.ContainerService/managedClusters";
+    put target node_count in config_changes as {"nodepool_name": "<name>", "node_count": "<n>"}.
 
 MONITORING GAPS:
   - VM without AMA extension → propose update_config (MEDIUM).

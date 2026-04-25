@@ -106,8 +106,13 @@ ORPHANED RESOURCES:
   Unassociated public IPs (isnull properties.ipConfiguration) → delete_resource (LOW).
 
 PaaS RIGHTSIZING:
-  AKS avg CPU < 40% (P7D) → propose scale_down (LOW/MEDIUM).
-  App Service CpuPercentage < 10% → propose scale_down (LOW).
+  AKS avg CPU < 40% (P7D) → propose scale_down (LOW/MEDIUM); set resource_type to
+    "Microsoft.ContainerService/managedClusters"; put target node_count in config_changes
+    as {"nodepool_name": "<name>", "node_count": "<n>"}. The Execution Agent uses
+    scale_aks_nodepool automatically.
+  App Service Plan CpuPercentage < 10% → propose scale_down (LOW); set resource_type to
+    "Microsoft.Web/serverfarms"; put proposed SKU in proposed_sku. The Execution Agent
+    uses scale_app_service_plan automatically.
   SQL dtu_consumption_percent < 20% → propose scale_down (LOW).
   Cosmos DB: compare provisioned RU/s against TotalRequests metric.
 
