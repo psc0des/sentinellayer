@@ -399,38 +399,30 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
        --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
     log "Creating storage account: $TFSTATE_SA"
     SA_CREATED=false
+    SA_ERR=""
     for attempt in 1 2 3 4; do
+      # Capture stderr so the Azure error is available for the die message.
+      # --output none suppresses the JSON success body; 2>&1 routes any error
+      # message into SA_ERR instead of swallowing it with 2>/dev/null.
+      if SA_ERR=$(az storage account create \
+           --name "$TFSTATE_SA" \
+           --resource-group "$TFSTATE_RG" \
+           --location "$TFSTATE_LOCATION" \
+           --subscription "$SUBSCRIPTION_ID" \
+           --sku Standard_LRS \
+           --allow-blob-public-access false \
+           --min-tls-version TLS1_2 \
+           --output none 2>&1); then
+        SA_CREATED=true
+        break
+      fi
       if [[ "$attempt" -lt 4 ]]; then
-        # Suppress stderr on early attempts — transient propagation errors are noisy
-        az storage account create \
-             --name "$TFSTATE_SA" \
-             --resource-group "$TFSTATE_RG" \
-             --location "$TFSTATE_LOCATION" \
-             --subscription "$SUBSCRIPTION_ID" \
-             --sku Standard_LRS \
-             --allow-blob-public-access false \
-             --min-tls-version TLS1_2 \
-             --output none 2>/dev/null \
-          && SA_CREATED=true && break
         warn "Storage account creation failed (attempt $attempt/4) — waiting 20s for subscription to propagate..."
         sleep 20
-      else
-        # Final attempt — show stderr so the real error is visible
-        if az storage account create \
-             --name "$TFSTATE_SA" \
-             --resource-group "$TFSTATE_RG" \
-             --location "$TFSTATE_LOCATION" \
-             --subscription "$SUBSCRIPTION_ID" \
-             --sku Standard_LRS \
-             --allow-blob-public-access false \
-             --min-tls-version TLS1_2 \
-             --output none; then
-          SA_CREATED=true
-        fi
       fi
     done
     [[ "$SA_CREATED" == true ]] \
-      || die "Could not create storage account after 4 attempts.\n   Check: az storage account create --name $TFSTATE_SA --resource-group $TFSTATE_RG --subscription $SUBSCRIPTION_ID"
+      || die "Could not create storage account after 4 attempts.\n   Azure error: $SA_ERR"
     az storage container create \
       --name tfstate \
       --account-name "$TFSTATE_SA" \
@@ -724,9 +716,9 @@ echo "VITE_API_URL=$BACKEND_URL" > "$DASHBOARD_DIR/.env.production"
 cd "$DASHBOARD_DIR"
 log "Installing dependencies..."
 if [[ -f "package-lock.json" ]]; then
-  npm ci --silent
+  npm ci --loglevel error
 else
-  npm install --silent
+  npm install --loglevel error
 fi
 
 log "Building..."
