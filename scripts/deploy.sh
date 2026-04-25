@@ -393,21 +393,33 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
     log "Creating storage account: $TFSTATE_SA"
     SA_CREATED=false
     for attempt in 1 2 3 4; do
-      if az storage account create \
-           --name "$TFSTATE_SA" \
-           --resource-group "$TFSTATE_RG" \
-           --location "$TFSTATE_LOCATION" \
-           --subscription "$SUBSCRIPTION_ID" \
-           --sku Standard_LRS \
-           --allow-blob-public-access false \
-           --min-tls-version TLS1_2 \
-           --output none 2>/dev/null; then
-        SA_CREATED=true
-        break
-      fi
       if [[ "$attempt" -lt 4 ]]; then
+        # Suppress stderr on early attempts — transient propagation errors are noisy
+        az storage account create \
+             --name "$TFSTATE_SA" \
+             --resource-group "$TFSTATE_RG" \
+             --location "$TFSTATE_LOCATION" \
+             --subscription "$SUBSCRIPTION_ID" \
+             --sku Standard_LRS \
+             --allow-blob-public-access false \
+             --min-tls-version TLS1_2 \
+             --output none 2>/dev/null \
+          && SA_CREATED=true && break
         warn "Storage account creation failed (attempt $attempt/4) — waiting 20s for subscription to propagate..."
         sleep 20
+      else
+        # Final attempt — show stderr so the real error is visible
+        if az storage account create \
+             --name "$TFSTATE_SA" \
+             --resource-group "$TFSTATE_RG" \
+             --location "$TFSTATE_LOCATION" \
+             --subscription "$SUBSCRIPTION_ID" \
+             --sku Standard_LRS \
+             --allow-blob-public-access false \
+             --min-tls-version TLS1_2 \
+             --output none; then
+          SA_CREATED=true
+        fi
       fi
     done
     [[ "$SA_CREATED" == true ]] \
