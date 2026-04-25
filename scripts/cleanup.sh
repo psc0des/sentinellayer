@@ -41,6 +41,10 @@ warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
 step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
 
+trap 'echo -e "\n${RED}${BOLD}✗  Unexpected error on line $LINENO${NC}" >&2
+      echo -e "${RED}   Failed command: $BASH_COMMAND${NC}" >&2
+      echo -e "${RED}   Re-run with: bash -x scripts/cleanup.sh  (for full trace)${NC}" >&2' ERR
+
 # =============================================================================
 # 1. Prerequisites
 # =============================================================================
@@ -64,7 +68,7 @@ SUBSCRIPTION_ID=$(grep -E '^subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/d
 
 # target_subscription_id is optional — empty means same-subscription deployment
 TARGET_SUBSCRIPTION_ID=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
-  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || true)
 TARGET_SUBSCRIPTION_ID=${TARGET_SUBSCRIPTION_ID:-$SUBSCRIPTION_ID}
 
 az account set --subscription "$SUBSCRIPTION_ID" \
