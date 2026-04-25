@@ -4,33 +4,55 @@ Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 
 ## Required Permissions
 
-Two distinct identities are involved — the person deploying RuriSkry and RuriSkry itself.
+Two distinct identities are involved — the person deploying RuriSkry and RuriSkry itself (its Managed Identity).
 
 ### Deploying user (`az login` account running `terraform apply`)
 
-| Scenario | Deployment subscription | Target subscription |
-|---|---|---|
-| Same subscription (default) | `Owner` — covers Contributor + role assignments + Monitoring Contributor | — |
-| Cross-subscription | `Owner` on deployment sub | `Owner` or (`User Access Administrator` + `Monitoring Contributor`) on target sub |
+`Owner` is the simplest but rarely granted in enterprise environments. The table below shows the minimum roles needed and **why each is required** — so your org's platform team knows exactly what to grant.
 
-`Owner` is the simplest. If your org restricts Owner, the minimum granular roles are:
-- **Contributor** — create all RuriSkry resources
-- **User Access Administrator** — create RBAC role assignments for RuriSkry's Managed Identity
-- **Monitoring Contributor** — create the Alert Processing Rule
+**Same subscription (default — RuriSkry and your workloads are in the same sub):**
+
+| Role | Why it's needed |
+|---|---|
+| `Contributor` | Creates all RuriSkry resources — Container App, Cosmos DB, Key Vault, ACR, Foundry, etc. |
+| `User Access Administrator` | Terraform must assign `Reader`, `Network Contributor`, and `VM Contributor` to RuriSkry's Managed Identity. Without this role, those `azurerm_role_assignment` resources fail with AuthorizationFailed. |
+| `Monitoring Contributor` | Creates the Alert Processing Rule (APR) that routes subscription alerts to RuriSkry. Without this, the APR step fails and alerts never reach RuriSkry. |
+
+> `Owner` = `Contributor` + `User Access Administrator` + all management plane actions. If your org grants Owner, all three above are covered automatically.
+
+**Cross-subscription (RuriSkry deployed in sub A, scanning sub B):**
+
+| Subscription | Roles needed |
+|---|---|
+| Deployment sub (A) | `Contributor` + `User Access Administrator` |
+| Target sub (B) | `User Access Administrator` + `Monitoring Contributor` |
+
+The target sub needs `User Access Administrator` because Terraform creates the `Reader`, `Network Contributor`, and `VM Contributor` role assignments there, and `Monitoring Contributor` because the APR lives in the target sub.
+
+**Service Principal / CI-CD pipeline:**
+If deploying via automation rather than personal login, create a Service Principal and assign it the same roles above. Avoid using `Owner` for automated pipelines — use the granular roles.
+
+---
 
 ### RuriSkry's Managed Identity (granted automatically by Terraform — no manual steps needed)
 
-| Role | Scope | Purpose |
+Once deployed, RuriSkry governs your resources using its own Managed Identity, not your personal account. Terraform creates all these role assignments automatically during `terraform apply`.
+
+| Role | Scope | What RuriSkry can do with it |
 |---|---|---|
-| `Reader` | Target subscription | Scan and discover all resources |
-| `Network Contributor` | Target subscription | Modify NSG rules for remediation |
-| `Virtual Machine Contributor` | Target subscription | Start / restart VMs for remediation |
-| `Cognitive Services OpenAI User` | Foundry account | Call LLM for governance decisions |
-| `AcrPull` | ACR | Pull backend container image |
+| `Reader` | Target subscription | Discover and read all resources — VMs, NSGs, storage, App Services, etc. Also covers reading Azure Advisor recommendations, Defender for Cloud security assessments, and Azure Policy compliance states used by the governance agents. |
+| `Network Contributor` | Target subscription | Execute NSG remediations — add, modify, or remove security rules when the governance engine decides a rule is unsafe (e.g., closing an exposed port). Without this, RuriSkry can only recommend NSG changes, not act on them. |
+| `Virtual Machine Contributor` | Target subscription | Execute VM remediations — start or restart VMs when they are stopped or unhealthy. Also reads VM instance state to detect deallocated VMs. Without this, RuriSkry can only recommend VM actions. |
+| `Cognitive Services OpenAI User` | Foundry account (internal) | Call the LLM (`gpt-4.1-mini`) to make governance decisions. Every agent scan that reaches the LLM step requires this. Without it, all LLM decisions fail with 401 PermissionDenied. |
+| `AcrPull` | ACR (internal) | Pull the backend Docker image from the private registry. The Container App uses this on every start and restart. |
+
+> **Note on scope:** `Reader`, `Network Contributor`, and `VM Contributor` are granted at subscription scope — meaning RuriSkry can govern resources across all resource groups in your subscription. If you want tighter scope (e.g., only a specific resource group), change the `scope` in `infrastructure/terraform-core/main.tf` on the relevant `azurerm_role_assignment` resources before deploying.
+
+---
 
 ### Dashboard operators (day-to-day users)
 
-No Azure permissions needed. Dashboard operators log in with the admin credentials created during first-time setup — all governance actions go through RuriSkry's Managed Identity, not the user's identity.
+No Azure permissions needed. Dashboard operators log in with the admin credentials created on first visit. All governance actions (scans, approvals, remediations) execute under RuriSkry's Managed Identity — operator accounts have no direct Azure access.
 
 ---
 
