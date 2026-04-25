@@ -133,7 +133,6 @@ bash scripts/deploy.sh
 - **Dashboard build + deploy** to Azure Static Web Apps
 - **Health check**
 - **Alert rule wiring** — sweeps `target_subscription_id` for existing alert rules and offers to add the RuriSkry Action Group to each one
-- **Demo environment wiring** (if terraform-demo is already deployed)
 
 **Cleaning up / retrying a failed deploy:**
 ```bash
@@ -340,36 +339,52 @@ python examples/examples/demo_live.py   # live Azure scan (requires USE_LOCAL_MO
 python examples/examples/demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 ```
 
-## Optional: Deploy Mini Production Environment
+## Optional: Deploy Demo Environment
 
-`infrastructure/terraform-demo/` creates real Azure resources in a separate subscription
-that RuriSkry governs. In live mode (`USE_LOCAL_MOCKS=false`, `USE_LIVE_TOPOLOGY=true`),
-RuriSkry discovers these resources automatically via Azure Resource Graph — no manual
-resource lists needed.
+**What this is:** `infrastructure/terraform-demo/` spins up a small set of real Azure
+resources (VMs, NSG, storage, App Service) that RuriSkry governs. It lets you see the
+full governance loop — scan → decision → remediation — against real infrastructure without
+needing your own workloads. This is completely separate from the core deploy and has no
+effect on it.
 
-> **Deploy order:** terraform-demo can be deployed any time. Wire `alert_webhook_url`
-> after terraform-core is deployed and you have the backend URL.
+**Prerequisites:** complete the core deploy first (`bash scripts/deploy.sh`) so you have
+a backend URL.
 
+**Step 1 — get your backend URL:**
+```bash
+terraform -chdir=infrastructure/terraform-core output -raw backend_url
+# e.g. https://ruriskry-core-backend-abc123.eastus2.azurecontainerapps.io
+```
+
+**Step 2 — configure and deploy:**
 ```bash
 cd infrastructure/terraform-demo
 cp terraform.tfvars.example terraform.tfvars
+```
 
-# Fill in terraform.tfvars — required fields:
-#   subscription_id   = "<demo-sub-id>"
-#   suffix            = "<short-unique-suffix>"   # lowercase alphanumeric, max 8 chars
-#   vm_admin_password = "<strong-password>"       # 12+ chars, upper+lower+digit+symbol
-#   alert_email       = "<your-email>"
-#   alert_webhook_url = ""   # fill after core is deployed: "<backend_url>/api/alert-trigger"
+Edit `terraform.tfvars` and fill in:
+```hcl
+subscription_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # az account show --query id -o tsv
+suffix            = "jd4821"          # same rules as core suffix — globally unique, 6-10 chars
+vm_admin_password = "Str0ng!Pass99"   # 12+ chars, upper + lower + digit + symbol
+alert_email       = "you@example.com"
+alert_webhook_url = "https://<your-backend-url>/api/alert-trigger"  # from Step 1
+```
 
-# Local state — no remote backend needed
+Then deploy:
+```bash
 terraform init
 terraform apply
+```
 
-# Before each demo — start the VMs (auto-shutdown stops them at 22:00 UTC):
+**Step 3 — start the demo VMs** (auto-shutdown stops them at 22:00 UTC daily):
+```bash
 az vm start --resource-group ruriskry-prod-rg --name vm-dr-01
 az vm start --resource-group ruriskry-prod-rg --name vm-web-01
+```
 
-# After demo — destroy to avoid charges (~$0.35/day while VMs run):
+**Tear down when done** (~$0.35/day while VMs are running):
+```bash
 terraform destroy
 ```
 

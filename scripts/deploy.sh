@@ -800,59 +800,16 @@ echo ""
 echo "  (GitHub PAT was handled during deploy. To rotate it later:"
 echo "   az keyvault secret set --vault-name $KV_NAME --name github-pat --value 'github_pat_xxx')"
 echo ""
+echo "  4. (Optional) Deploy demo environment to see RuriSkry govern real infrastructure:"
+echo "       See docs/SETUP.md § Demo Environment"
+echo "       Alert webhook URL for terraform-demo: $BACKEND_URL/api/alert-trigger"
+echo ""
 echo "  For subsequent code or infra changes, see:"
 echo "  infrastructure/terraform-core/deploy.md § Redeploy Workflows"
 echo ""
 
 # =============================================================================
-# 8. Wire demo environment to this backend (if deployed)
-# =============================================================================
-# If the user has also deployed infrastructure/terraform-demo, this step
-# injects the backend URL into the demo environment's Azure Monitor action
-# group so alerts flow into RuriSkry automatically.
-#
-# Skipped if:
-#   - terraform-demo/terraform.tfvars doesn't exist (demo not set up yet)
-#   - terraform-demo/.terraform doesn't exist (demo not initialised/applied)
-#   - alert_webhook_url is already set in demo terraform.tfvars
-
-DEMO_DIR="$REPO_ROOT/infrastructure/terraform-demo"
-
-if [[ -f "$DEMO_DIR/terraform.tfvars" && -d "$DEMO_DIR/.terraform" ]]; then
-  step "Wiring demo environment to RuriSkry backend"
-
-  CURRENT_WEBHOOK=$(grep -E '^alert_webhook_url\s*=' "$DEMO_DIR/terraform.tfvars" 2>/dev/null \
-    | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || echo "")
-
-  if [[ -z "$CURRENT_WEBHOOK" ]]; then
-    log "Injecting alert_webhook_url = $BACKEND_URL/api/alert-trigger"
-
-    # Replace existing line if present, otherwise append
-    if grep -qE '^alert_webhook_url\s*=' "$DEMO_DIR/terraform.tfvars"; then
-      sed -i "s|^alert_webhook_url\s*=.*|alert_webhook_url = \"$BACKEND_URL/api/alert-trigger\"|" \
-        "$DEMO_DIR/terraform.tfvars"
-    else
-      printf '\nalert_webhook_url = "%s/api/alert-trigger"\n' "$BACKEND_URL" \
-        >> "$DEMO_DIR/terraform.tfvars"
-    fi
-
-    ok "alert_webhook_url injected into terraform-demo/terraform.tfvars"
-    warn "terraform-demo is managed separately — apply it yourself to activate the wiring:"
-    warn "  cd $DEMO_DIR && terraform apply -auto-approve -target=azurerm_monitor_action_group.prod"
-  else
-    ok "Demo environment already wired ($CURRENT_WEBHOOK) — no changes needed"
-  fi
-else
-  if [[ ! -f "$DEMO_DIR/terraform.tfvars" ]]; then
-    log "Demo environment not configured — skipping webhook wiring."
-    log "To wire it later: set alert_webhook_url = \"$BACKEND_URL/api/alert-trigger\" in terraform-demo/terraform.tfvars and run terraform apply"
-  else
-    log "Demo environment not initialised — run 'terraform init && terraform apply' in terraform-demo first."
-  fi
-fi
-
-# =============================================================================
-# 9. Alert Processing Rule — owned by Terraform, no manual wiring needed
+# 8. Alert Processing Rule — owned by Terraform, no manual wiring needed
 # =============================================================================
 # The APR (azurerm_monitor_alert_processing_rule_action_group) is created by
 # Terraform in Stage 1. It is tied to no personal identity — it is an Azure
