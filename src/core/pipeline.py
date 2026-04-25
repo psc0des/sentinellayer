@@ -62,11 +62,16 @@ will not change when we swap in real Azure clients.
 import asyncio
 import json
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from src.config import settings
 from src.core.governance_engine import GovernanceDecisionEngine
 from src.core.models import GovernanceVerdict, ProposedAction
+
+if TYPE_CHECKING:
+    from agent_framework import CheckpointStorage, Workflow
 from src.core.risk_triage import build_org_context, classify_tier, compute_fingerprint
 from src.governance_agents.blast_radius_agent import BlastRadiusAgent
 from src.governance_agents.financial_agent import FinancialImpactAgent
@@ -154,6 +159,12 @@ class RuriSkryPipeline:
         # to the triage fingerprint engine.
         self._org_context = build_org_context()
 
+        # ── Agent Framework Workflow (Phase 33) ───────────────────────────
+        # Built once, reused for all evaluate() calls when USE_WORKFLOWS=true.
+        # Executors share the same agent instances as the legacy path — no
+        # duplication of model state.
+        self._workflow: Workflow | None = self._build_governance_workflow()
+
         logger.info(
             "RuriSkryPipeline initialised — %d seed + %d inventory resources | "
             "org=%s frameworks=%s tolerance=%s",
@@ -229,63 +240,72 @@ class RuriSkryPipeline:
             settings.sequential_llm,
         )
 
-        if settings.sequential_llm:
+        if settings.use_workflows:
             # ------------------------------------------------------------------
-            # Sequential mode (SEQUENTIAL_LLM=true)
+            # Workflow path (USE_WORKFLOWS=true, Phase 33)
             # ------------------------------------------------------------------
-            # Runs one governance agent at a time.  Guarantees at most 1 LLM call
-            # is in flight per evaluation cycle — useful for very tight quota
-            # deployments (e.g. 1 RPM) where the semaphore alone is not enough.
-            # Trade-off: ~4x higher latency vs the default parallel mode.
+            # Delegates to the WorkflowBuilder graph.  Behavior is identical to
+            # the legacy gather path; the workflow handles fan-out and fan-in.
+            # ScoringExecutor stamps triage_tier/triage_mode before yielding.
             # ------------------------------------------------------------------
-            blast_result = await self._blast.evaluate(action, force_deterministic=force_deterministic)
-            policy_result = await self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic)
-            historical_result = await self._historical.evaluate(action, force_deterministic=force_deterministic)
-            financial_result = await self._financial.evaluate(action, force_deterministic=force_deterministic)
+            verdict = await self._evaluate_via_workflow(
+                action, resource_metadata, triage_tier, force_deterministic
+            )
+            logger.info(
+                "Pipeline: verdict=%s composite=%.1f tier=%d agent=%s (workflow)",
+                verdict.decision.value,
+                verdict.skry_risk_index.sri_composite,
+                triage_tier,
+                action.agent_id,
+            )
         else:
             # ------------------------------------------------------------------
-            # Parallel mode (default)
+            # Legacy path — sequential or parallel asyncio.gather() [DEPRECATED]
+            # This path is deprecated as of Phase 33D. Set USE_WORKFLOWS=true
+            # (now the default) to use the WorkflowBuilder graph instead.
+            # The legacy path will be removed in a future release.
             # ------------------------------------------------------------------
-            # asyncio.gather() runs all four coroutines concurrently inside the
-            # same event loop.  The shared semaphore in llm_throttle.py ensures
-            # at most LLM_CONCURRENCY_LIMIT calls reach Azure OpenAI at once;
-            # the others queue behind the semaphore.
-            # ------------------------------------------------------------------
-            (
-                blast_result,
-                policy_result,
-                historical_result,
-                financial_result,
-            ) = await asyncio.gather(
-                self._blast.evaluate(action, force_deterministic=force_deterministic),
-                self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic),
-                self._historical.evaluate(action, force_deterministic=force_deterministic),
-                self._financial.evaluate(action, force_deterministic=force_deterministic),
+            logger.warning(
+                "Pipeline: running via deprecated legacy asyncio.gather() path "
+                "(USE_WORKFLOWS=false). Switch to the workflow path — it is now the "
+                "default. The legacy path will be removed in a future release."
             )
+            if settings.sequential_llm:
+                blast_result = await self._blast.evaluate(action, force_deterministic=force_deterministic)
+                policy_result = await self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic)
+                historical_result = await self._historical.evaluate(action, force_deterministic=force_deterministic)
+                financial_result = await self._financial.evaluate(action, force_deterministic=force_deterministic)
+            else:
+                (
+                    blast_result,
+                    policy_result,
+                    historical_result,
+                    financial_result,
+                ) = await asyncio.gather(
+                    self._blast.evaluate(action, force_deterministic=force_deterministic),
+                    self._policy.evaluate(action, resource_metadata, force_deterministic=force_deterministic),
+                    self._historical.evaluate(action, force_deterministic=force_deterministic),
+                    self._financial.evaluate(action, force_deterministic=force_deterministic),
+                )
 
-        # ------------------------------------------------------------------
-        # Composite scoring + verdict
-        # ------------------------------------------------------------------
-        verdict = self._engine.evaluate(
-            action, blast_result, policy_result, historical_result, financial_result
-        )
+            verdict = self._engine.evaluate(
+                action, blast_result, policy_result, historical_result, financial_result
+            )
+            verdict.triage_tier = triage_tier
+            verdict.triage_mode = "deterministic" if force_deterministic else "full"
 
-        # Stamp the triage tier and mode on the verdict for storage and metrics.
-        verdict.triage_tier = triage_tier
-        verdict.triage_mode = "deterministic" if force_deterministic else "full"
-
-        logger.info(
-            "Pipeline: verdict=%s composite=%.1f tier=%d (infra=%.1f policy=%.1f "
-            "hist=%.1f cost=%.1f) agent=%s",
-            verdict.decision.value,
-            verdict.skry_risk_index.sri_composite,
-            triage_tier,
-            blast_result.sri_infrastructure,
-            policy_result.sri_policy,
-            historical_result.sri_historical,
-            financial_result.sri_cost,
-            action.agent_id,
-        )
+            logger.info(
+                "Pipeline: verdict=%s composite=%.1f tier=%d (infra=%.1f policy=%.1f "
+                "hist=%.1f cost=%.1f) agent=%s",
+                verdict.decision.value,
+                verdict.skry_risk_index.sri_composite,
+                triage_tier,
+                blast_result.sri_infrastructure,
+                policy_result.sri_policy,
+                historical_result.sri_historical,
+                financial_result.sri_cost,
+                action.agent_id,
+            )
 
         # ------------------------------------------------------------------
         # Fire-and-forget Slack notification (Phase 32A)
@@ -348,6 +368,114 @@ class RuriSkryPipeline:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _build_governance_workflow(self) -> "Workflow":
+        """Build (once) the WorkflowBuilder governance graph wired to existing agents."""
+        from src.core.workflows.governance_workflow import build_governance_workflow
+        return build_governance_workflow(
+            blast=self._blast,
+            policy=self._policy,
+            historical=self._historical,
+            financial=self._financial,
+            engine=self._engine,
+        )
+
+    async def _evaluate_via_workflow(
+        self,
+        action: ProposedAction,
+        resource_metadata: dict | None,
+        triage_tier: int,
+        force_deterministic: bool,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> GovernanceVerdict:
+        """Run the governance workflow and return the single yielded verdict."""
+        from src.core.workflows.messages import GovernanceInput
+        inp = GovernanceInput(
+            action=action,
+            resource_metadata=resource_metadata,
+            force_deterministic=force_deterministic,
+            triage_tier=triage_tier,
+        )
+        result = await self._workflow.run(inp, checkpoint_storage=checkpoint_storage)
+        outputs = result.get_outputs()
+        return outputs[0]
+
+    async def evaluate_streaming(
+        self,
+        action: ProposedAction,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> AsyncGenerator[tuple[str, dict[str, Any]] | GovernanceVerdict, None]:
+        """Streaming variant of evaluate() for use when USE_WORKFLOWS=true.
+
+        Yields ``(event_type, kwargs)`` tuples for per-agent SSE events, then
+        finally yields the ``GovernanceVerdict`` as the last item.
+
+        Callers distinguish the two kinds of yields with ``isinstance``:
+
+            async for item in pipeline.evaluate_streaming(action):
+                if isinstance(item, GovernanceVerdict):
+                    verdict = item
+                else:
+                    event_type, kwargs = item
+                    await emit(event_type, **kwargs)
+
+        The verdict already has ``triage_tier`` and ``triage_mode`` stamped
+        by ``ScoringExecutor``.  Slack notifications fire inside this method.
+        """
+        from src.core.workflows.governance_workflow import stream_governance_evaluation
+        from src.core.workflows.messages import GovernanceInput
+
+        resource = self._find_resource(action.target.resource_id)
+        resource_metadata = self._build_policy_metadata(resource)
+        fingerprint = compute_fingerprint(action, resource_metadata, self._org_context)
+        triage_tier = classify_tier(fingerprint)
+        force_deterministic = (triage_tier == 1)
+
+        resource_name = action.target.resource_id.split("/")[-1]
+
+        if checkpoint_id is not None:
+            # Resume from checkpoint — no GovernanceInput needed
+            inp = None
+        else:
+            inp = GovernanceInput(
+                action=action,
+                resource_metadata=resource_metadata,
+                force_deterministic=force_deterministic,
+                triage_tier=triage_tier,
+            )
+
+        verdict: GovernanceVerdict | None = None
+        async for item in stream_governance_evaluation(
+            self._workflow,
+            inp,
+            resource_name=resource_name,
+            action_type=action.action_type.value,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        ):
+            if isinstance(item, GovernanceVerdict):
+                verdict = item
+            else:
+                yield item  # (event_type, kwargs) for SSE
+
+        if verdict is None:
+            raise RuntimeError("Governance workflow streaming ended without a verdict")
+
+        logger.info(
+            "Pipeline (streaming): verdict=%s composite=%.1f tier=%d agent=%s",
+            verdict.decision.value,
+            verdict.skry_risk_index.sri_composite,
+            triage_tier,
+            action.agent_id,
+        )
+
+        try:
+            asyncio.create_task(send_verdict_notification(verdict, action))
+        except Exception:
+            logger.debug("Slack notification task could not be created.", exc_info=True)
+
+        yield verdict  # Final yield — always the last item
 
     def _load_resource_graph(self) -> dict[str, dict]:
         """Load seed_resources.json and index resources by name."""

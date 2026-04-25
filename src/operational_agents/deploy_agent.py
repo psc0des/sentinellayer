@@ -39,7 +39,7 @@ import logging
 from pathlib import Path
 
 from src.config import settings as _default_settings
-from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+from src.core.models import ActionTarget, ActionType, EvidencePayload, ProposedAction, Urgency
 from src.operational_agents import is_compliant_reason
 
 logger = logging.getLogger(__name__)
@@ -713,7 +713,10 @@ class DeployAgent:
                 "Submit a security or configuration governance proposal. "
                 "action_type must be one of: modify_nsg, update_config, create_resource, "
                 "scale_up, scale_down, delete_resource, restart_service. "
-                "urgency must be one of: low, medium, high."
+                "urgency must be one of: low, medium, high. "
+                "evidence_json: JSON string with observed data — include "
+                "defender_assessment_id, policy_violation_id, advisor_recommendation_id "
+                "in the context field. Pass {} if no structured evidence."
             ),
         )
         def tool_propose_action(
@@ -723,6 +726,7 @@ class DeployAgent:
             urgency: str = "medium",
             resource_type: str = "",
             resource_group: str = "",
+            evidence_json: str = "{}",
         ) -> str:
             """Validate and record a ProposedAction."""
             try:
@@ -768,6 +772,14 @@ class DeployAgent:
                     f"— no governance action needed for {name}"
                 )
 
+            evidence: EvidencePayload | None = None
+            try:
+                ev_dict = json.loads(evidence_json) if evidence_json else {}
+                if ev_dict:
+                    evidence = EvidencePayload(**ev_dict)
+            except Exception:
+                pass  # malformed evidence JSON — drop it, don't block the proposal
+
             proposal = ProposedAction(
                 agent_id=_AGENT_ID,
                 action_type=action_type_enum,
@@ -783,6 +795,7 @@ class DeployAgent:
                 # "restrict" is always correct here. If future scope adds port-opening proposals,
                 # this logic must be updated to derive direction from the actual proposed delta.
                 nsg_change_direction="restrict" if action_type_enum == ActionType.MODIFY_NSG else None,
+                evidence=evidence,
             )
             proposals_holder.append(proposal)
             name = resource_id.split("/")[-1]

@@ -53,7 +53,7 @@ import logging
 from pathlib import Path
 
 from src.config import settings as _default_settings
-from src.core.models import ActionType, BlastRadiusResult, ProposedAction
+from src.core.models import ActionType, BlastRadiusResult, EvidencePayload, ProposedAction
 
 logger = logging.getLogger(__name__)
 
@@ -324,13 +324,20 @@ class BlastRadiusAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         from src.governance_agents._llm_governance import parse_llm_decision
 
+        evidence_section = ""
+        if action.evidence:
+            evidence_section = f"\n## Observed Evidence\n{action.evidence.model_dump_json()}\n"
+
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
-            f"## Ops Agent's Reasoning\n{action.reason}\n\n"
+            f"## Ops Agent's Reasoning\n{action.reason}\n"
+            f"{evidence_section}\n"
             "INSTRUCTIONS: First call evaluate_blast_radius_rules to get the baseline score. "
             "Reason about whether the blast radius truly reflects real-world risk given the "
-            "ops agent's intent and context. Then call submit_governance_decision with your "
-            "adjusted score and justification."
+            "ops agent's intent and context. If evidence shows sustained distress (severity=high/critical, "
+            "duration≥60min), this is responsive remediation — consider reducing the score. "
+            "If no evidence is provided for a restart or scale action, consider a small increase. "
+            "Then call submit_governance_decision with your adjusted score and justification."
         )
         await run_with_throttle(agent.run, prompt)
 
@@ -370,6 +377,7 @@ class BlastRadiusAgent:
             affected_services=affected_services,
             spofs=spofs,
         )
+        score, evidence_note = self._apply_evidence_adjustment(score, action)
 
         logger.info(
             "BlastRadiusAgent: resource=%s action=%s score=%.1f spofs=%s",
@@ -380,6 +388,8 @@ class BlastRadiusAgent:
         )
 
         reasoning = self._build_reasoning(action, resource, score, affected_resources, spofs)
+        if evidence_note:
+            reasoning += f"\n{evidence_note}"
 
         return BlastRadiusResult(
             sri_infrastructure=score,
@@ -416,6 +426,7 @@ class BlastRadiusAgent:
             affected_services=affected_services,
             spofs=spofs,
         )
+        score, evidence_note = self._apply_evidence_adjustment(score, action)
         logger.info(
             "BlastRadiusAgent(async): resource=%s action=%s score=%.1f spofs=%s",
             action.target.resource_id,
@@ -424,6 +435,8 @@ class BlastRadiusAgent:
             spofs,
         )
         reasoning = self._build_reasoning(action, resource, score, affected_resources, spofs)
+        if evidence_note:
+            reasoning += f"\n{evidence_note}"
 
         return BlastRadiusResult(
             sri_infrastructure=score,
@@ -658,6 +671,47 @@ class BlastRadiusAgent:
         score += len(extra_spofs) * _EXTRA_SPOF_SCORE
 
         return round(min(score, 100.0), 2)
+
+    # ------------------------------------------------------------------
+    # Evidence-aware adjustment (Phase 32)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_evidence_adjustment(score: float, action: "ProposedAction") -> tuple[float, str]:
+        """Adjust SRI:Infrastructure score based on attached evidence.
+
+        Returns (adjusted_score, note_for_reasoning).
+
+        Rules:
+        - sustained distress (severity=critical/high + duration≥60min) → -15
+          (action is justified responsive remediation, not speculative)
+        - action normally requires evidence (restart/scale) but none provided → +5
+          (governance can't verify justification)
+        """
+        ev = action.evidence
+        remediation_types = {ActionType.RESTART_SERVICE, ActionType.SCALE_DOWN, ActionType.SCALE_UP}
+
+        if ev is not None:
+            if (
+                ev.severity in ("critical", "high")
+                and ev.duration_minutes is not None
+                and ev.duration_minutes >= 60
+            ):
+                adjusted = round(max(score - 15.0, 0.0), 2)
+                note = (
+                    f"Evidence: {ev.severity} severity sustained {ev.duration_minutes}min "
+                    f"— responsive remediation, SRI:Infrastructure reduced by 15 pts."
+                )
+                return adjusted, note
+            return score, ""
+
+        # No evidence supplied
+        if action.action_type in remediation_types:
+            adjusted = round(min(score + 5.0, 100.0), 2)
+            note = "No supporting evidence provided — added 5 pts (unverified justification)."
+            return adjusted, note
+
+        return score, ""
 
     # ------------------------------------------------------------------
     # Reasoning

@@ -335,12 +335,21 @@ class FinancialImpactAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         from src.governance_agents._llm_governance import parse_llm_decision
 
+        evidence_section = ""
+        if action.evidence:
+            evidence_section = f"\n## Observed Evidence\n{action.evidence.model_dump_json()}\n"
+
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
-            f"## Ops Agent's Reasoning\n{action.reason}\n\n"
+            f"## Ops Agent's Reasoning\n{action.reason}\n"
+            f"{evidence_section}\n"
             "INSTRUCTIONS: First call evaluate_financial_rules to get the baseline score "
             "and cost analysis. Reason about whether the financial risk accurately reflects "
             "the business impact given the ops agent's intent. "
+            "If evidence shows high/critical severity on a production resource, the cost of "
+            "inaction outweighs the action cost — consider reducing the score. "
+            "If a scale-down has peak_cpu_14d > 50% in evidence metrics, the resize may be "
+            "dangerous — consider increasing the score. "
             "Then call submit_governance_decision with your adjusted score and justification."
         )
         await run_with_throttle(agent.run, prompt)
@@ -599,6 +608,7 @@ class FinancialImpactAgent:
             score = magnitude_score(|monthly_change|) × action_multiplier
                   + over_optimisation_penalty   (if detected)
                   + cost_uncertainty_penalty    (if uncertain)
+                  + evidence_adjustment         (Phase 32)
         """
         magnitude = self._magnitude_score(abs(monthly_change))
         multiplier = _ACTION_MULTIPLIER.get(action.action_type, 1.0)
@@ -610,7 +620,39 @@ class FinancialImpactAgent:
         if cost_uncertain:
             score += _COST_UNCERTAINTY_PENALTY
 
+        score = self._apply_evidence_adjustment(score, action)
+
         return round(min(score, 100.0), 2)
+
+    @staticmethod
+    def _apply_evidence_adjustment(score: float, action: "ProposedAction") -> float:
+        """Adjust SRI:Cost based on attached evidence (Phase 32).
+
+        - Incident-driven restart on a production resource: cost-of-inaction
+          outweighs cost-of-action → reduce score by 10.
+        - Scale-down with peak CPU evidence above safe threshold: dangerous
+          resize the average hides → increase score by 10.
+        """
+        ev = action.evidence
+        if ev is None:
+            return score
+
+        resource_id = action.target.resource_id.lower()
+        is_production = "prod" in resource_id or "production" in resource_id
+
+        if (
+            action.action_type in (ActionType.RESTART_SERVICE,)
+            and ev.severity in ("high", "critical")
+            and is_production
+        ):
+            return max(score - 10.0, 0.0)
+
+        if action.action_type == ActionType.SCALE_DOWN:
+            peak_cpu = ev.metrics.get("peak_cpu_14d", 0.0)
+            if peak_cpu > 50.0:
+                return min(score + 10.0, 100.0)
+
+        return score
 
     @staticmethod
     def _magnitude_score(abs_change: float) -> float:

@@ -28,7 +28,10 @@ from datetime import datetime, timezone
 
 from src.config import settings as _default_settings
 from src.core.models import (
+    ActionType,
+    ApprovalCondition,
     BlastRadiusResult,
+    ConditionType,
     FinancialResult,
     GovernanceVerdict,
     HistoricalResult,
@@ -114,7 +117,7 @@ class GovernanceDecisionEngine:
             sri_composite=composite,
         )
 
-        decision, reason = self._determine_verdict(composite, policy)
+        decision, reason, conditions = self._determine_verdict(composite, policy, action, blast_radius)
 
         logger.info(
             "GovernanceVerdict: action=%s composite=%.1f decision=%s",
@@ -130,6 +133,7 @@ class GovernanceDecisionEngine:
             skry_risk_index=sri_breakdown,
             decision=decision,
             reason=reason,
+            conditions=conditions,
             agent_results={
                 "blast_radius": blast_radius.model_dump(),
                 "policy": policy.model_dump(),
@@ -145,6 +149,69 @@ class GovernanceDecisionEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _derive_conditions(
+        self,
+        action: ProposedAction,
+        blast_radius: BlastRadiusResult | None,
+    ) -> list[ApprovalCondition]:
+        """Derive ApprovalConditions from action context and blast radius data.
+
+        All conditions are deterministic — no LLM involved.  The four scenarios:
+
+        1. Production resource + resize/restart → TIME_WINDOW (off-hours, 00:00–06:00 UTC)
+        2. Shared infrastructure (NSG with 2+ affected resources) → BLAST_RADIUS_CONFIRMED
+        3. Resource has owner tag → OWNER_NOTIFIED (24h response window)
+        4. SCALE_DOWN with peak_cpu_14d > 50% in evidence → METRIC_THRESHOLD guard
+
+        Returns an empty list when none of the scenarios apply.
+        """
+        conditions: list[ApprovalCondition] = []
+        resource_id = action.target.resource_id.lower()
+        is_prod = "prod" in resource_id
+        is_resize = action.action_type in (ActionType.SCALE_UP, ActionType.SCALE_DOWN)
+        is_restart = action.action_type == ActionType.RESTART_SERVICE
+        is_nsg = action.action_type == ActionType.MODIFY_NSG
+
+        # Scenario 1 — production resource undergoing a potentially disruptive action
+        if is_prod and (is_resize or is_restart):
+            conditions.append(ApprovalCondition(
+                condition_type=ConditionType.TIME_WINDOW,
+                description="Execute during off-hours maintenance window (00:00–06:00 UTC)",
+                parameters={"window_start": "00:00", "window_end": "06:00", "tz": "UTC"},
+                auto_checkable=True,
+            ))
+
+        # Scenario 2 — NSG change affecting shared infrastructure
+        if is_nsg and blast_radius:
+            affected_count = len(blast_radius.affected_resources)
+            if affected_count >= 2:
+                conditions.append(ApprovalCondition(
+                    condition_type=ConditionType.BLAST_RADIUS_CONFIRMED,
+                    description=(
+                        f"Confirm blast radius: this NSG change affects "
+                        f"{affected_count} resources. "
+                        "Acknowledge all dependent services are aware."
+                    ),
+                    parameters={"affected_count": affected_count},
+                    auto_checkable=False,
+                ))
+
+        # Scenario 4 — dangerous scale-down hidden by low average CPU
+        if action.action_type == ActionType.SCALE_DOWN and action.evidence:
+            peak = action.evidence.metrics.get("peak_cpu_14d")
+            if peak is not None and peak > 50.0:
+                conditions.append(ApprovalCondition(
+                    condition_type=ConditionType.METRIC_THRESHOLD,
+                    description=(
+                        f"Verify current CPU is below 50% before resizing "
+                        f"(14-day peak was {peak:.1f}%)"
+                    ),
+                    parameters={"metric": "cpu_percent", "max_threshold": 50.0},
+                    auto_checkable=True,
+                ))
+
+        return conditions
 
     def _calculate_composite(
         self,
@@ -174,18 +241,20 @@ class GovernanceDecisionEngine:
         self,
         composite: float,
         policy: PolicyResult,
-    ) -> tuple[SRIVerdict, str]:
-        """Apply decision rules in priority order and return (verdict, reason).
+        action: ProposedAction | None = None,
+        blast_radius: BlastRadiusResult | None = None,
+    ) -> tuple[SRIVerdict, str, list[ApprovalCondition]]:
+        """Apply decision rules in priority order and return (verdict, reason, conditions).
 
         Rules are evaluated top-to-bottom; the first matching rule wins.
 
-        1. Critical policy violation  → always DENIED
-        2. composite > review_threshold → DENIED
-        3. composite > approve_threshold → ESCALATED
-        3.5. Any non-overridden HIGH violation → ESCALATED floor (composite may be low
-             if blast radius / cost / historical dimensions are all low, but a HIGH
-             policy violation always requires a human reviewer)
-        4. Otherwise → APPROVED
+        1.   Critical policy violation  → always DENIED
+        1.5. LLM-overridden CRITICAL   → ESCALATED floor
+        2.   composite > review_threshold → DENIED
+        3.   composite > approve_threshold → ESCALATED
+        3.5. Any non-overridden HIGH violation → ESCALATED floor
+        3.75 composite safe but conditions derive → APPROVED_IF
+        4.   Otherwise → APPROVED
         """
         # Rule 1 — non-overridden CRITICAL violations always DENY.
         critical = [
@@ -198,6 +267,7 @@ class GovernanceDecisionEngine:
                 SRIVerdict.DENIED,
                 f"DENIED — critical policy violation(s) detected: {ids}. "
                 "Critical violations block execution regardless of composite SRI score.",
+                [],
             )
 
         # Rule 1.5 — LLM-overridden CRITICAL violations floor at ESCALATED.
@@ -217,6 +287,7 @@ class GovernanceDecisionEngine:
                 f"ESCALATED — critical policy violation(s) require human approval: {ids}. "
                 "LLM context noted but CRITICAL violations cannot be auto-approved — "
                 "human review is mandatory.",
+                [],
             )
 
         # Rule 2 — composite too high to allow even with review
@@ -225,6 +296,7 @@ class GovernanceDecisionEngine:
                 SRIVerdict.DENIED,
                 f"DENIED — SRI Composite {composite:.1f} exceeds the denial threshold "
                 f"of {self._review_threshold}. Action blocked due to unacceptable risk.",
+                [],
             )
 
         # Rule 3 — composite in the human-review band
@@ -234,6 +306,7 @@ class GovernanceDecisionEngine:
                 f"ESCALATED — SRI Composite {composite:.1f} requires human review "
                 f"(band: {self._approve_threshold}–{self._review_threshold}). "
                 "Action paused pending approval.",
+                [],
             )
 
         # Rule 3.5 — HIGH violations floor the verdict at ESCALATED.
@@ -253,6 +326,21 @@ class GovernanceDecisionEngine:
                 f"ESCALATED — SRI Composite {composite:.1f} is within the auto-approval "
                 f"threshold, but HIGH-severity policy violation(s) require human review: "
                 f"{ids}. Action paused pending approval.",
+                [],
+            )
+
+        # Rule 3.75 — composite is safe but contextual conditions apply.
+        # Derive conditions deterministically from action + blast radius context.
+        # If conditions are found, emit APPROVED_IF instead of APPROVED.
+        conditions = self._derive_conditions(action, blast_radius) if action else []
+        if conditions:
+            n = len(conditions)
+            return (
+                SRIVerdict.APPROVED_IF,
+                f"APPROVED_IF — SRI Composite {composite:.1f} is within the auto-approval "
+                f"threshold, but execution is conditional on {n} requirement(s): "
+                + ", ".join(c.description for c in conditions),
+                conditions,
             )
 
         # Rule 4 — safe to auto-execute
@@ -260,4 +348,5 @@ class GovernanceDecisionEngine:
             SRIVerdict.APPROVED,
             f"APPROVED — SRI Composite {composite:.1f} is within the auto-approval "
             f"threshold (≤ {self._approve_threshold}). Action cleared for execution.",
+            [],
         )

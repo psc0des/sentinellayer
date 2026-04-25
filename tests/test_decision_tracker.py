@@ -97,7 +97,7 @@ class TestRecord:
         tracker.record(verdict)
         path = tracker._cosmos._decisions_dir / f"{verdict.action_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["decision"] in ("approved", "escalated", "denied")
+        assert data["decision"] in ("approved", "approved_if", "escalated", "denied")
 
     async def test_sri_composite_is_float(self, tracker, verdict):
         tracker.record(verdict)

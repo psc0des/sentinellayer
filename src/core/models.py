@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -32,8 +32,18 @@ class Urgency(str, Enum):
 class SRIVerdict(str, Enum):
     """SRI™ governance decision outcomes."""
     APPROVED = "approved"
+    APPROVED_IF = "approved_if"  # conditional: execution gated on ApprovalCondition(s)
     ESCALATED = "escalated"
     DENIED = "denied"
+
+
+class ConditionType(str, Enum):
+    """Types of approval conditions that can gate an APPROVED_IF verdict."""
+    TIME_WINDOW = "time_window"                      # auto-checkable — must execute inside a time window
+    BLAST_RADIUS_CONFIRMED = "blast_radius_confirmed"  # human-required — explicit blast-radius sign-off
+    OWNER_NOTIFIED = "owner_notified"                # human-required — resource owner must acknowledge
+    METRIC_THRESHOLD = "metric_threshold"            # auto-checkable — current metric must be below a threshold
+    DEPENDENCY_CONFIRMED = "dependency_confirmed"    # human-required — dependent services confirmed safe
 
 
 class PolicySeverity(str, Enum):
@@ -56,6 +66,47 @@ class RemediationConfidence(str, Enum):
     GENERIC_FIX = "generic_fix"
     GUIDED_MANUAL = "guided_manual"
     MANUAL = "manual"
+
+
+# ============================================
+# Conditional Approval (Phase 32 Part 2)
+# ============================================
+
+class ApprovalCondition(BaseModel):
+    """A single condition that must be satisfied before an APPROVED_IF verdict executes.
+
+    Auto-checkable conditions (TIME_WINDOW, METRIC_THRESHOLD) are polled by the
+    condition watcher every 60s and promoted automatically when met.
+    Human-required conditions (BLAST_RADIUS_CONFIRMED, OWNER_NOTIFIED,
+    DEPENDENCY_CONFIRMED) require an explicit API call to mark as satisfied.
+    """
+    condition_type: ConditionType
+    description: str
+    parameters: dict = Field(default_factory=dict)
+    # TIME_WINDOW: {"window_start": "00:00", "window_end": "06:00", "tz": "UTC"}
+    # METRIC_THRESHOLD: {"metric": "cpu_percent", "max_threshold": 70.0}
+    auto_checkable: bool
+    satisfied: bool = False
+    satisfied_at: Optional[datetime] = None
+    satisfied_by: Optional[str] = None
+
+
+# ============================================
+# Evidence Payload (Phase 32)
+# ============================================
+
+class EvidencePayload(BaseModel):
+    """Observed data that justifies a proposed action.
+
+    Operational agents attach this when they propose an action so governance
+    agents can score based on real evidence, not just action type.
+    """
+    metrics: dict[str, float] = Field(default_factory=dict)
+    logs: list[str] = Field(default_factory=list)
+    alerts: list[dict] = Field(default_factory=list)
+    duration_minutes: Optional[int] = None
+    severity: Optional[str] = None  # "low" | "medium" | "high" | "critical"
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 # ============================================
@@ -83,6 +134,7 @@ class ProposedAction(BaseModel):
     nsg_change_direction: Optional[str] = None  # "open" | "restrict" — set by NSG agents
     nsg_rule_names: Optional[list[str]] = None  # explicit rule names for MODIFY_NSG actions
     config_changes: Optional[dict[str, str]] = None  # explicit attribute:value pairs for UPDATE_CONFIG actions
+    evidence: Optional[EvidencePayload] = None  # observed data that justifies this action (Phase 32)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -200,6 +252,7 @@ class GovernanceVerdict(BaseModel):
     }
     triage_tier: Optional[int] = None  # 1 | 2 | 3 — set by risk_triage (Phase 26)
     triage_mode: Optional[str] = None  # "full" | "deterministic" | None (pre-Phase-27)
+    conditions: list["ApprovalCondition"] = Field(default_factory=list)  # Phase 32 Part 2
 
 
 # ============================================
@@ -301,6 +354,7 @@ class ExecutionStatus(str, Enum):
     pr_merged = "pr_merged"              # PR merged by human
     applied = "applied"                  # terraform apply succeeded
     manual_required = "manual_required"  # APPROVED but not IaC-managed
+    conditional = "conditional"          # APPROVED_IF — waiting on conditions (Phase 32)
     dismissed = "dismissed"              # Human chose to skip
     failed = "failed"                    # PR creation or apply failed
     rolled_back = "rolled_back"          # Agent fix was applied then reversed
@@ -328,6 +382,10 @@ class ExecutionRecord(BaseModel):
     execution_log: Optional[list] = None    # Stored after execute phase — step-by-step audit
     verification: Optional[dict] = None    # Set after execute — {confirmed, message, checked_at}
     rollback_log: Optional[list] = None    # Stored after rollback — step-by-step audit
+    conditions: list["ApprovalCondition"] = Field(default_factory=list)  # Phase 32: APPROVED_IF
+    force_executed_by: Optional[str] = None        # admin who bypassed unmet conditions
+    force_executed_at: Optional[datetime] = None
+    force_execute_justification: Optional[str] = None
 
 
 # ============================================

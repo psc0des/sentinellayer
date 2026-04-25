@@ -35,12 +35,15 @@ RuriSkryPipeline.evaluate(action)
 GovernanceDecisionEngine.evaluate()
     │  SRI Composite = weighted sum of 4 dimensions
     │  Decision rules (priority order):
-    │  1.   DENIED    if CRITICAL policy violation (not llm_override)
-    │  1.5. ESCALATED if CRITICAL violation WITH llm_override — LLM cannot grant VP/CAB approval
-    │  2.   DENIED    if composite > 60
-    │  3.   ESCALATED if composite > 25
-    │  3.5. ESCALATED if any HIGH violation (not llm_override) — verdict floor
-    │  4.   APPROVED  otherwise
+    │  1.   DENIED      if CRITICAL policy violation (not llm_override)
+    │  1.5. ESCALATED   if CRITICAL violation WITH llm_override — LLM cannot grant VP/CAB approval
+    │  2.   DENIED      if composite > 60
+    │  3.   ESCALATED   if composite > 25
+    │  3.5. ESCALATED   if any HIGH violation (not llm_override) — verdict floor
+    │  3.75 APPROVED_IF if composite ≤ 25 AND _derive_conditions(action, blast_radius) non-empty
+    │       → conditions: TIME_WINDOW (prod+restart/resize), BLAST_RADIUS_CONFIRMED (NSG+2+ resources),
+    │                     METRIC_THRESHOLD (scale-down with peak_cpu_14d>50%)
+    │  4.   APPROVED    otherwise
     │
     │  verdict.triage_tier = 1 | 2 | 3  ← stamped after engine returns
     │  verdict.triage_mode = "deterministic" | "full"  ← Phase 27A
@@ -51,6 +54,49 @@ DecisionTracker.record(verdict)     ← writes to Cosmos DB (live) / JSON (mock)
     ▼
 GovernanceVerdict returned to caller
 ```
+
+---
+
+## Agent Framework Workflow Engine (Phase 33D — default ON)
+
+The governance pipeline runs as a formal **7-executor workflow graph** built with `WorkflowBuilder`
+from `agent-framework-core`. This is the **production default** as of Phase 33D (`USE_WORKFLOWS=true`).
+The legacy `asyncio.gather()` path is deprecated and available via `USE_WORKFLOWS=false`.
+
+```
+[DispatchExecutor]  ← receives ProposedAction; fans out to 4 parallel evaluators
+      │
+      ├──→ BlastRadiusExecutor   ─┐
+      ├──→ PolicyExecutor         ├──→ [ScoringExecutor] → [ConditionGateExecutor] → GovernanceVerdict
+      ├──→ HistoricalExecutor     │
+      └──→ FinancialExecutor     ─┘
+
+Fan-in: ScoringExecutor receives list[GovernanceAgentResult] from all 4 → computes composite
+        → ctx.send_message(verdict) forward to ConditionGateExecutor
+
+ConditionGateExecutor: WorkflowContext[None, GovernanceVerdict] (terminal output node)
+        → maybe_promote(): checks auto-conditions on APPROVED_IF verdicts
+        → promotes to APPROVED if all auto-conditions satisfied at evaluation time
+        → ctx.yield_output(verdict) — final workflow result
+```
+
+**WorkflowContext[T, U] — two-parameter form:**
+- `T` = type of what `ctx.send_message(msg)` forwards to the next executor
+- `U` = type of what `ctx.yield_output(val)` produces as the workflow's final output
+- `ScoringExecutor` uses `WorkflowContext[GovernanceVerdict, None]` (sends forward, doesn't output)
+- `ConditionGateExecutor` uses `WorkflowContext[None, GovernanceVerdict]` (receives, terminal output)
+
+**Durable Checkpointing (Phase 33C):**
+`CosmosCheckpointStore` (`src/core/workflows/checkpoint_store.py`) persists the list of
+`pending_proposals` to Cosmos DB before the evaluation loop starts. If the server restarts
+mid-scan, `POST /api/scan/{id}/resume` reads the checkpoint and skips already-evaluated proposals.
+Cosmos container: `governance-checkpoints`, partition key `/scan_id`.
+
+**SSE Streaming (Phase 33B):**
+`stream_governance_evaluation()` translates workflow events to SSE:
+- `executor_invoked` event → `evaluation` SSE (agent starting)
+- `executor_completed` event → `reasoning` SSE (agent result)
+- `output` from `condition_gate` executor → extracts `GovernanceVerdict`
 
 ---
 
@@ -570,8 +616,16 @@ GovernanceVerdict
        │
        ▼
 ExecutionGateway.route_verdict()
-  ├── DENIED    → status=blocked (log + Slack alert, no action)
-  ├── ESCALATED → status=awaiting_review
+  ├── DENIED      → status=blocked (log + Slack alert, no action)
+  ├── ESCALATED   → status=awaiting_review
+  ├── APPROVED_IF → status=conditional
+  │     │           conditions list stored on ExecutionRecord
+  │     ├── auto-checkable conditions (TIME_WINDOW, METRIC_THRESHOLD)
+  │     │   └── ConditionWatcher polls every 60s → check_condition_auto()
+  │     ├── human-required conditions (BLAST_RADIUS_CONFIRMED, OWNER_NOTIFIED, DEPENDENCY_CONFIRMED)
+  │     │   └── POST /api/execution/{id}/condition/{index}/satisfy
+  │     └── all conditions satisfied → try_execute_if_all_satisfied() → status=manual_required
+  │     (admin force-execute: POST /api/execution/{id}/force-execute — mandatory justification, full audit trail)
   └── APPROVED  → status=manual_required
         │         (IaC metadata stored on record for on-demand PR creation)
         └── ExecutionRecord stored (JSON-durable: data/executions/)
@@ -579,6 +633,9 @@ ExecutionGateway.route_verdict()
 
 All `manual_required` and `awaiting_review` records surface a **4-button HITL panel** in
 the dashboard drilldown. The human chooses how to act — nothing executes automatically.
+
+`conditional` records surface a **condition panel** in the drilldown showing each condition's
+type, description, auto/human label, and sign-off button for human-required conditions.
 
 > This same HITL panel applies to **both scan verdicts** (Decisions tab → EvaluationDrilldown)
 > and **alert findings** (Alerts tab → AlertPanel → AlertFindingActions). The `execution_id`
@@ -591,6 +648,7 @@ the dashboard drilldown. The human chooses how to act — nothing executes autom
 |---------|----------------|-----------------|------------|
 | DENIED | Block. Log + Slack alert. | Blocked (red) | None |
 | ESCALATED | Create review request. | Awaiting Review (yellow) | 4-button panel (action auto-approves) |
+| APPROVED_IF | Store record + conditions. | Conditional (amber) | Condition panel — sign-off buttons for human conditions; watcher resolves auto-conditions |
 | APPROVED | Store record. | Manual Required (grey) | 4-button panel |
 
 **4-button HITL panel options** (same panel for both APPROVED and ESCALATED):
@@ -664,11 +722,13 @@ On confirm, `confirmed_change` is sent to `POST .../create-pr` → `TerraformPRG
 - **NSG rule auto-dismiss** — when a scan finds resource `nsg-east-prod` clean, the system dismisses all `manual_required` records whose ARM ID contains `/securityRules/` with that NSG as parent. The parent name is extracted from the ARM ID segment before `/securityRules/`.
 - **Deterministic historical boost** — `HistoricalPatternAgent._governance_history_boost()` reads `DecisionTracker.get_recent(50)` and adds +25 per prior ESCALATED / +5 per prior APPROVED for the same `action_type` (cap +60). Ensures consistent ESCALATED routing when Azure AI Search BM25 returns sparse results.
 
-**Files:** `src/core/execution_agent.py` (Phase 28/29/30 — LLM plan + execute + verify + rollback), `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`
+**Files:** `src/core/execution_agent.py` (Phase 28/29/30 — LLM plan + execute + verify + rollback), `src/core/execution_gateway.py`, `src/core/terraform_pr_generator.py`, `src/core/condition_checkers.py`, `src/core/condition_watcher.py`
 **Endpoints:** `GET /api/execution/pending-reviews`, `GET /api/execution/by-action/{action_id}`,
 `POST /api/execution/{id}/approve`, `POST /api/execution/{id}/dismiss`,
 `POST /api/execution/{id}/create-pr`, `GET /api/execution/{id}/agent-fix-preview`,
 `POST /api/execution/{id}/agent-fix-execute`, `POST /api/execution/{id}/rollback`,
+`POST /api/execution/{id}/condition/{index}/satisfy`, `POST /api/execution/{id}/condition/{index}/check`,
+`POST /api/execution/{id}/force-execute`,
 `GET /api/github/repos`, `GET /api/config`
 **Env vars:** `GITHUB_TOKEN`, `IAC_GITHUB_REPO`, `IAC_TERRAFORM_PATH`, `EXECUTION_GATEWAY_ENABLED`
 **Implementation guide:** `Adding-Terraform-Feature.md`
@@ -795,17 +855,30 @@ in `EvaluationDrilldown.jsx` line 71.
 ```
 src/
 ├── core/
-│   ├── models.py              # All Pydantic models — shared contract
-│   ├── pipeline.py            # asyncio.gather() orchestration
-│   ├── governance_engine.py   # SRI composite + verdict logic
+│   ├── models.py              # All Pydantic models — shared contract; includes ConditionType, ApprovalCondition, APPROVED_IF, ExecutionStatus.conditional
+│   ├── pipeline.py            # asyncio.gather() orchestration (legacy path) or workflow dispatch (USE_WORKFLOWS=true)
+│   ├── governance_engine.py   # SRI composite + verdict logic; Rule 3.75 (APPROVED_IF); _derive_conditions()
+│   ├── condition_checkers.py  # Pure condition-check functions: check_time_window, check_metric_threshold, check_condition
+│   ├── condition_watcher.py   # 60s background polling task — auto-satisfies TIME_WINDOW and METRIC_THRESHOLD conditions
 │   ├── decision_tracker.py    # Audit trail → Cosmos DB / JSON (verdicts)
 │   ├── scan_run_tracker.py    # Scan-run lifecycle → Cosmos DB / JSON (scan records)
 │   ├── alert_tracker.py       # Alert investigation lifecycle → Cosmos DB / JSON (alert records)
 │   ├── explanation_engine.py  # DecisionExplainer — factors, counterfactuals, LLM summary
 │   ├── execution_agent.py     # LLM-driven execution — plan() + execute() + verify() + rollback() four-phase agent
-│   ├── execution_gateway.py   # Verdict→IaC routing; HITL approval; delegates to ExecutionAgent; list_all()
+│   ├── execution_gateway.py   # Verdict→IaC routing; HITL + conditional approval; delegates to ExecutionAgent; list_all()
 │   ├── terraform_pr_generator.py # GitHub PR creation via PyGithub (asyncio.to_thread)
-│   └── interception.py        # ActionInterceptor façade (async)
+│   ├── interception.py        # ActionInterceptor façade (async)
+│   └── workflows/             # Phase 33: Agent Framework workflow graph
+│       ├── governance_workflow.py      # build_governance_workflow() — 7-executor WorkflowBuilder graph; stream_governance_evaluation()
+│       ├── checkpoint_store.py         # CosmosCheckpointStore — governance-checkpoints Cosmos container
+│       └── executors/
+│           ├── dispatch_executor.py    # Fan-out to 4 agent executors
+│           ├── blast_radius_executor.py
+│           ├── policy_executor.py
+│           ├── historical_executor.py
+│           ├── financial_executor.py
+│           ├── scoring_executor.py     # Aggregates results → ctx.send_message(verdict)
+│           └── condition_gate_executor.py  # maybe_promote() static method; ctx.yield_output(verdict) — terminal node
 ├── governance_agents/         # 4 governors — all async def evaluate()
 ├── operational_agents/        # 3 governed agents — all async def scan()
 ├── a2a/                       # A2A Protocol layer (Phase 10)

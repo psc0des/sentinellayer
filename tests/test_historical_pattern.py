@@ -510,8 +510,12 @@ class TestHistoricalPatternAgent:
         assert any(i.incident_id == "TEST-001" for i in result.similar_incidents)
         assert result.recommended_procedure == "Do not scale down test-vm"
 
-    async def test_empty_incidents_file_scores_zero(self, tmp_path):
-        """An empty incident history produces a score of 0 for any action."""
+    async def test_empty_incidents_file_scores_near_zero(self, tmp_path):
+        """An empty incident history with no evidence adds a small no-evidence adjustment.
+
+        Phase 32: RESTART_SERVICE with no incidents and no evidence → +5 pts
+        (unverified intent — neither history nor evidence to guide the score).
+        """
         empty = tmp_path / "empty.json"
         empty.write_text("[]")
         agent = HistoricalPatternAgent(incidents_path=empty)
@@ -521,5 +525,5 @@ class TestHistoricalPatternAgent:
             resource_type="Microsoft.ContainerService/managedClusters",
         )
         result = await agent.evaluate(action)
-        assert result.sri_historical == 0.0
+        assert result.sri_historical <= 5.0  # 0 base + 5 no-evidence adjustment
         assert result.similar_incidents == []

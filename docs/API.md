@@ -63,7 +63,7 @@ Runs all 4 SRI™ agents concurrently (`asyncio.gather`), records the verdict, a
 }
 ```
 
-**Decision values:** `"approved"` | `"escalated"` | `"denied"`
+**Decision values:** `"approved"` | `"approved_if"` | `"escalated"` | `"denied"`
 
 ---
 
@@ -188,6 +188,9 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/execution/{execution_id}/agent-fix-preview` | Generate LLM-driven execution plan (steps, summary, impact, rollback, backward-compat `commands`) |
 | POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
 | POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back` on success, keeps `applied` on failure; stores `rollback_log` (may be empty if LLM timed out); dashboard shows failure banner even with empty log |
+| POST | `/api/execution/{execution_id}/condition/{condition_index}/satisfy` | Human marks a condition on a `conditional` execution record as satisfied. Body: `{satisfied_by: string}`. Triggers `try_execute_if_all_satisfied()` — promotes record to `manual_required` if all conditions are now met. |
+| POST | `/api/execution/{execution_id}/condition/{condition_index}/check` | Force an immediate auto-check for one condition (auto_checkable only). Re-runs the condition checker and updates satisfied state; promotes to manual_required if all conditions met. Returns 400 for human-required conditions. |
+| POST | `/api/execution/{execution_id}/force-execute` | Admin bypass — skip all unsatisfied conditions and promote to `manual_required`. Body: `{admin_user: string, justification: string}`. Justification must be non-empty (raises 400 otherwise). Writes `force_executed_by`, `force_executed_at`, `force_execute_justification` to the record for audit trail. |
 | GET | `/api/execution/{execution_id}/terraform` | Generate Terraform HCL fix for a `manual_required` or `pr_created` execution record |
 | GET | `/api/config` | Safe system configuration — mode, timeouts, feature flags (no secrets) |
 | POST | `/api/admin/reset` | ⚠ Dev/test only — wipe all local JSON data and reset in-memory state |
@@ -208,8 +211,8 @@ All endpoints are `async def` (FastAPI manages the event loop).
 ```json
 {
   "total_evaluations": 4,
-  "decisions": {"approved": 2, "escalated": 1, "denied": 1},
-  "decision_percentages": {"approved": 50.0, "escalated": 25.0, "denied": 25.0},
+  "decisions": {"approved": 2, "approved_if": 0, "escalated": 1, "denied": 1},
+  "decision_percentages": {"approved": 50.0, "approved_if": 0.0, "escalated": 25.0, "denied": 25.0},
   "sri_composite": {"avg": 42.1, "min": 14.1, "max": 77.0},
   "sri_dimensions": {
     "avg_infrastructure": 38.5,
@@ -964,6 +967,63 @@ Execute the `az` CLI fix commands for a `manual_required` record. In mock mode, 
 **Response:** Updated `ExecutionRecord` JSON. Status transitions to `applied` on success, `failed` on error.
 
 Returns `404` if `execution_id` is unknown, `400` if status is not `manual_required` or snapshot is missing.
+
+---
+
+### `POST /api/execution/{execution_id}/condition/{condition_index}/satisfy`
+
+Human marks one condition on a `conditional` execution record as satisfied. After marking,
+`try_execute_if_all_satisfied()` runs — if all conditions are now satisfied the record
+promotes to `manual_required` and the standard HITL panel becomes available.
+
+**Path parameters:**
+- `execution_id` — UUID of the execution record
+- `condition_index` — 0-based index into `ExecutionRecord.conditions`
+
+**Request body:**
+```json
+{ "satisfied_by": "alice@example.com" }
+```
+
+`satisfied_by` must be non-empty. The value is stored as `condition.satisfied_by` + `condition.satisfied_at` on the record for audit trail.
+
+**Response:** Updated `ExecutionRecord` JSON.
+
+Returns `404` if `execution_id` is unknown, `400` if the record is not in `conditional` status or the index is out of range.
+
+---
+
+### `POST /api/execution/{execution_id}/condition/{condition_index}/check`
+
+Force an immediate auto-check for one condition. Only works for `auto_checkable` conditions
+(TIME_WINDOW and METRIC_THRESHOLD). Runs `check_condition()` and marks as satisfied if the
+check passes. Triggers promotion to `manual_required` if all conditions are then met.
+
+Returns `400` for human-required conditions (those conditions require explicit human sign-off,
+not automatic checking).
+
+**Response:** Updated `ExecutionRecord` JSON.
+
+---
+
+### `POST /api/execution/{execution_id}/force-execute`
+
+Admin bypass — skip all unsatisfied conditions and immediately promote a `conditional`
+record to `manual_required`. Requires a non-empty justification for the audit trail.
+
+**Request body:**
+```json
+{ "admin_user": "ops-lead@example.com", "justification": "Emergency maintenance — P0 outage in progress" }
+```
+
+`justification` **must** be non-empty — an empty string raises `400`. The justification, along
+with `admin_user` and timestamp, is stored as `force_executed_by`, `force_executed_at`, and
+`force_execute_justification` on the `ExecutionRecord`. These fields are surfaced in the audit log
+and count toward per-user force-execute metrics.
+
+**Response:** Updated `ExecutionRecord` JSON with `status: "manual_required"`.
+
+Returns `404` if `execution_id` is unknown, `400` if status is not `conditional` or justification is empty.
 
 ---
 

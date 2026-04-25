@@ -221,13 +221,13 @@ class TestGetMetrics:
         data = populated_client.get("/api/metrics").json()
         decisions = data["decisions"]
         assert decisions["denied"] == 1
-        assert decisions["approved"] + decisions["escalated"] + decisions["denied"] == 4
+        assert decisions["approved"] + decisions.get("approved_if", 0) + decisions["escalated"] + decisions["denied"] == 4
 
 
     def test_decision_percentages_sum_to_100(self, populated_client):
         data = populated_client.get("/api/metrics").json()
         pcts = data["decision_percentages"]
-        total = pcts["approved"] + pcts["escalated"] + pcts["denied"]
+        total = pcts["approved"] + pcts.get("approved_if", 0) + pcts["escalated"] + pcts["denied"]
         assert abs(total - 100.0) < 0.2  # floating point tolerance
 
 

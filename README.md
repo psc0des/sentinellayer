@@ -11,7 +11,7 @@
 
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1002 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1112 automated tests.
 
 ---
 
@@ -63,7 +63,8 @@ RuriSkry is a **governance engine** that acts as the **Change Advisory Board for
 
 ### Decision Thresholds
 
-- **SRI ≤ 25** → ✅ Auto-Approve — low risk, execute immediately
+- **SRI ≤ 25, no contextual conditions** → ✅ Auto-Approve — low risk, execute immediately
+- **SRI ≤ 25, contextual conditions present** → 🔒 Conditional Approval (APPROVED_IF) — approved in principle, gated on structured conditions (maintenance window, blast-radius sign-off, metric threshold). Auto-checkable conditions are polled every 60 s by a background watcher; human-required conditions need explicit sign-off via API. Conditions can auto-promote to APPROVED at evaluation time if all are already met.
 - **SRI 26–60** → ⚠️ Escalate — moderate risk, human review required
 - **SRI > 60** → ❌ Deny — high risk, action blocked with explanation
 - **Any non-overridden HIGH policy violation** → ⚠️ Escalate floor — prevents score dilution where low blast radius / cost dims push composite below 25 despite a HIGH policy flag
@@ -217,7 +218,7 @@ Every plan is stamped with a **Remediation Confidence badge** shown next to the 
 - **Guided manual** (amber) — exact steps provided; human runs them
 - **Manual** (grey) — investigation required
 
-The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1002 tests pass, no Azure/OpenAI required) and live mode.
+The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1112 tests pass, no Azure/OpenAI required) and live mode.
 
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
@@ -261,6 +262,62 @@ The API layer is production-hardened for public OSS deployment:
 - **Per-IP Rate Limiting** — 10 requests/60-second sliding window per client IP on all scan endpoints. In-memory `defaultdict(list)` with `time.monotonic()` — no Redis required for single-replica or sticky-session deployments.
 - **`reviewed_by` Validation** — all 5 HITL endpoints reject empty reviewer identities and the `dashboard-user` default in live mode. Prevents audit logs with meaningless system-default reviewer names.
 - **Admin Reset Guard** — `POST /api/admin/reset` returns 403 in live mode (`USE_LOCAL_MOCKS=false`). Prevents accidental wipe of production Cosmos state.
+
+### Evidence-Aware Scoring
+
+Each governance agent's score is informed by **structured evidence** collected from real Azure
+data sources. When a governance agent evaluates an action, it can attach an `EvidencePayload`
+to adjust its score based on confirmed facts — not just policy patterns:
+
+- **BlastRadius**: confirms dependency count and SPOF exposure in real topology
+- **Policy**: reads live resource tags to confirm whether a CRITICAL policy actually applies
+- **Historical**: counts confirmed prior escalations/denials for the same action type
+- **Financial**: verifies current SKU cost and whether the proposed change saves or costs more
+
+Evidence-based adjustments are bounded by the same ±30 pt LLM guardrail, so a single confirmed
+fact cannot dominate the composite score.
+
+### Conditional Approvals (APPROVED_IF)
+
+A fourth SRI verdict beyond APPROVED / ESCALATED / DENIED — **APPROVED_IF** — allows the engine
+to say "yes, proceed — but only when these conditions are met." This avoids forcing every
+borderline case into an expensive ESCALATED human review:
+
+- **TIME_WINDOW** — auto-checkable: execute only during the 00:00–06:00 UTC maintenance window
+- **BLAST_RADIUS_CONFIRMED** — human-required: blast-radius reviewer must sign off
+- **METRIC_THRESHOLD** — auto-checkable: current metric is within a safe bound
+- **OWNER_NOTIFIED** — human-required: resource owner has acknowledged the change
+- **DEPENDENCY_CONFIRMED** — human-required: downstream services confirmed safe
+
+A 60-second background `ConditionWatcher` polls auto-checkable conditions. If all conditions
+are met at evaluation time, the verdict promotes to APPROVED immediately (no waiting).
+Admin force-execute is available with a mandatory non-empty justification for a full audit trail.
+
+Dashboard shows APPROVED_IF verdicts with an amber `🔒 Conditional` badge and a conditions
+panel; human conditions have explicit sign-off buttons; the watcher drives auto-condition resolution.
+
+### Agent Framework Workflow Engine
+
+The governance pipeline runs as a **7-executor workflow graph** using the Microsoft Agent
+Framework. This is the **production default** as of Phase 33D — no configuration needed.
+Set `USE_WORKFLOWS=false` only to opt back to the deprecated legacy path:
+
+```
+[DispatchExecutor]
+      ├──→ BlastRadiusExecutor ─┐
+      ├──→ PolicyExecutor       ├──→ [ScoringExecutor] → [ConditionGateExecutor] → GovernanceVerdict
+      ├──→ HistoricalExecutor   │
+      └──→ FinancialExecutor   ─┘
+```
+
+- **Fan-out / fan-in**: dispatch fans out to 4 parallel executors; scoring aggregates all results
+- **ConditionGateExecutor**: post-scoring node — checks auto-conditions and promotes
+  APPROVED_IF → APPROVED in-flight before the verdict is returned
+- **Durable checkpointing** (`CosmosCheckpointStore`): saves `pending_proposals` before
+  the evaluation loop so scan resumption skips already-evaluated proposals on restart
+- **Streaming**: `executor_invoked` → `evaluation` SSE event; `executor_completed` → `reasoning`
+  SSE event; `condition_gate` output → final `GovernanceVerdict`
+- **Scan resume**: `POST /api/scan/{id}/resume` resumes from the last Cosmos checkpoint
 
 ---
 
@@ -412,7 +469,7 @@ python examples/demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 1002 passed, 0 failed
+# Expected: 1112 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 ```
@@ -475,7 +532,7 @@ ruriskry/
 │   ├── notifications/          # Outbound alerting
 │   │   └── slack_notifier.py        # Block Kit → Slack webhook on DENIED/ESCALATED + alerts
 │   └── api/                    # Dashboard REST endpoints
-│       └── dashboard_api.py         # 37 REST endpoints: scans, alerts, SSE, explanation, HITL, config
+│       └── dashboard_api.py         # ~55 REST endpoints: scans, alerts, SSE, explanation, HITL, conditional approvals, config
 ├── dashboard/                  # React + Vite governance dashboard
 ├── data/                       # Seed data + local persistence (mock fallback)
 │   ├── agents/                      # A2A agent registry (mock)
@@ -536,7 +593,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 1002-test suite.
+drilldowns, and a comprehensive 1112-test suite.
 
 ---
 

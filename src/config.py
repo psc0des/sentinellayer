@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     cosmos_container_executions: str = "governance-executions"
     cosmos_container_inventory: str = "resource-inventory"
     cosmos_container_agents: str = "governance-agents"
+    cosmos_container_checkpoints: str = "governance-checkpoints"  # Phase 33C
     inventory_stale_hours: int = 24          # warn in UI if older than this
     azure_subscription_id_display: str = ""  # human-friendly label (optional)
 
@@ -152,6 +153,16 @@ class Settings(BaseSettings):
     # Set to true to enable PR generation for APPROVED + IaC-managed verdicts.
     # Env var: EXECUTION_GATEWAY_ENABLED=true
     execution_gateway_enabled: bool = False
+
+    # --- Agent Framework Workflows (Phase 33D — default ON) ---
+    # When true, pipeline.evaluate() delegates to the WorkflowBuilder graph instead
+    # of the hand-rolled asyncio.gather() path.  Behavior is identical; the workflow
+    # path adds ConditionGate (Phase 32 Part 2) and checkpointing (Phase 33C).
+    # Default: true (workflow path is now the production default as of Phase 33D).
+    # Set USE_WORKFLOWS=false only to fall back to the legacy asyncio.gather() path
+    # (deprecated — will be removed in a future release).
+    # Env var: USE_WORKFLOWS=false  (to opt out of the workflow path)
+    use_workflows: bool = True
 
     # --- Org Context (Phase 26 — Risk Triage) ---
     # Injected into the triage fingerprint so the engine can route compliance-

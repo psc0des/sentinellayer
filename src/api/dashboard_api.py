@@ -38,6 +38,9 @@ POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual
 GET  /api/execution/{execution_id}/agent-fix-preview  Preview az CLI fix commands.
 POST /api/execution/{execution_id}/agent-fix-execute  Execute az CLI fix commands.
 POST /api/execution/{execution_id}/rollback           Reverse a previously applied agent fix.
+POST /api/execution/{execution_id}/condition/{index}/satisfy  Mark a condition satisfied (human confirmation).
+POST /api/execution/{execution_id}/condition/{index}/check    Force an auto-check of one condition.
+POST /api/execution/{execution_id}/force-execute              Admin bypass of unmet conditions.
 GET  /api/config                                  Safe system configuration — mode, timeouts, feature flags.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
 
@@ -395,7 +398,19 @@ async def lifespan(app: FastAPI):
             ".env to connect to live Azure resources."
         )
 
+    # Start condition watcher for APPROVED_IF records
+    from src.core.condition_watcher import ConditionWatcher  # noqa: PLC0415
+    _watcher = ConditionWatcher(_get_execution_gateway())
+    _watcher_task = asyncio.create_task(_watcher.run())
+
     yield  # application runs
+
+    _watcher.stop()
+    _watcher_task.cancel()
+    try:
+        await _watcher_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(
@@ -949,6 +964,16 @@ async def _run_agent_scan(
         evaluations: list[dict] = []
         approved = escalated = denied = 0
 
+        # ── Phase 33C: Scan-level checkpoint ──────────────────────────────
+        # Save the full proposal list BEFORE the evaluation loop so a crash
+        # mid-scan can be resumed: the resume endpoint re-runs proposals whose
+        # key is not yet in `evaluations`.  Uses (resource_id, action_type) as
+        # the stable composite key — consistent with _get_execution_gateway().
+        _scans[scan_id]["pending_proposals"] = [
+            p.model_dump(mode="json") for p in proposals
+        ]
+        _persist_scan_record(scan_id)
+
         for i, action in enumerate(proposals, start=1):
             # Check cancellation flag before each evaluation
             if scan_id in _scan_cancelled:
@@ -1015,7 +1040,28 @@ async def _run_agent_scan(
                 message=f"[{i}/{len(proposals)}] Evaluating {action.action_type.value} on {resource_name}…",
             )
 
-            verdict = await pipeline.evaluate(action)
+            # ── Phase 33B: Streaming or legacy evaluation ──────────────────
+            if settings.use_workflows:
+                # Workflow path: per-agent SSE events stream out as each of the
+                # 4 governance executors completes, then the verdict arrives last.
+                verdict = None
+                async for item in pipeline.evaluate_streaming(action):
+                    from src.core.models import GovernanceVerdict as _GV  # noqa: PLC0415
+                    if isinstance(item, _GV):
+                        verdict = item
+                    else:
+                        event_type, ev_kwargs = item
+                        await _emit_event(
+                            scan_id, event_type,
+                            agent=agent_type,
+                            index=i, total=len(proposals),
+                            **ev_kwargs,
+                        )
+                if verdict is None:
+                    raise RuntimeError(f"scan {scan_id[:8]}: workflow returned no verdict")
+            else:
+                verdict = await pipeline.evaluate(action)
+
             decision = verdict.decision.value
             sri = verdict.skry_risk_index.sri_composite
 
@@ -1343,8 +1389,8 @@ async def get_metrics() -> dict:
     if not records:
         return {
             "total_evaluations": 0,
-            "decisions": {"approved": 0, "escalated": 0, "denied": 0},
-            "decision_percentages": {"approved": 0.0, "escalated": 0.0, "denied": 0.0},
+            "decisions": {"approved": 0, "approved_if": 0, "escalated": 0, "denied": 0},
+            "decision_percentages": {"approved": 0.0, "approved_if": 0.0, "escalated": 0.0, "denied": 0.0},
             "sri_composite": {"avg": None, "min": None, "max": None},
             "sri_dimensions": {
                 "avg_infrastructure": None,
@@ -1371,7 +1417,7 @@ async def get_metrics() -> dict:
     total = len(records)
 
     # --- Decision counts ---
-    counts: dict[str, int] = {"approved": 0, "escalated": 0, "denied": 0}
+    counts: dict[str, int] = {"approved": 0, "approved_if": 0, "escalated": 0, "denied": 0}
     for r in records:
         decision = r.get("decision", "").lower()
         if decision in counts:
@@ -2672,6 +2718,199 @@ async def cancel_scan(scan_id: str) -> dict:
     return {"status": "cancellation_requested", "scan_id": scan_id}
 
 
+@app.post("/api/scan/{scan_id}/resume")
+async def resume_scan(scan_id: str, background_tasks: BackgroundTasks) -> dict:
+    """Resume a scan that crashed or was interrupted mid-evaluation.
+
+    Identifies proposals that were not yet evaluated (present in
+    ``pending_proposals`` but absent from ``evaluations``) and re-runs them
+    through the governance pipeline.  Already-evaluated proposals are skipped.
+
+    Only works when the scan record contains ``pending_proposals`` (populated
+    before the evaluation loop in Phase 33C).  Returns 400 for complete scans.
+
+    Path parameter:
+    - **scan_id**: UUID of the interrupted scan.
+    """
+    record = _get_scan_record(scan_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Scan '{scan_id}' not found.")
+
+    status = record.get("status")
+    if status in ("complete", "running"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Scan '{scan_id}' cannot be resumed (status: {status}).",
+        )
+
+    pending_raw = record.get("pending_proposals", [])
+    if not pending_raw:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Scan '{scan_id}' has no pending_proposals to resume from. "
+                "Only scans created with USE_WORKFLOWS=true support resume."
+            ),
+        )
+
+    # Build the set of already-evaluated (resource_id, action_type) pairs
+    done_keys: set[tuple] = {
+        (e["proposed_action"]["target"]["resource_id"], e["proposed_action"]["action_type"])
+        for e in record.get("evaluations", [])
+    }
+
+    from src.core.models import ProposedAction  # noqa: PLC0415
+    remaining = []
+    for p_raw in pending_raw:
+        try:
+            action = ProposedAction.model_validate(p_raw)
+            key = (action.target.resource_id, action.action_type.value)
+            if key not in done_keys:
+                remaining.append(action)
+        except Exception:
+            logger.warning("scan %s resume: could not parse proposal %s", scan_id[:8], p_raw)
+
+    if not remaining:
+        return {"status": "nothing_to_resume", "scan_id": scan_id, "skipped": len(done_keys)}
+
+    agent_type = record.get("agent_type", "unknown")
+    resource_group = record.get("resource_group")
+    if resource_group == "whole subscription":
+        resource_group = None
+
+    # Reset the scan to running and wire a new SSE queue
+    _scans[scan_id] = {
+        **record,
+        "status": "running",
+        "resumed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _scan_events[scan_id] = asyncio.Queue()
+    _persist_scan_record(scan_id)
+
+    background_tasks.add_task(
+        _resume_agent_scan,
+        scan_id=scan_id,
+        agent_type=agent_type,
+        remaining_proposals=remaining,
+        completed_evaluations=list(record.get("evaluations", [])),
+    )
+
+    return {
+        "status": "resuming",
+        "scan_id": scan_id,
+        "skipped": len(done_keys),
+        "remaining": len(remaining),
+    }
+
+
+async def _resume_agent_scan(
+    scan_id: str,
+    agent_type: str,
+    remaining_proposals: list,
+    completed_evaluations: list[dict],
+) -> None:
+    """Background coroutine: evaluate the remaining proposals for a resumed scan."""
+    from src.core.pipeline import RuriSkryPipeline  # noqa: PLC0415
+
+    logger.info(
+        "scan %s (%s): resuming — %d remaining proposals",
+        scan_id[:8], agent_type, len(remaining_proposals),
+    )
+    await _emit_event(
+        scan_id, "scan_started",
+        agent=agent_type,
+        message=f"Resuming scan — {len(remaining_proposals)} proposal(s) remaining.",
+    )
+
+    pipeline = RuriSkryPipeline()
+    tracker = _get_tracker()
+    evaluations: list[dict] = list(completed_evaluations)
+    approved = sum(1 for e in evaluations if e.get("decision") == "approved")
+    escalated = sum(1 for e in evaluations if e.get("decision") == "escalated")
+    denied = sum(1 for e in evaluations if e.get("decision") == "denied")
+
+    try:
+        for i, action in enumerate(remaining_proposals, start=1):
+            resource_name = action.target.resource_id.split("/")[-1]
+            await _emit_event(
+                scan_id, "analysis",
+                agent=agent_type, index=i, total=len(remaining_proposals),
+                resource_id=resource_name, action_type=action.action_type.value,
+                message=f"[{i}/{len(remaining_proposals)}] Analysing {resource_name} (resume).",
+            )
+
+            if settings.use_workflows:
+                verdict = None
+                async for item in pipeline.evaluate_streaming(action):
+                    from src.core.models import GovernanceVerdict as _GV  # noqa: PLC0415
+                    if isinstance(item, _GV):
+                        verdict = item
+                    else:
+                        event_type, ev_kwargs = item
+                        await _emit_event(
+                            scan_id, event_type,
+                            agent=agent_type, index=i, total=len(remaining_proposals),
+                            **ev_kwargs,
+                        )
+                if verdict is None:
+                    raise RuntimeError(f"scan {scan_id[:8]}: workflow returned no verdict")
+            else:
+                verdict = await pipeline.evaluate(action)
+
+            decision = verdict.decision.value
+            sri = verdict.skry_risk_index.sri_composite
+            await _emit_event(
+                scan_id, "verdict",
+                agent=agent_type, resource_id=resource_name,
+                decision=decision, sri_composite=sri,
+                message=f"RuriSkry verdict: {decision.upper()} (SRI {sri:.1f}) — {resource_name}",
+            )
+
+            tracker.record(verdict)
+            try:
+                resource_tags = await _get_resource_tags(action.target.resource_id)
+                await _get_execution_gateway().process_verdict(verdict, resource_tags)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("scan %s resume: execution gateway failed — %s", scan_id[:8], exc)
+
+            evaluations.append(verdict.model_dump(mode="json"))
+            if decision == "approved":
+                approved += 1
+            elif decision == "escalated":
+                escalated += 1
+            else:
+                denied += 1
+
+        summary = f"{approved} approved, {escalated} escalated, {denied} denied"
+        _scans[scan_id].update({
+            "status": "complete",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "evaluations": evaluations,
+            "totals": {"approved": approved, "escalated": escalated, "denied": denied},
+        })
+        _persist_scan_record(scan_id)
+        await _emit_event(
+            scan_id, "scan_complete",
+            agent=agent_type,
+            total_verdicts=len(evaluations),
+            summary=summary,
+            message=f"Resume complete — {summary}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("scan %s resume failed: %s", scan_id[:8], exc)
+        _scans[scan_id].update({
+            "status": "error",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error": str(exc),
+        })
+        _persist_scan_record(scan_id)
+        await _emit_event(
+            scan_id, "scan_error",
+            agent=agent_type,
+            message=f"Resume failed: {exc}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Endpoint 16 — Slack notification status
 # ---------------------------------------------------------------------------
@@ -3380,6 +3619,91 @@ async def rollback_agent_fix(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — Conditional Approvals (Phase 32 Part 2)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/execution/{execution_id}/condition/{condition_index}/satisfy")
+async def satisfy_condition(
+    execution_id: str,
+    condition_index: int,
+    body: dict = Body(default={}),
+) -> dict:
+    """Mark one ApprovalCondition on a conditional record as satisfied (human confirmation).
+
+    Use this for human-required conditions (BLAST_RADIUS_CONFIRMED, OWNER_NOTIFIED,
+    DEPENDENCY_CONFIRMED).  Auto-checkable conditions are handled by the condition
+    watcher automatically.
+
+    Body:
+        satisfied_by (str, required): Name or email of the person confirming.
+
+    Returns:
+        Updated execution record with the condition marked satisfied.
+    """
+    satisfied_by = _validate_reviewed_by(body.get("satisfied_by", ""))
+    gateway = _get_execution_gateway()
+    try:
+        record = gateway.mark_condition_satisfied(execution_id, condition_index, satisfied_by)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return record.model_dump(mode="json")
+
+
+@app.post("/api/execution/{execution_id}/condition/{condition_index}/check")
+async def check_condition_now(execution_id: str, condition_index: int) -> dict:
+    """Force an immediate auto-check of one condition on a conditional record.
+
+    Useful for testing or when you know the condition should now be met
+    (e.g. you've moved the maintenance window to now and want to re-check).
+
+    Returns:
+        {"satisfied": bool, "record": <ExecutionRecord>}
+    """
+    gateway = _get_execution_gateway()
+    try:
+        was_satisfied, record = gateway.check_condition_auto(execution_id, condition_index)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"satisfied": was_satisfied, "record": record.model_dump(mode="json")}
+
+
+@app.post("/api/execution/{execution_id}/force-execute")
+async def force_execute_conditional(
+    execution_id: str,
+    body: dict = Body(default={}),
+) -> dict:
+    """Admin override: bypass unmet conditions and promote record to manual_required.
+
+    Requires admin authentication and a non-empty justification string.
+    The bypass is recorded in the execution record and surfaced in the audit log.
+
+    Body:
+        admin_user    (str, required): Admin identity for the audit trail.
+        justification (str, required): Why the bypass is necessary.
+
+    Returns:
+        Updated execution record.
+    """
+    admin_user = _validate_reviewed_by(body.get("admin_user", ""))
+    justification = (body.get("justification") or "").strip()
+    if not justification:
+        raise HTTPException(status_code=400, detail="justification is required for force-execute")
+    gateway = _get_execution_gateway()
+    try:
+        record = await gateway.force_execute(execution_id, admin_user, justification)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return record.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------

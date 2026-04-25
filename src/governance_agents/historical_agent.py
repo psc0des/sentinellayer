@@ -308,12 +308,20 @@ class HistoricalPatternAgent:
         from src.infrastructure.llm_throttle import run_with_throttle
         from src.governance_agents._llm_governance import parse_llm_decision
 
+        evidence_section = ""
+        if action.evidence:
+            evidence_section = f"\n## Observed Evidence\n{action.evidence.model_dump_json()}\n"
+
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
-            f"## Ops Agent's Reasoning\n{action.reason}\n\n"
+            f"## Ops Agent's Reasoning\n{action.reason}\n"
+            f"{evidence_section}\n"
             "INSTRUCTIONS: First call evaluate_historical_rules to get the baseline score "
             "and similar incidents. Reason about whether each matched incident truly reflects "
             "the risk of this specific action given the ops agent's intent. "
+            "If evidence shows sustained distress matching a past successful remediation, "
+            "consider reducing the score (this is a repeat of a known-good pattern). "
+            "If no evidence is provided and no history exists, consider a small increase. "
             "Then call submit_governance_decision with your adjusted score and justification."
         )
         await run_with_throttle(agent.run, prompt)
@@ -408,6 +416,9 @@ class HistoricalPatternAgent:
         gov_boost, gov_reason = self._governance_history_boost(action)
         sri = min(sri + gov_boost, 100.0)
 
+        # Evidence-aware adjustment (Phase 32)
+        sri, evidence_note = self._apply_evidence_adjustment(sri, action, similar_incidents)
+
         logger.info(
             "HistoricalPatternAgent: resource_type=%s similar=%d "
             "score=%.1f (gov_boost=%d)",
@@ -420,6 +431,8 @@ class HistoricalPatternAgent:
         reasoning = self._build_reasoning(action, similar_incidents, sri)
         if gov_reason:
             reasoning = reasoning.rstrip() + f"\n\n{gov_reason}"
+        if evidence_note:
+            reasoning = reasoning.rstrip() + f"\n\n{evidence_note}"
 
         return HistoricalResult(
             sri_historical=sri,
@@ -488,6 +501,60 @@ class HistoricalPatternAgent:
             score += _W_TAGS
 
         return round(score, 2)
+
+    # ------------------------------------------------------------------
+    # Evidence-aware adjustment (Phase 32)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_evidence_adjustment(
+        score: float,
+        action: "ProposedAction",
+        similar_incidents: "list[SimilarIncident]",
+    ) -> "tuple[float, str]":
+        """Adjust SRI:Historical based on attached evidence (Phase 32).
+
+        Returns (adjusted_score, note_for_reasoning).
+
+        Rules:
+        - Evidence matches past successful remediations (restart after high-CPU
+          sustained 60+min, with successful outcomes in history) → reduce by 10
+          (evidence pattern is a positive signal, not a risk indicator).
+        - No historical precedent AND no evidence for a remediation action → add 5
+          (added uncertainty when we have neither history nor evidence to guide us).
+        """
+        ev = action.evidence
+        note = ""
+
+        if ev is not None and similar_incidents:
+            # If evidence shows sustained distress AND history shows restarts/scales succeeded
+            if (
+                ev.severity in ("high", "critical")
+                and ev.duration_minutes is not None
+                and ev.duration_minutes >= 60
+            ):
+                # Check if best matched incident had a positive outcome
+                best = similar_incidents[0]
+                if any(
+                    word in best.outcome.lower()
+                    for word in ("success", "resolved", "restored", "stable")
+                ):
+                    adjusted = round(max(score - 10.0, 0.0), 2)
+                    note = (
+                        f"Evidence matches successful past remediations "
+                        f"(sustained {ev.severity} for {ev.duration_minutes}min). "
+                        f"Historical risk reduced by 10 pts."
+                    )
+                    return adjusted, note
+
+        if ev is None and not similar_incidents:
+            # No evidence AND no history — added uncertainty
+            if action.action_type in (ActionType.RESTART_SERVICE, ActionType.SCALE_DOWN, ActionType.SCALE_UP):
+                adjusted = round(min(score + 5.0, 100.0), 2)
+                note = "No evidence and no historical precedent — added 5 pts (unverified intent)."
+                return adjusted, note
+
+        return score, note
 
     # ------------------------------------------------------------------
     # SRI scoring

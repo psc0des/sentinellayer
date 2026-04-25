@@ -4,12 +4,13 @@
  * Used across DecisionTable, ConnectedAgents, and modals.
  *
  * Props:
- *   verdict — 'approved' | 'escalated' | 'denied' | any string
- *   size    — 'sm' | 'md' (default 'sm')
- *   glow    — enable subtle text-shadow glow (default true)
+ *   verdict    — 'approved' | 'approved_if' | 'escalated' | 'denied' | any string
+ *   size       — 'sm' | 'md' (default 'sm')
+ *   glow       — enable subtle text-shadow glow (default true)
+ *   conditions — number of pending conditions (shown as subscript on approved_if)
  */
 
-export default function VerdictBadge({ verdict, size = 'sm', glow = true }) {
+export default function VerdictBadge({ verdict, size = 'sm', glow = true, conditions }) {
   const v = (verdict ?? '').toLowerCase()
 
   const configs = {
@@ -20,6 +21,14 @@ export default function VerdictBadge({ verdict, size = 'sm', glow = true }) {
       dot: 'bg-emerald-400',
       shadow: glow ? '0 0 8px rgba(52,211,153,0.4)' : 'none',
       label: 'Approved',
+    },
+    approved_if: {
+      bg: 'bg-gradient-to-r from-amber-500/10 to-emerald-500/10',
+      border: 'border-amber-400/40',
+      text: 'text-amber-200',
+      dot: 'bg-amber-400',
+      shadow: glow ? '0 0 8px rgba(251,191,36,0.35)' : 'none',
+      label: 'Approved If',
     },
     escalated: {
       bg: 'bg-amber-500/10',
@@ -65,6 +74,11 @@ export default function VerdictBadge({ verdict, size = 'sm', glow = true }) {
     >
       <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot} shrink-0`} />
       {cfg.label}
+      {v === 'approved_if' && conditions != null && conditions > 0 && (
+        <span className="text-[9px] font-normal opacity-70 ml-0.5">
+          ({conditions})
+        </span>
+      )}
     </span>
   )
 }

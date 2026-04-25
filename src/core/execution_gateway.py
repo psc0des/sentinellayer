@@ -32,6 +32,7 @@ from pathlib import Path
 from src.config import settings
 from src.core.models import (
     ActionType,
+    ApprovalCondition,
     ExecutionRecord,
     ExecutionStatus,
     GovernanceVerdict,
@@ -153,6 +154,14 @@ class ExecutionGateway:
             logger.info(
                 "ExecutionGateway: DENIED — blocked, no execution for '%s'",
                 resource_id,
+            )
+
+        elif verdict.decision == SRIVerdict.APPROVED_IF:
+            record.status = ExecutionStatus.conditional
+            record.conditions = list(verdict.conditions)
+            logger.info(
+                "ExecutionGateway: APPROVED_IF — %d condition(s) pending for '%s'",
+                len(verdict.conditions), resource_id,
             )
 
         elif verdict.decision == SRIVerdict.ESCALATED:
@@ -339,6 +348,181 @@ class ExecutionGateway:
         """Return all ExecutionRecords, newest first."""
         self._ensure_loaded()
         return sorted(self._records.values(), key=lambda r: r.created_at, reverse=True)
+
+    def get_conditional_records(self) -> list[ExecutionRecord]:
+        """Return all records waiting on approval conditions."""
+        self._ensure_loaded()
+        return [r for r in self._records.values() if r.status == ExecutionStatus.conditional]
+
+    def mark_condition_satisfied(
+        self,
+        execution_id: str,
+        condition_index: int,
+        satisfied_by: str,
+    ) -> ExecutionRecord:
+        """Mark one ApprovalCondition on a conditional record as satisfied.
+
+        After marking, automatically attempts to promote the record to
+        manual_required if all conditions are now satisfied.
+
+        Args:
+            execution_id: UUID of the ExecutionRecord.
+            condition_index: Zero-based index into record.conditions.
+            satisfied_by: Name/email of the person (or system) confirming.
+
+        Returns:
+            Updated ExecutionRecord.
+
+        Raises:
+            KeyError: If execution_id is unknown.
+            ValueError: If the record is not in conditional state or index is invalid.
+        """
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record:
+            raise KeyError(f"Execution record not found: {execution_id!r}")
+        if record.status != ExecutionStatus.conditional:
+            raise ValueError(
+                f"Cannot mark condition for {execution_id!r}: "
+                f"status is '{record.status.value}' (must be 'conditional')"
+            )
+        if condition_index < 0 or condition_index >= len(record.conditions):
+            raise ValueError(
+                f"Condition index {condition_index} is out of range "
+                f"(record has {len(record.conditions)} condition(s))"
+            )
+
+        cond = record.conditions[condition_index]
+        cond.satisfied = True
+        cond.satisfied_at = datetime.now(timezone.utc)
+        cond.satisfied_by = satisfied_by
+        record.updated_at = datetime.now(timezone.utc)
+
+        logger.info(
+            "ExecutionGateway: %s condition[%d] '%s' satisfied by '%s'",
+            execution_id[:8], condition_index, cond.condition_type.value, satisfied_by,
+        )
+
+        self._save(record)
+        return self.try_execute_if_all_satisfied(execution_id)
+
+    def check_condition_auto(
+        self,
+        execution_id: str,
+        condition_index: int,
+    ) -> tuple[bool, ExecutionRecord]:
+        """Run the auto-checker for one condition and mark it if satisfied.
+
+        Returns:
+            (was_satisfied, updated_record) — True if the condition just became satisfied.
+
+        Raises:
+            KeyError: If execution_id is unknown.
+            ValueError: If condition is not auto-checkable.
+        """
+        from src.core.condition_checkers import check_condition  # noqa: PLC0415
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record:
+            raise KeyError(f"Execution record not found: {execution_id!r}")
+        if condition_index < 0 or condition_index >= len(record.conditions):
+            raise ValueError(f"Condition index {condition_index} is out of range")
+
+        cond = record.conditions[condition_index]
+        if not cond.auto_checkable:
+            raise ValueError(
+                f"Condition[{condition_index}] is not auto-checkable "
+                f"(type={cond.condition_type.value})"
+            )
+        if cond.satisfied:
+            return True, record
+
+        now = datetime.now(timezone.utc)
+        satisfied = check_condition(cond, now=now)
+        if satisfied:
+            cond.satisfied = True
+            cond.satisfied_at = now
+            cond.satisfied_by = "condition_watcher"
+            record.updated_at = now
+            self._save(record)
+            record = self.try_execute_if_all_satisfied(execution_id)
+
+        return satisfied, record
+
+    def try_execute_if_all_satisfied(self, execution_id: str) -> ExecutionRecord:
+        """Promote record from conditional → manual_required if all conditions are met.
+
+        Called automatically after each condition is satisfied.  If any condition
+        remains unsatisfied, the record stays in conditional status.
+
+        Returns the (possibly updated) ExecutionRecord.
+        """
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record or record.status != ExecutionStatus.conditional:
+            return record  # type: ignore[return-value]
+
+        if all(c.satisfied for c in record.conditions):
+            record.status = ExecutionStatus.manual_required
+            record.notes = (
+                (record.notes or "")
+                + f"\nAll conditions satisfied — promoted from CONDITIONAL to manual_required "
+                f"at {datetime.now(timezone.utc).isoformat()}"
+            ).strip()
+            record.updated_at = datetime.now(timezone.utc)
+            self._save(record)
+            logger.info(
+                "ExecutionGateway: %s — all conditions met, promoted to manual_required",
+                execution_id[:8],
+            )
+
+        return record
+
+    async def force_execute(
+        self,
+        execution_id: str,
+        admin_user: str,
+        justification: str,
+    ) -> ExecutionRecord:
+        """Admin bypass: skip unmet conditions and promote directly to manual_required.
+
+        Requires a non-empty justification string for the audit trail.
+        Records who bypassed conditions and when — surfaced in the dashboard
+        audit log.
+
+        Raises:
+            KeyError: If execution_id is unknown.
+            ValueError: If not in conditional status or justification is empty.
+        """
+        self._ensure_loaded()
+        record = self._records.get(execution_id)
+        if not record:
+            raise KeyError(f"Execution record not found: {execution_id!r}")
+        if record.status != ExecutionStatus.conditional:
+            raise ValueError(
+                f"force_execute only valid for conditional records; "
+                f"status is '{record.status.value}'"
+            )
+        if not justification or not justification.strip():
+            raise ValueError("Justification is required for force_execute")
+
+        now = datetime.now(timezone.utc)
+        record.force_executed_by = admin_user
+        record.force_executed_at = now
+        record.force_execute_justification = justification.strip()
+        record.status = ExecutionStatus.manual_required
+        record.notes = (
+            (record.notes or "")
+            + f"\n[FORCE-EXECUTE by {admin_user} at {now.isoformat()}] {justification.strip()}"
+        ).strip()
+        record.updated_at = now
+        self._save(record)
+
+        logger.warning(
+            "ExecutionGateway: %s FORCE-EXECUTE by '%s' — %s",
+            execution_id[:8], admin_user, justification.strip(),
+        )
+        return record
 
     def get_unresolved_proposals(self) -> list[tuple["ProposedAction", ExecutionRecord]]:
         """Return (ProposedAction, ExecutionRecord) pairs for issues that are

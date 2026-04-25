@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 
 from src.config import settings as _default_settings
-from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+from src.core.models import ActionTarget, ActionType, EvidencePayload, ProposedAction, Urgency
 from src.operational_agents import is_compliant_reason
 
 logger = logging.getLogger(__name__)
@@ -463,7 +463,9 @@ class CostOptimizationAgent:
                 "metric evidence that a resource is wasted or over-provisioned. "
                 "action_type must be one of: scale_down, delete_resource, scale_up, "
                 "update_config, modify_nsg, create_resource, restart_service. "
-                "urgency must be one of: low, medium, high."
+                "urgency must be one of: low, medium, high. "
+                "evidence_json: JSON string with observed data — metrics dict with "
+                "avg_cpu_7d, peak_cpu_14d, etc. Pass {} if no structured evidence."
             ),
         )
         def tool_propose_action(
@@ -476,6 +478,7 @@ class CostOptimizationAgent:
             projected_savings_monthly: float = 0.0,
             resource_type: str = "",
             resource_group: str = "",
+            evidence_json: str = "{}",
         ) -> str:
             """Validate parameters and record a ProposedAction."""
             try:
@@ -511,6 +514,14 @@ class CostOptimizationAgent:
                     f"— no governance action needed for {name}"
                 )
 
+            evidence: EvidencePayload | None = None
+            try:
+                ev_dict = json.loads(evidence_json) if evidence_json else {}
+                if ev_dict:
+                    evidence = EvidencePayload(**ev_dict)
+            except Exception:
+                pass  # malformed evidence JSON — drop it, don't block the proposal
+
             proposal = ProposedAction(
                 agent_id=_AGENT_ID,
                 action_type=action_type_enum,
@@ -526,6 +537,7 @@ class CostOptimizationAgent:
                 projected_savings_monthly=(
                     projected_savings_monthly if projected_savings_monthly > 0 else None
                 ),
+                evidence=evidence,
             )
             proposals_holder.append(proposal)
             name = resource_id.split("/")[-1]

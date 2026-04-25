@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import settings as _default_settings
-from src.core.models import ActionTarget, ActionType, ProposedAction, Urgency
+from src.core.models import ActionTarget, ActionType, EvidencePayload, ProposedAction, Urgency
 from src.operational_agents import is_compliant_reason
 
 logger = logging.getLogger(__name__)
@@ -625,7 +625,10 @@ class MonitoringAgent:
                 "Submit a governance proposal for a resource after confirming with metrics. "
                 "action_type must be one of: scale_up, scale_down, delete_resource, "
                 "restart_service, modify_nsg, create_resource, update_config. "
-                "urgency must be one of: low, medium, high."
+                "urgency must be one of: low, medium, high. "
+                "evidence_json: JSON string with observed data — metrics (dict), "
+                "logs (list), alerts (list), duration_minutes (int), severity "
+                "(low|medium|high|critical). Pass {} if no structured evidence available."
             ),
         )
         def tool_propose_action(
@@ -637,6 +640,7 @@ class MonitoringAgent:
             proposed_sku: str = "",
             resource_type: str = "",
             resource_group: str = "",
+            evidence_json: str = "{}",
         ) -> str:
             """Validate and record a ProposedAction."""
             try:
@@ -671,6 +675,14 @@ class MonitoringAgent:
                     f"— no governance action needed for {name}"
                 )
 
+            evidence: EvidencePayload | None = None
+            try:
+                ev_dict = json.loads(evidence_json) if evidence_json else {}
+                if ev_dict:
+                    evidence = EvidencePayload(**ev_dict)
+            except Exception:
+                pass  # malformed evidence JSON — drop it, don't block the proposal
+
             proposal = ProposedAction(
                 agent_id=_AGENT_ID,
                 action_type=action_type_enum,
@@ -683,6 +695,7 @@ class MonitoringAgent:
                 ),
                 reason=reason,
                 urgency=urgency_enum,
+                evidence=evidence,
             )
             proposals_holder.append(proposal)
             name = resource_id.split("/")[-1]

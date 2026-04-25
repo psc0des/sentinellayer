@@ -22,6 +22,7 @@ import TerraformPROverlay from './TerraformPROverlay'
 
 const VERDICT_CONFIG = {
     approved: { emoji: '✅', label: 'APPROVED', bg: 'bg-green-500/10', border: 'border-green-500/40', text: 'text-green-400', glow: 'shadow-green-500/20' },
+    approved_if: { emoji: '🔒', label: 'APPROVED IF', bg: 'bg-amber-500/10', border: 'border-amber-400/40', text: 'text-amber-300', glow: 'shadow-amber-500/20' },
     escalated: { emoji: '⚠️', label: 'ESCALATED', bg: 'bg-yellow-500/10', border: 'border-yellow-500/40', text: 'text-yellow-400', glow: 'shadow-yellow-500/20' },
     denied: { emoji: '🚫', label: 'DENIED', bg: 'bg-red-500/10', border: 'border-red-500/40', text: 'text-red-400', glow: 'shadow-red-500/20' },
 }
@@ -1014,6 +1015,61 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                             </div>
                         )}
 
+                        {/* Conditions panel — conditional (APPROVED_IF) */}
+                        {executionStatus.status === 'conditional' && executionStatus.conditions && executionStatus.conditions.length > 0 && (
+                            <div className="space-y-3 pt-1">
+                                <p className="text-xs text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+                                    This action is approved but execution is gated on the following conditions.
+                                    Auto-checkable conditions are evaluated every 60 seconds by the condition watcher.
+                                </p>
+                                <div className="space-y-2">
+                                    {executionStatus.conditions.map((cond, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 text-xs ${
+                                                cond.satisfied
+                                                    ? 'bg-emerald-500/5 border-emerald-500/30'
+                                                    : 'bg-slate-800/60 border-slate-600/40'
+                                            }`}
+                                        >
+                                            <span className="mt-0.5 text-base shrink-0">
+                                                {cond.satisfied ? '✅' : cond.auto_checkable ? '🔄' : '👤'}
+                                            </span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className={`font-semibold ${cond.satisfied ? 'text-emerald-300' : 'text-slate-200'}`}>
+                                                    {cond.description}
+                                                </div>
+                                                <div className="text-slate-400 mt-0.5">
+                                                    {cond.auto_checkable ? 'Auto-checkable' : 'Requires human confirmation'}
+                                                    {cond.satisfied && cond.satisfied_by && (
+                                                        <span className="ml-2 text-emerald-400">
+                                                            — satisfied by {cond.satisfied_by}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {!cond.satisfied && !cond.auto_checkable && (
+                                                <button
+                                                    onClick={() => {
+                                                        const who = prompt('Your name or email (for audit trail):')
+                                                        if (!who) return
+                                                        fetch(`/api/execution/${executionStatus.execution_id}/condition/${idx}/satisfy`, {
+                                                            method: 'POST',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ satisfied_by: who }),
+                                                        }).then(() => window.location.reload())
+                                                    }}
+                                                    className="shrink-0 text-xs px-2.5 py-1 rounded bg-amber-500/20 border border-amber-400/30 text-amber-300 hover:bg-amber-500/30 transition-colors"
+                                                >
+                                                    Confirm
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Action panel — manual_required (APPROVED) + awaiting_review (ESCALATED) */}
                         {(executionStatus.status === 'manual_required' || executionStatus.status === 'awaiting_review') && (
                             <div className="space-y-3 pt-1">
@@ -1162,6 +1218,7 @@ const EXEC_STATUS_CONFIG = {
     pending:         { label: 'Pending',          color: 'text-slate-400',  bg: 'bg-slate-500/10',  border: 'border-slate-500/30' },
     blocked:         { label: 'Blocked',           color: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/30' },
     awaiting_review: { label: 'Awaiting Review',   color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' },
+    conditional:     { label: 'Conditional',       color: 'text-amber-300',  bg: 'bg-amber-500/10',  border: 'border-amber-400/30' },
     pr_created:      { label: 'PR Created',        color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/30' },
     pr_merged:       { label: 'PR Merged',         color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/30' },
     applied:         { label: 'Applied',           color: 'text-green-400',  bg: 'bg-green-500/10',  border: 'border-green-500/30' },

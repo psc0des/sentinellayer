@@ -120,11 +120,15 @@ class TestBlastRadiusAgent:
     # ------------------------------------------------------------------
 
     async def test_scale_down_medium_resource_with_no_dependents_scores_low(self, agent):
-        """SCALE_DOWN on web-tier-01 (medium criticality, zero dependents) → auto-approve."""
+        """SCALE_DOWN on web-tier-01 (medium criticality, zero dependents) → near auto-approve.
+
+        Phase 32: no evidence supplied → +5 unverified-justification adjustment.
+        Base score: 15 + 10 (medium) = 25; with no-evidence adjustment → 30.
+        """
         action = _make_action("web-tier-01", ActionType.SCALE_DOWN)
         result = await agent.evaluate(action)
-        # base 15 + medium 10 = 25; no dependents, no services, no extra SPOFs
-        assert result.sri_infrastructure <= 25.0
+        # base 15 + medium 10 = 25; +5 no-evidence adjustment (Phase 32)
+        assert result.sri_infrastructure <= 30.0
 
     # ------------------------------------------------------------------
     # Affected resource detection

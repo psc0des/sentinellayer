@@ -137,6 +137,14 @@ that is REMEDIATION INTENT — not a policy violation. Examples:
 - "Opening SSH port 22 to 0.0.0.0/0" = CREATING a violation (keep or raise score)
 
 Always distinguish between describing a problem to fix it vs. describing a problem to create it.
+
+## Evidence-Aware Scoring (Phase 32)
+If an "Observed Evidence" section is present in the prompt:
+- Confirmed incident (alert with severity=high or critical, or sustained metric breach for
+  60+ minutes): this is RESPONSIVE REMEDIATION — adjustments toward APPROVE are appropriate.
+  The ops agent is not acting speculatively; it has observed evidence of a real problem.
+- Missing evidence for an action that should have it (restart, scale): adjust toward ESCALATE
+  — we cannot verify the justification without observed data.
 """
 
 
@@ -316,13 +324,20 @@ class PolicyComplianceAgent:
 
         meta_str = json.dumps(resource_metadata or {})
         policies_summary = json.dumps(self._policies, indent=2)
+        evidence_section = ""
+        if action.evidence:
+            evidence_section = f"\n## Observed Evidence\n{action.evidence.model_dump_json()}\n"
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
             f"## Ops Agent's Reasoning\n{action.reason}\n\n"
-            f"## Resource Metadata\n{meta_str}\n\n"
+            f"## Resource Metadata\n{meta_str}\n"
+            f"{evidence_section}\n"
             f"## Organization Policies\n{policies_summary}\n\n"
             "INSTRUCTIONS: First call evaluate_policy_rules to get the baseline score. "
             "Reason about each violation and whether it truly applies given the ops agent's intent. "
+            "If evidence shows a confirmed incident (high/critical severity or sustained metric breach), "
+            "this is responsive remediation — adjustments toward APPROVE are appropriate. "
+            "If no evidence is provided for a remediation action, adjust toward ESCALATE. "
             "Then call submit_governance_decision with your adjusted score and justification."
         )
         await run_with_throttle(agent.run, prompt)

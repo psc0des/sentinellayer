@@ -613,3 +613,60 @@ export async function rollbackAgentFix(executionId, reviewedBy = 'dashboard-user
   }
   return res.json()
 }
+
+/**
+ * Mark a human-required ApprovalCondition as satisfied.
+ * @param {string} executionId
+ * @param {number} conditionIndex
+ * @param {string} satisfiedBy
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function satisfyCondition(executionId, conditionIndex, satisfiedBy) {
+  const res = await apiFetch(`${BASE}/execution/${executionId}/condition/${conditionIndex}/satisfy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ satisfied_by: satisfiedBy }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(`API error ${res.status}: ${body.detail ?? 'satisfy condition failed'}`)
+  }
+  return res.json()
+}
+
+/**
+ * Force an immediate auto-check of one condition.
+ * @param {string} executionId
+ * @param {number} conditionIndex
+ * @returns {Promise<{satisfied: boolean, record: object}>}
+ */
+export async function checkConditionNow(executionId, conditionIndex) {
+  const res = await apiFetch(`${BASE}/execution/${executionId}/condition/${conditionIndex}/check`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(`API error ${res.status}: ${body.detail ?? 'condition check failed'}`)
+  }
+  return res.json()
+}
+
+/**
+ * Admin force-execute: bypass unmet conditions with justification.
+ * @param {string} executionId
+ * @param {string} adminUser
+ * @param {string} justification
+ * @returns {Promise<object>} Updated ExecutionRecord
+ */
+export async function forceExecuteConditional(executionId, adminUser, justification) {
+  const res = await apiFetch(`${BASE}/execution/${executionId}/force-execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ admin_user: adminUser, justification }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(`API error ${res.status}: ${body.detail ?? 'force-execute failed'}`)
+  }
+  return res.json()
+}
