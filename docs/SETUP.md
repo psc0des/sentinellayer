@@ -32,7 +32,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1-mini` version `2025-04-14`, Standard, 150K TPM)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
 5. Azure AI Search
-6. Azure Cosmos DB (SQL API) — six containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`), `resource-inventory` (partition `/subscription_id`). Managed Identity auth; no connection string stored in tfstate.
+6. Azure Cosmos DB (SQL API) — seven containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`), `resource-inventory` (partition `/subscription_id`), `governance-checkpoints` (partition `/id` — Phase 33C, stores scan-level workflow checkpoints for resume support). Managed Identity auth; no connection string stored in tfstate.
 7. Azure Key Vault — purge protection enabled, 90-day soft-delete retention
 8. Azure Log Analytics
 9. Azure Container Registry (ACR) — admin disabled; Container App pulls via Managed Identity (`AcrPull` role)
@@ -286,7 +286,7 @@ pip install -r requirements.txt
 
 # 2. Run tests — no Azure credentials needed (mock mode)
 pytest tests/ -v
-# Expected: 1002 passed, 0 failed
+# Expected: 1112 passed, 0 failed
 
 # 3a. Mock mode (no Azure needed) — set in .env
 echo "USE_LOCAL_MOCKS=true" > .env
@@ -663,17 +663,20 @@ npx @azure/static-web-apps-cli deploy dist --deployment-token $DEPLOY_TOKEN --en
 
 ### Why all agents run in-process (not as separate services)
 
-The 4 governance agents are called via `asyncio.gather()` inside `pipeline.py` — they
-run as Python coroutines in the same event loop, sharing a single process. There is no
+The 4 governance agents run as Python coroutines in the same event loop, sharing a single
+process. Since Phase 33D the default execution path is the **WorkflowBuilder graph** — a
+7-executor typed pipeline (`DispatchExecutor` → parallel fan-out → `ScoringExecutor` →
+`ConditionGateExecutor`) that replaces the legacy `asyncio.gather()` call. There is no
 inter-service HTTP, no message broker, no service mesh. This gives:
 
-- True parallelism without network overhead
+- True parallelism without network overhead (fan-out executors run concurrently)
 - Single deployment unit — one `docker build`, one `az containerapp update`
 - No distributed tracing setup needed for the core evaluation path
+- Structured SSE streaming per-agent as the workflow progresses (Phase 33B)
 
-Scale by increasing Container App CPU/memory limits and replica count. For very high
-throughput, the governance agent calls can be extracted to worker replicas behind a queue
-— but that is not needed for the current workload.
+Set `USE_WORKFLOWS=false` to fall back to the legacy `asyncio.gather()` path (deprecated —
+will be removed in a future release). Scale by increasing Container App CPU/memory limits
+and replica count.
 
 ---
 
@@ -683,6 +686,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 |----------|----------|---------|-------------|
 | `USE_LOCAL_MOCKS` | No | `false` | `false` = live Azure (production default). `true` = local JSON files for offline dev. Startup logs a prominent `⚠ MOCK MODE ACTIVE` warning when true. |
 | `USE_LIVE_TOPOLOGY` | No | `false` | `true` = governance agents query Azure Resource Graph for real dependency topology and SKU cost (Phase 19). Only effective when `USE_LOCAL_MOCKS=false` and `AZURE_SUBSCRIPTION_ID` is set. |
+| `USE_WORKFLOWS` | No | `true` | `true` (default as of Phase 33D) = pipeline uses the 7-executor WorkflowBuilder graph with ConditionGate and checkpointing. `false` = legacy `asyncio.gather()` path (deprecated — will be removed in a future release). |
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-4.1-mini` | Model deployment name (set via `foundry_deployment_name` in terraform.tfvars) |
 | `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |
@@ -695,6 +699,7 @@ throughput, the governance agent calls can be extracted to worker replicas behin
 | `COSMOS_CONTAINER_EXECUTIONS` | Live only | `governance-executions` | Container for HITL execution records — survives deployments (Terraform-managed) |
 | `COSMOS_CONTAINER_INVENTORY` | Live only | `resource-inventory` | Container for resource inventory snapshots — partition key `/subscription_id` (Terraform-managed) |
 | `COSMOS_CONTAINER_AGENTS` | Live only | `governance-agents` | Container for agent registration records and admin auth backup (Terraform-managed) |
+| `COSMOS_CONTAINER_CHECKPOINTS` | Live only | `governance-checkpoints` | Container for scan-level workflow checkpoints — enables `POST /api/scan/{id}/resume` to re-evaluate from where a scan left off (Phase 33C, Terraform-managed) |
 | `INVENTORY_STALE_HOURS` | No | `24` | Hours after which an inventory snapshot is considered stale. Dashboard shows an amber warning and recommends refreshing before scans. |
 | `AZURE_SUBSCRIPTION_ID_DISPLAY` | No | `""` | Optional human-friendly label shown next to the subscription ID in the Inventory page header. |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |
