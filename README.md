@@ -615,6 +615,10 @@ RuriSkry is a genuine attempt at solving a real and underserved problem: holding
 - The agent execution paths (plan → execute → verify → rollback) work, but may behave unexpectedly on resource configurations or Azure environments I haven't tested against
 - You will likely find bugs. That's expected and welcome — every issue reported makes this better for everyone
 
+**Known scope limitation — direct remediation coverage:**
+
+RuriSkry **scans every resource type** in Azure (VMs, App Services, AKS, SQL, Storage, Cosmos, Function Apps, etc.) — `Reader` is the only role needed for that. But **direct API remediation is currently limited to Virtual Machines and Network Security Groups**. For all other resource types, the Execution Gateway creates a Terraform PR for human review and merge. If your environment is not Terraform-managed (e.g. portal-only, ad-hoc `az` CLI, custom scripts), you will not have an automated remediation path for resources outside VMs/NSGs — RuriSkry will still surface verdicts and recommendations, but the action has to be applied manually. Expanding direct execution coverage (App Services, AKS, generic playbook approach) is on the roadmap.
+
 **If you're deploying RuriSkry:**
 - Start with mock mode (`USE_LOCAL_MOCKS=true`) to understand how the decision pipeline works before connecting live Azure credentials
 - Run it alongside your existing change management process, not as a replacement, while you build confidence in the verdicts

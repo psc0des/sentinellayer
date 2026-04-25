@@ -52,6 +52,8 @@ Direct remediation (executing the action via Azure SDK) is intentionally limited
 
 For all other resource types, RuriSkry raises a governance verdict and the Execution Gateway opens a Terraform PR in your IaC repo. A human reviews and merges it — the change happens through your normal IaC pipeline, not via direct Azure API calls. This is by design: direct API access is only granted for the two operations that are fast, reversible, and well-understood (restarting a VM, patching an NSG rule).
 
+> **Known limitation — be aware before adopting.** If your environment is **not Terraform-managed** (no IaC repo, or you manage Azure via portal / `az` CLI / scripts), you currently have no automated remediation path for App Services, AKS, SQL, Storage, Function Apps, etc. RuriSkry will still scan and propose actions for these resource types, but you will have to execute the remediations manually based on its recommendations. Direct execution coverage will expand in a future release — track [the roadmap](https://github.com/psc0des/ruriskry/issues) or open an issue if a specific resource type is blocking your adoption.
+
 **The five roles and which part of RuriSkry uses each:**
 
 | Role | Scope | Used by | What it enables |
