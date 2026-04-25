@@ -2,6 +2,38 @@
 
 Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
 
+## Required Permissions
+
+Two distinct identities are involved — the person deploying RuriSkry and RuriSkry itself.
+
+### Deploying user (`az login` account running `terraform apply`)
+
+| Scenario | Deployment subscription | Target subscription |
+|---|---|---|
+| Same subscription (default) | `Owner` — covers Contributor + role assignments + Monitoring Contributor | — |
+| Cross-subscription | `Owner` on deployment sub | `Owner` or (`User Access Administrator` + `Monitoring Contributor`) on target sub |
+
+`Owner` is the simplest. If your org restricts Owner, the minimum granular roles are:
+- **Contributor** — create all RuriSkry resources
+- **User Access Administrator** — create RBAC role assignments for RuriSkry's Managed Identity
+- **Monitoring Contributor** — create the Alert Processing Rule
+
+### RuriSkry's Managed Identity (granted automatically by Terraform — no manual steps needed)
+
+| Role | Scope | Purpose |
+|---|---|---|
+| `Reader` | Target subscription | Scan and discover all resources |
+| `Network Contributor` | Target subscription | Modify NSG rules for remediation |
+| `Virtual Machine Contributor` | Target subscription | Start / restart VMs for remediation |
+| `Cognitive Services OpenAI User` | Foundry account | Call LLM for governance decisions |
+| `AcrPull` | ACR | Pull backend container image |
+
+### Dashboard operators (day-to-day users)
+
+No Azure permissions needed. Dashboard operators log in with the admin credentials created during first-time setup — all governance actions go through RuriSkry's Managed Identity, not the user's identity.
+
+---
+
 ## Prerequisites
 
 - Python 3.11+
@@ -338,6 +370,64 @@ python examples/examples/demo_a2a.py    # A2A protocol demo — server + 3 agent
 python examples/examples/demo_live.py   # live Azure scan (requires USE_LOCAL_MOCKS=false + Azure creds)
 python examples/examples/demo_live.py --resource-group ruriskry-prod-rg  # scope to a specific RG
 ```
+
+## Post-Deploy: Connect Your Real Infrastructure
+
+After `deploy.sh` completes, RuriSkry is running and has the right permissions on your subscription. But it only receives governance triggers when Azure Monitor alerts fire. You need to configure alert rules on your existing resources — RuriSkry cannot do this for you because it doesn't know what resources you have.
+
+### What you need to set up
+
+**Alert rules** on each resource you want RuriSkry to govern. When these fire, the Alert Processing Rule (created by Terraform) automatically routes them to RuriSkry.
+
+Your backend's alert webhook URL is printed at the end of `deploy.sh`. You can also get it anytime:
+```bash
+terraform -chdir=infrastructure/terraform-core output -raw backend_url
+# Webhook: <backend_url>/api/alert-trigger
+```
+
+### Common alert rules to create
+
+**VM stopped unexpectedly:**
+```bash
+az monitor activity-log alert create \
+  --name "ruriskry-vm-stopped" \
+  --resource-group <your-rg> \
+  --condition category=Administrative operationName=Microsoft.Compute/virtualMachines/deallocate/action \
+  --action-group $(az monitor action-group show -g ruriskry-monitor-rg-<suffix> -n ag-ruriskry-prod --query id -o tsv)
+```
+
+**NSG rule changed:**
+```bash
+az monitor activity-log alert create \
+  --name "ruriskry-nsg-change" \
+  --resource-group <your-rg> \
+  --condition category=Administrative operationName=Microsoft.Network/networkSecurityGroups/securityRules/write \
+  --action-group $(az monitor action-group show -g ruriskry-monitor-rg-<suffix> -n ag-ruriskry-prod --query id -o tsv)
+```
+
+**High CPU on a VM:**
+```bash
+az monitor metrics alert create \
+  --name "ruriskry-high-cpu" \
+  --resource-group <your-rg> \
+  --scopes <vm-resource-id> \
+  --condition "avg Percentage CPU > 80" \
+  --window-size 5m \
+  --evaluation-frequency 1m \
+  --action $(az monitor action-group show -g ruriskry-monitor-rg-<suffix> -n ag-ruriskry-prod --query id -o tsv)
+```
+
+You can also create these in **Azure Portal → Monitor → Alerts → Create alert rule** — point the action group at `ag-ruriskry-prod` in resource group `ruriskry-monitor-rg-<suffix>`.
+
+### What you need
+
+`Monitoring Contributor` on the resource group or subscription where your resources live. This is separate from deploying RuriSkry — it's your own infrastructure that you're adding alert rules to.
+
+### You do NOT need to configure the webhook manually
+
+The Alert Processing Rule (APR) created by Terraform already intercepts all alerts in your subscription and forwards them to RuriSkry. You only need to point alert rules at any action group — the APR handles the rest.
+
+---
 
 ## Optional: Deploy Demo Environment
 
