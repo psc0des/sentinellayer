@@ -56,8 +56,8 @@ create_foundry_deployment = true
 foundry_model             = "gpt-4.1-mini"
 foundry_model_version     = "2025-04-14"
 foundry_deployment_name   = "gpt-4.1-mini"
-foundry_scale_type        = "Standard"   # Standard quota is pre-allocated on new subscriptions (no request needed)
-foundry_capacity          = 150          # 150K TPM — safe for 3 concurrent agent scans (Standard pre-allocated limit is 200K, no request needed)
+foundry_scale_type        = "GlobalStandard"   # GlobalStandard uses shared global pool — no per-subscription quota request needed
+foundry_capacity          = 150                # 150K TPM — safe for 3 concurrent agent scans
 
 # ── Upgrading to gpt-5-mini GlobalStandard (better for high-concurrency) ─────
 # gpt-5-mini GlobalStandard requires a manual quota request on new subscriptions:

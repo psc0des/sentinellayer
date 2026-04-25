@@ -350,7 +350,7 @@ done
 # provider alias). If target_subscription_id differs from subscription_id, that sub also
 # needs Microsoft.AlertsManagement registered — otherwise Terraform gets a 409 Conflict.
 TARGET_SUB_EARLY=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
-  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || true)
 if [[ -n "$TARGET_SUB_EARLY" && "$TARGET_SUB_EARLY" != "$SUBSCRIPTION_ID" ]]; then
   log "target_subscription_id ($TARGET_SUB_EARLY) differs from infra sub — registering Microsoft.AlertsManagement there too"
   for PROVIDER in Microsoft.AlertsManagement Microsoft.Insights; do
@@ -859,7 +859,7 @@ APR_NAME="apr-ruriskry-governance-fanout"
 # APR lives in the monitor RG in the TARGET subscription (not the infra RG)
 APR_RG=$(terraform -chdir="$TF_DIR" output -raw monitor_resource_group_name 2>/dev/null || true)
 TARGET_SUB=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
-  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || true)
 ALERT_SUB="${TARGET_SUB:-$SUBSCRIPTION_ID}"
 
 APR_STATE=$(az monitor alert-processing-rule show \
