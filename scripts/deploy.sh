@@ -62,6 +62,13 @@ warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
 step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
 
+# Catch any unhandled command failure and print the line + command before exiting.
+# This fires for unexpected errors only — intentional die() calls already print
+# their own message and exit before the trap can fire.
+trap 'echo -e "\n${RED}${BOLD}✗  Unexpected error on line $LINENO${NC}" >&2
+      echo -e "${RED}   Failed command: $BASH_COMMAND${NC}" >&2
+      echo -e "${RED}   Re-run with: bash -x scripts/deploy.sh  (for full trace)${NC}" >&2' ERR
+
 # =============================================================================
 # --reset-admin: wipe the admin account from both the local filesystem file
 # AND the Cosmos DB backup record, so the setup screen reappears on the next
