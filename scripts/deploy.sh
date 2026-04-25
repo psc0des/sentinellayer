@@ -836,18 +836,16 @@ if [[ -f "$DEMO_DIR/terraform.tfvars" && -d "$DEMO_DIR/.terraform" ]]; then
         >> "$DEMO_DIR/terraform.tfvars"
     fi
 
-    log "Applying demo action group update..."
-    cd "$DEMO_DIR"
-    terraform apply -auto-approve -target=azurerm_monitor_action_group.prod
-    cd "$TF_DIR"
-    ok "Demo environment wired: alerts → $BACKEND_URL/api/alert-trigger"
+    ok "alert_webhook_url injected into terraform-demo/terraform.tfvars"
+    warn "terraform-demo is managed separately — apply it yourself to activate the wiring:"
+    warn "  cd $DEMO_DIR && terraform apply -auto-approve -target=azurerm_monitor_action_group.prod"
   else
-    ok "Demo environment already wired ($CURRENT_WEBHOOK) — skipping"
+    ok "Demo environment already wired ($CURRENT_WEBHOOK) — no changes needed"
   fi
 else
   if [[ ! -f "$DEMO_DIR/terraform.tfvars" ]]; then
     log "Demo environment not configured — skipping webhook wiring."
-    log "To wire it later, deploy terraform-demo then re-run: bash scripts/deploy.sh --stage2"
+    log "To wire it later: set alert_webhook_url = \"$BACKEND_URL/api/alert-trigger\" in terraform-demo/terraform.tfvars and run terraform apply"
   else
     log "Demo environment not initialised — run 'terraform init && terraform apply' in terraform-demo first."
   fi
