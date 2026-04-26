@@ -60,7 +60,17 @@ log()  { echo -e "${BLUE}▶  $*${NC}"; }
 ok()   { echo -e "${GREEN}✓  $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
-step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
+
+# step "title" prints "══ Step N — title ══". The deploy script has several
+# conditional steps (Foundry quota check, Stage 1 skip on --stage2, remote state
+# setup only on first run), so a precise total can't be promised — but the
+# running counter gives the user a clear sense of progress.
+STEP_NUM=0
+step() {
+  STEP_NUM=$((STEP_NUM + 1))
+  echo ""
+  echo -e "${BOLD}${BLUE}══ Step ${STEP_NUM} — $* ══${NC}"
+}
 
 # Catch any unhandled command failure and print the line + command before exiting.
 # This fires for unexpected errors only — intentional die() calls already print

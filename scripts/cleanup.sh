@@ -39,7 +39,20 @@ log()  { echo -e "${BLUE}▶  $*${NC}"; }
 ok()   { echo -e "${GREEN}✓  $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
-step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
+
+# step "title" prints "══ Step N/TOTAL — title ══" so the user always knows
+# how far through the run we are. STEP_NUM auto-increments; TOTAL_STEPS is
+# set once at the top of the script after parsing flags.
+STEP_NUM=0
+# Total steps depends on flags:
+#   default      = 6 (Prereq, Main RG, Monitor RG, Foundry, Key Vault, Local state)
+#   --all adds 1 = 7 (Prereq, Main RG, Monitor RG, Foundry, Key Vault, tfstate storage, Local state)
+TOTAL_STEPS=$([[ "$DELETE_TFSTATE" == true ]] && echo 7 || echo 6)
+step() {
+  STEP_NUM=$((STEP_NUM + 1))
+  echo ""
+  echo -e "${BOLD}${BLUE}══ Step ${STEP_NUM}/${TOTAL_STEPS} — $* ══${NC}"
+}
 
 trap 'echo -e "\n${RED}${BOLD}✗  Unexpected error on line $LINENO${NC}" >&2
       echo -e "${RED}   Failed command: $BASH_COMMAND${NC}" >&2
