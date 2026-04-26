@@ -154,6 +154,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/auth/logout` | Revoke the current session token. Always exempt from auth check. |
 | GET | `/` | Root — returns `{"status":"ok","service":"ruriskry-backend"}`. Satisfies Azure Container Apps default HTTP liveness probe (hits `GET /` when no custom probe is configured). |
 | GET | `/health` | Liveness probe used by `deploy.sh` health check and explicit probe configs. Returns `{"status":"ok"}`. |
+| GET | `/` | Root route — satisfies Azure Container Apps default HTTP liveness probe. Returns `{"status":"ok","service":"<service_name>"}`. |
 | GET | `/api/evaluations` | List recent governance decisions (newest-first). Query: `limit` (1–500, default 20), `offset` (default 0), `resource_id` (substring filter) |
 | GET | `/api/evaluations/{evaluation_id}` | Full record for one evaluation by UUID |
 | GET | `/api/metrics` | Aggregate stats: decision counts, SRI avg/min/max, top violations, triage tier distribution |
@@ -177,6 +178,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
 | PATCH | `/api/scan/{scan_id}/cancel` | Request cancellation of a running scan |
+| POST | `/api/scan/{scan_id}/resume` | **Phase 33C — Scan resume.** Re-evaluates proposals listed in the scan's checkpoint (`pending_proposals`) that are missing from `evaluations`. Reads `governance-checkpoints` Cosmos container. Returns `404` if no checkpoint exists, `409` if scan is already running. |
 | GET | `/api/evaluations/{evaluation_id}/explanation` | Full decision explanation with counterfactual analysis |
 | GET | `/api/execution/pending-reviews` | List ESCALATED verdicts awaiting human review |
 | GET | `/api/execution/by-action/{action_id}` | Execution status for a verdict |
@@ -185,6 +187,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/execution/{execution_id}/dismiss` | Human dismisses a verdict |
 | GET | `/api/github/repos` | List GitHub repos accessible via `GITHUB_TOKEN` — used by the PR overlay dropdown |
 | POST | `/api/execution/{execution_id}/create-pr` | Create Terraform PR from a `manual_required` record (body: `reviewed_by`, optional `iac_repo`, `iac_path` overrides) |
+| POST | `/api/execution/{execution_id}/resolve-tf-change` | Analyse the Terraform repo, locate the resource block managing the target resource, and propose a human-confirmable attribute:value change. Body: `{iac_repo: string?, iac_path: string?}`. Returns `{proposed_change: {file, attribute, current_value, new_value}, justification}` or `404` if the resource is not found in IaC. Used by the PR overlay before `create-pr`. |
 | GET | `/api/execution/{execution_id}/agent-fix-preview` | Generate LLM-driven execution plan (steps, summary, impact, rollback, backward-compat `commands`) |
 | POST | `/api/execution/{execution_id}/agent-fix-execute` | Execute fix via Azure Python SDK (`azure.mgmt.network/compute/resource`) using `DefaultAzureCredential` |
 | POST | `/api/execution/{execution_id}/rollback` | Roll back an agent-applied fix (status must be `applied`); sets status → `rolled_back` on success, keeps `applied` on failure; stores `rollback_log` (may be empty if LLM timed out); dashboard shows failure banner even with empty log |

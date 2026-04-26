@@ -451,6 +451,29 @@ resource "azurerm_cosmosdb_sql_container" "resource_inventory" {
   }
 }
 
+# Phase 33C — scan-level workflow checkpoints written by CosmosCheckpointStore.
+# Partition key `/id` matches checkpoint_store.py read_item(partition_key=checkpoint_id).
+# default_ttl = -1 enables TTL; each document sets its own _ttl=604800 (7 days)
+# so completed checkpoints expire automatically without manual cleanup.
+resource "azurerm_cosmosdb_sql_container" "governance_checkpoints" {
+  name                = "governance-checkpoints"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
+
+  partition_key_paths   = ["/id"]
+  partition_key_version = 2
+  default_ttl           = -1
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+  }
+}
+
 # =============================================================================
 # 7. Key Vault secrets (service credentials)
 # =============================================================================
@@ -1100,6 +1123,8 @@ resource "azurerm_management_lock" "ruriskry_rg" {
     azurerm_cosmosdb_sql_container.governance_alerts,
     azurerm_cosmosdb_sql_container.governance_scan_runs,
     azurerm_cosmosdb_sql_container.governance_executions,
+    azurerm_cosmosdb_sql_container.resource_inventory,
+    azurerm_cosmosdb_sql_container.governance_checkpoints,
     azurerm_ai_services.foundry,
     azurerm_search_service.ruriskry,
     azurerm_key_vault.ruriskry,

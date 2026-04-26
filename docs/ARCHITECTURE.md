@@ -90,7 +90,7 @@ ConditionGateExecutor: WorkflowContext[None, GovernanceVerdict] (terminal output
 `CosmosCheckpointStore` (`src/core/workflows/checkpoint_store.py`) persists the list of
 `pending_proposals` to Cosmos DB before the evaluation loop starts. If the server restarts
 mid-scan, `POST /api/scan/{id}/resume` reads the checkpoint and skips already-evaluated proposals.
-Cosmos container: `governance-checkpoints`, partition key `/scan_id`.
+Cosmos container: `governance-checkpoints`, partition key `/id` (matches `checkpoint_id` for direct point reads).
 
 **SSE Streaming (Phase 33B):**
 `stream_governance_evaluation()` translates workflow events to SSE:
