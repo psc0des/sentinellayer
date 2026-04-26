@@ -1,100 +1,8 @@
 # Setup Guide
 
-Detailed infra runbook: `infrastructure/terraform-core/deploy.md`
+Deploy RuriSkry to Azure in one command, or run it locally for development. Detailed infra runbook: `infrastructure/terraform-core/deploy.md`.
 
-## Required Permissions
-
-Two distinct identities are involved — the person deploying RuriSkry and RuriSkry itself (its Managed Identity).
-
-### Deploying user (`az login` account running `terraform apply`)
-
-`Owner` is the simplest but rarely granted in enterprise environments. The table below shows the minimum roles needed and **why each is required** — so your org's platform team knows exactly what to grant.
-
-**Same subscription (default — RuriSkry and your workloads are in the same sub):**
-
-| Role | Why it's needed |
-|---|---|
-| `Contributor` | Creates all RuriSkry resources — Container App, Cosmos DB, Key Vault, ACR, Foundry, etc. |
-| `User Access Administrator` | Terraform must assign `Reader`, `Network Contributor`, and `VM Contributor` to RuriSkry's Managed Identity. Without this role, those `azurerm_role_assignment` resources fail with AuthorizationFailed. |
-| `Monitoring Contributor` | Creates the Alert Processing Rule (APR) that routes subscription alerts to RuriSkry. Without this, the APR step fails and alerts never reach RuriSkry. |
-
-> `Owner` = `Contributor` + `User Access Administrator` + all management plane actions. If your org grants Owner, all three above are covered automatically.
-
-**Cross-subscription (RuriSkry deployed in sub A, scanning sub B):**
-
-| Subscription | Roles needed |
-|---|---|
-| Deployment sub (A) | `Contributor` + `User Access Administrator` |
-| Target sub (B) | `User Access Administrator` + `Monitoring Contributor` |
-
-The target sub needs `User Access Administrator` because Terraform creates the `Reader`, `Network Contributor`, and `VM Contributor` role assignments there, and `Monitoring Contributor` because the APR lives in the target sub.
-
-**Service Principal / CI-CD pipeline:**
-If deploying via automation rather than personal login, create a Service Principal and assign it the same roles above. Avoid using `Owner` for automated pipelines — use the granular roles.
-
----
-
-### RuriSkry's Managed Identity (granted automatically by Terraform — no manual steps needed)
-
-Once deployed, RuriSkry governs your resources using its own Managed Identity, not your personal account. Terraform creates all these role assignments automatically during `terraform apply`.
-
-**Important: scanning vs. direct remediation**
-
-`Reader` covers every resource type in Azure — VMs, App Services, AKS, SQL, Storage, Cosmos, Function Apps, etc. RuriSkry can scan and make governance decisions on all of them.
-
-Direct remediation (executing the action via Azure SDK — Phase 34A Tier 1) now covers seven resource types:
-
-| Resource type | Can scan? | Can directly remediate? |
-|---|---|---|
-| Virtual Machines | ✓ | ✓ start / restart / resize via `VM Contributor` |
-| Network Security Groups | ✓ | ✓ add / modify / delete rules via `Network Contributor` |
-| App Services (`Microsoft.Web/sites`) | ✓ | ✓ restart via `Website Contributor` |
-| Function Apps (`Microsoft.Web/sites` kind=functionapp) | ✓ | ✓ restart via `Website Contributor` |
-| App Service Plans (`Microsoft.Web/serverfarms`) | ✓ | ✓ scale (SKU / worker count) via `Website Contributor` |
-| AKS node pools | ✓ | ✓ scale node count via `Azure Kubernetes Service Contributor Role` |
-| Storage Accounts (key rotation) | ✓ | ✓ rotate key — requires `Storage Account Key Operator Service Role` **per account** (see note below) |
-| SQL, Cosmos DB, Key Vault, and everything else | ✓ | ✗ — proposes action + creates Terraform PR via Execution Gateway |
-
-For all other resource types, RuriSkry raises a governance verdict and the Execution Gateway opens a Terraform PR in your IaC repo. A human reviews and merges it — the change happens through your normal IaC pipeline, not via direct Azure API calls.
-
-> **Storage key rotation RBAC:** Azure rejects `Storage Account Key Operator Service Role` at subscription scope. Grant it per storage account after identifying which accounts are under RuriSkry management:
-> ```bash
-> az role assignment create \
->   --assignee <backend-mi-principal-id> \
->   --role "Storage Account Key Operator Service Role" \
->   --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>
-> ```
-
-> **Dry-run mode (Phase 34A):** Every Tier 1 SDK tool accepts `dry_run=True`. In dry-run mode the SDK call is not made, but a full audit record is written to `governance-executions` with `mode="dry_run"`. Use dry-run to verify a remediation path without touching the resource.
-
-> **Tier 3 Playbook (Phase 34D):** For resource types without a Tier 1 SDK tool (SQL DB, Redis, Key Vault, Container Registry, Cosmos DB, Service Bus), RuriSkry generates a Tier 3 remediation playbook visible in the decision drilldown. The playbook shows the exact `az` CLI command, rollback command, risk level, and expected outcome.
-
-> **Tier 3 Execution (Phase 34E):** The playbook "Run via RuriSkry" button is functional. Commands validated against a 13-pattern allowlist before execution — new patterns require a code change. `shell=False` is a hard invariant. Every call (live, dry-run, rejected) writes a full `AzPlaybookExecution` audit record to `governance-executions`. **Requires `az` CLI installed in the Container App image** — already included in `Dockerfile` via `RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash`. In mock mode (`USE_LOCAL_MOCKS=true`) the subprocess is never called. No new Azure roles needed — executor inherits the existing Managed Identity's roles.
-
-> **A2 Validator (Phase 34F):** Before every Tier 3 execution, the ConfirmationModal calls `POST /api/decisions/{id}/validate` which runs a GPT-4.1 critic call with a hard 5-second timeout. The validator produces a `ValidatorBrief` (summary, caveats, risk level) displayed in the modal before the user confirms. If the validator times out or the endpoint is unreachable, `validator_status="unavailable"` is shown as an amber warning and the Confirm button is still enabled — validator unavailability never blocks execution. The validator uses the SystemAssigned Managed Identity (same as all other LLM calls) via `DefaultAzureCredential`; no additional Azure roles or infrastructure are needed.
-
-**The seven roles and which part of RuriSkry uses each:**
-
-| Role | Scope | Used by | What it enables |
-|---|---|---|---|
-| `Reader` | Target subscription | All agents — scans all resource types for cost, security, availability, and deployment analysis. Also covers Azure Advisor, Defender for Cloud, and Azure Policy APIs. | Discovery and analysis across your entire subscription. |
-| `Network Contributor` | Target subscription | Execution Agent — directly calls `NetworkManagementClient` to create/delete NSG rules when a security remediation is approved. | Live NSG rule patching without a Terraform PR. |
-| `Virtual Machine Contributor` | Target subscription | Execution Agent — directly calls `ComputeManagementClient` to `start_vm` / `restart_vm` / `resize_vm` when a monitoring remediation is approved. | Live VM operations without a Terraform PR. |
-| `Website Contributor` | Target subscription | Execution Agent — calls `WebSiteManagementClient` to restart App Services / Function Apps and scale App Service Plans. | Live App Service and App Service Plan operations without a Terraform PR. |
-| `Azure Kubernetes Service Contributor Role` | Target subscription | Execution Agent — calls `ContainerServiceClient` to scale AKS node pool counts. | Live AKS nodepool scaling without a Terraform PR. |
-| `Storage Account Key Operator Service Role` | Per storage account | Execution Agent — calls `StorageManagementClient.regenerate_key()`. Cannot be subscription-scoped (Azure limitation). Grant per account — see note above. | Storage key rotation per account. |
-| `Cognitive Services OpenAI User` | Foundry account (internal) | All four governance agents — required to call `gpt-4.1-mini` for every governance decision. Without this, all LLM decisions fail with 401. | LLM-based governance decisions. |
-| `AcrPull` | ACR (internal) | Container App runtime — pulls the backend image on every start and restart. | Container startup. |
-
-> **Note on scope:** `Reader`, `Network Contributor`, and `VM Contributor` are granted at subscription scope — meaning RuriSkry can govern resources across all resource groups in your subscription. If you want tighter scope (e.g., only a specific resource group), change the `scope` in `infrastructure/terraform-core/main.tf` on the relevant `azurerm_role_assignment` resources before deploying.
-
----
-
-### Dashboard operators (day-to-day users)
-
-No Azure permissions needed. Dashboard operators log in with the admin credentials created on first visit. All governance actions (scans, approvals, remediations) execute under RuriSkry's Managed Identity — operator accounts have no direct Azure access.
-
----
+> **What permissions do I need?** See [Required Permissions](#required-permissions) at the bottom. Short answer: `Owner` on your subscription is the simplest — `Contributor` + `User Access Administrator` + `Monitoring Contributor` is the granular minimum.
 
 ## Prerequisites
 
@@ -336,7 +244,7 @@ resource "azurerm_monitor_action_group" "alerts" {
 }
 ```
 
-#### Option C — ARM/Bicep-managed infrastructure
+#### Option D — ARM/Bicep-managed infrastructure
 
 ```json
 {
@@ -351,7 +259,7 @@ resource "azurerm_monitor_action_group" "alerts" {
 }
 ```
 
-#### Option D — Existing infrastructure (no IaC / click-ops)
+#### Option E — Existing infrastructure (no IaC / click-ops)
 
 Azure Portal → **Monitor** → **Action Groups** → **+ Create**
 - Action type: **Webhook**
@@ -789,79 +697,38 @@ See `infrastructure/terraform-core/deploy.md` for full implementation guide.
 
 ---
 
-## Cloud Deployment
+## Updating a Deployed Stack
 
-RuriSkry is a **single FastAPI application** — all agents (governance + operational) run
-in-process. Deploying to Azure requires exactly two services:
+`scripts/deploy.sh` handles fresh deploys. For pushing code-only updates after that, you can skip the full Terraform apply and only swap the image / dashboard build.
 
-| Service | What to deploy | Terraform |
-|---------|---------------|-----------|
-| **Azure Container Apps** | FastAPI backend (`src/api/dashboard_api.py` + all agents) | `infrastructure/terraform-core/` |
-| **Azure Static Web Apps** | React dashboard (`dashboard/`) | `infrastructure/terraform-core/` |
-
-Both services are now provisioned by `terraform apply`. All other Azure services (OpenAI Foundry, AI Search, Cosmos DB, Key Vault, ACR) are also provisioned in the same apply.
-
-### Container Apps — quick deploy
-
-The `Dockerfile` at the repo root builds the FastAPI backend. For a first-time deploy, `scripts/deploy.sh` handles ACR creation, Docker build, push, and Container App provisioning in the correct order. To push a subsequent code update:
-
+**Backend (FastAPI / Container App):**
 ```bash
-# Build and push using local Docker (requires Docker Desktop)
 ACR_NAME=$(terraform -chdir=infrastructure/terraform-core output -raw acr_name)
 ACR_SERVER=$(terraform -chdir=infrastructure/terraform-core output -raw acr_login_server)
 az acr login --name $ACR_NAME
 docker build -t $ACR_SERVER/ruriskry-backend:latest .
 docker push $ACR_SERVER/ruriskry-backend:latest
 
-# Update the Container App to pull the new image.
-# Use --revision-suffix to force a new revision — Azure Container Apps caches
-# the image digest per revision, so updating a mutable tag (e.g. :latest) without
-# creating a new revision will NOT pull the updated image.
+# --revision-suffix forces a new revision. Without it, Azure caches the image
+# digest per revision and a mutable tag (`:latest`) will NOT be re-pulled.
 az containerapp update \
   --name $(terraform -chdir=infrastructure/terraform-core output -raw backend_container_app_name) \
   --resource-group ruriskry-core-engine-rg \
   --image $ACR_SERVER/ruriskry-backend:latest \
   --revision-suffix "r$(date +%Y%m%d%H%M)"
-
-# Get the backend URL
-terraform -chdir=infrastructure/terraform-core output backend_url
 ```
 
-All env vars (endpoints, feature flags, org context) are wired automatically by
-Terraform from the other provisioned resources. Secrets (API keys, Slack webhook URL) are
-stored in Key Vault and injected at runtime via the Container App's Managed Identity —
-no `.env` file goes inside the container. ACR pulls also use the same Managed Identity
-(`AcrPull` role) — no registry credentials anywhere in tfstate or the container.
-
-### Static Web Apps — quick deploy
-
+**Dashboard (React / Static Web App):**
 ```bash
-# Build the React app (dashboard/.env.production must exist with VITE_API_URL set)
 cd dashboard
 echo "VITE_API_URL=$(terraform -chdir=../infrastructure/terraform-core output -raw backend_url)" > .env.production
 npm run build
 
-# Deploy to Static Web Apps (token output by terraform apply)
 DEPLOY_TOKEN=$(terraform -chdir=../infrastructure/terraform-core output -raw dashboard_deployment_token)
 npx @azure/static-web-apps-cli deploy dist --deployment-token $DEPLOY_TOKEN --env production
 ```
 
-### Why all agents run in-process (not as separate services)
-
-The 4 governance agents run as Python coroutines in the same event loop, sharing a single
-process. Since Phase 33D the default execution path is the **WorkflowBuilder graph** — a
-7-executor typed pipeline (`DispatchExecutor` → parallel fan-out → `ScoringExecutor` →
-`ConditionGateExecutor`) that replaces the legacy `asyncio.gather()` call. There is no
-inter-service HTTP, no message broker, no service mesh. This gives:
-
-- True parallelism without network overhead (fan-out executors run concurrently)
-- Single deployment unit — one `docker build`, one `az containerapp update`
-- No distributed tracing setup needed for the core evaluation path
-- Structured SSE streaming per-agent as the workflow progresses (Phase 33B)
-
-Set `USE_WORKFLOWS=false` to fall back to the legacy `asyncio.gather()` path (deprecated —
-will be removed in a future release). Scale by increasing Container App CPU/memory limits
-and replica count.
+Env vars and secrets are wired automatically by Terraform — you don't ship a `.env` file inside the container. Key Vault secrets are injected at runtime via the Container App's Managed Identity.
 
 ---
 
@@ -909,3 +776,82 @@ and replica count.
 | `ORG_COMPLIANCE_FRAMEWORKS` | No | `""` | Comma-separated compliance frameworks in scope (e.g. `HIPAA,PCI-DSS,SOC2`). Any production resource is treated as compliance-scoped when this is non-empty, routing it to Tier 3 governance. |
 | `ORG_RISK_TOLERANCE` | No | `moderate` | Organisation-wide risk posture: `conservative`, `moderate`, or `aggressive`. Informs triage context; `conservative` is recommended for regulated industries. |
 | `ORG_BUSINESS_CRITICAL_RGS` | No | `""` | Comma-separated resource group names that contain P0 workloads (e.g. `rg-prod-payments,rg-prod-identity`). Actions targeting these RGs are always scoped as compliance-relevant (Tier 3 minimum). |
+
+---
+
+## Required Permissions
+
+Two distinct identities are involved — the person deploying RuriSkry, and RuriSkry itself once deployed (its Managed Identity).
+
+### Deploying user (`az login` account running `terraform apply`)
+
+`Owner` is the simplest but rarely granted in enterprise environments. The granular minimum:
+
+**Same subscription (default — RuriSkry and your workloads are in the same sub):**
+
+| Role | Why it's needed |
+|---|---|
+| `Contributor` | Creates all RuriSkry resources — Container App, Cosmos DB, Key Vault, ACR, Foundry, etc. |
+| `User Access Administrator` | Terraform must assign `Reader`, `Network Contributor`, and `VM Contributor` to RuriSkry's Managed Identity. Without this, those `azurerm_role_assignment` resources fail with AuthorizationFailed. |
+| `Monitoring Contributor` | Creates the Alert Processing Rule (APR) that routes subscription alerts to RuriSkry. Without this, the APR step fails and alerts never reach RuriSkry. |
+
+> `Owner` = `Contributor` + `User Access Administrator` + all management plane actions. If your org grants Owner, all three above are covered automatically.
+
+**Cross-subscription (RuriSkry deployed in sub A, scanning sub B):**
+
+| Subscription | Roles needed |
+|---|---|
+| Deployment sub (A) | `Contributor` + `User Access Administrator` |
+| Target sub (B) | `User Access Administrator` + `Monitoring Contributor` |
+
+The target sub needs `User Access Administrator` because Terraform creates the `Reader`, `Network Contributor`, and `VM Contributor` role assignments there, and `Monitoring Contributor` because the APR lives in the target sub.
+
+**Service Principal / CI-CD pipeline:** if deploying via automation rather than personal login, create a Service Principal with the same roles. Avoid `Owner` for automated pipelines — use the granular roles.
+
+### RuriSkry's Managed Identity (granted automatically by Terraform)
+
+Once deployed, RuriSkry governs your resources using its own Managed Identity, not your personal account. Terraform creates all role assignments automatically during `terraform apply`.
+
+**Scanning vs. direct remediation:**
+
+`Reader` covers every resource type in Azure — VMs, App Services, AKS, SQL, Storage, Cosmos, Function Apps, etc. RuriSkry can scan and make governance decisions on all of them. Direct remediation (executing the action via Azure SDK) covers seven resource types:
+
+| Resource type | Can scan? | Can directly remediate? |
+|---|---|---|
+| Virtual Machines | ✓ | ✓ start / restart / resize via `VM Contributor` |
+| Network Security Groups | ✓ | ✓ add / modify / delete rules via `Network Contributor` |
+| App Services (`Microsoft.Web/sites`) | ✓ | ✓ restart via `Website Contributor` |
+| Function Apps (`Microsoft.Web/sites` kind=functionapp) | ✓ | ✓ restart via `Website Contributor` |
+| App Service Plans (`Microsoft.Web/serverfarms`) | ✓ | ✓ scale (SKU / worker count) via `Website Contributor` |
+| AKS node pools | ✓ | ✓ scale node count via `Azure Kubernetes Service Contributor Role` |
+| Storage Accounts (key rotation) | ✓ | ✓ rotate key — `Storage Account Key Operator Service Role` **per account** (see note below) |
+| SQL, Cosmos DB, Key Vault, and everything else | ✓ | ✗ — proposes action + creates Terraform PR via Execution Gateway |
+
+For all other resource types, RuriSkry raises a governance verdict and the Execution Gateway opens a Terraform PR in your IaC repo. A human reviews and merges it — the change happens through your normal IaC pipeline.
+
+> **Storage key rotation RBAC:** Azure rejects `Storage Account Key Operator Service Role` at subscription scope. Grant it per storage account:
+> ```bash
+> az role assignment create \
+>   --assignee <backend-mi-principal-id> \
+>   --role "Storage Account Key Operator Service Role" \
+>   --scope /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Storage/storageAccounts/<name>
+> ```
+
+**The seven roles assigned to the Managed Identity:**
+
+| Role | Scope | Used by | What it enables |
+|---|---|---|---|
+| `Reader` | Target subscription | All agents — scans all resource types. Also covers Azure Advisor, Defender for Cloud, and Azure Policy APIs. | Discovery and analysis across your entire subscription. |
+| `Network Contributor` | Target subscription | Execution Agent — `NetworkManagementClient` to create/delete NSG rules. | Live NSG rule patching without a Terraform PR. |
+| `Virtual Machine Contributor` | Target subscription | Execution Agent — `ComputeManagementClient` for `start_vm` / `restart_vm` / `resize_vm`. | Live VM operations without a Terraform PR. |
+| `Website Contributor` | Target subscription | Execution Agent — `WebSiteManagementClient` to restart App Services / Function Apps and scale App Service Plans. | Live App Service operations without a Terraform PR. |
+| `Azure Kubernetes Service Contributor Role` | Target subscription | Execution Agent — `ContainerServiceClient` to scale AKS node pool counts. | Live AKS nodepool scaling without a Terraform PR. |
+| `Storage Account Key Operator Service Role` | Per storage account | Execution Agent — `StorageManagementClient.regenerate_key()`. Cannot be subscription-scoped (Azure limitation). | Storage key rotation per account. |
+| `Cognitive Services OpenAI User` | Foundry account | All four governance agents — required to call `gpt-4.1-mini`. Without this, all LLM decisions fail with 401. | LLM-based governance decisions. |
+| `AcrPull` | ACR | Container App runtime — pulls the backend image on every start. | Container startup. |
+
+> **Tightening scope:** `Reader`, `Network Contributor`, and `VM Contributor` are granted at subscription scope by default. To restrict RuriSkry to a single resource group, change the `scope` in `infrastructure/terraform-core/main.tf` on the relevant `azurerm_role_assignment` resources before deploying.
+
+### Dashboard operators (day-to-day users)
+
+No Azure permissions needed. Operators log in with the admin credentials created on first visit. All governance actions execute under RuriSkry's Managed Identity — operator accounts have no direct Azure access.
