@@ -6,7 +6,7 @@ Deploy RuriSkry to Azure in one command, or run it locally for development. Deta
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11+ (note: the production container uses 3.11; if you dev on 3.12/3.14, run final smoke-tests against the Docker image before deploying — newer Python versions have PEP 649 lazy annotations that can hide 3.11-only bugs)
 - Node.js 18+ (for dashboard)
 - Azure CLI (`az login` configured)
 - Terraform 1.5+
