@@ -384,6 +384,16 @@ async def _get_resource_tags(resource_id: str) -> dict[str, str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: mark any orphaned 'running' scans as error (process died mid-scan)."""
+    # Re-apply logging config AFTER uvicorn's dictConfig has fully settled.
+    # Module-scope basicConfig() can be overridden by uvicorn's own handler
+    # installation; calling it again here with force=True guarantees our
+    # level + handler win for the rest of the process lifetime.
+    logging.basicConfig(level=logging.INFO, force=True)
+    for _h in logging.root.handlers:
+        _h.addFilter(_RequestIDLogFilter())
+    logger.info("=== RuriSkry backend started — logging confirmed operational ===")
+    print("[DIAG] lifespan startup reached — stdout works", flush=True)
+
     from src.core.scan_run_tracker import ScanRunTracker
     try:
         tracker = ScanRunTracker()
@@ -695,14 +705,21 @@ async def _run_agent_scan(
     subscription_id:  Optional override for the configured Azure subscription.
     inventory_mode:   "existing" | "refresh" | "skip"
     """
+    print(f"[DIAG] _run_agent_scan ENTERED scan={scan_id[:8]} agent={agent_type}", flush=True)
+    print(f"[DIAG] importing pipeline...", flush=True)
     from src.core.pipeline import RuriSkryPipeline
+    print(f"[DIAG] importing cost agent...", flush=True)
     from src.operational_agents.cost_agent import CostOptimizationAgent
+    print(f"[DIAG] importing deploy agent...", flush=True)
     from src.operational_agents.deploy_agent import DeployAgent
+    print(f"[DIAG] importing monitoring agent...", flush=True)
     from src.operational_agents.monitoring_agent import MonitoringAgent
+    print(f"[DIAG] all imports done for scan={scan_id[:8]}", flush=True)
 
     rg_label = resource_group or "whole subscription"
     sub_id = subscription_id or settings.azure_subscription_id or ""
     logger.info("scan %s (%s): starting — rg=%s inv=%s", scan_id[:8], agent_type, rg_label, inventory_mode)
+    print(f"[DIAG] scan={scan_id[:8]} about to emit scan_started event", flush=True)
     await _emit_event(
         scan_id,
         "scan_started",
@@ -710,11 +727,13 @@ async def _run_agent_scan(
         resource_group=rg_label,
         message=f"Starting {agent_type} scan for resource_group={rg_label}",
     )
+    print(f"[DIAG] scan={scan_id[:8]} scan_started event emitted, snapshotting resources", flush=True)
 
     # Snapshot all resources in scope now, before the agent runs.
     # This gives the Audit Log a complete picture of what was examined —
     # not just the resources that were flagged.
     scanned_resources = await _snapshot_scanned_resources(resource_group)
+    print(f"[DIAG] scan={scan_id[:8]} snapshot done, {len(scanned_resources)} resources", flush=True)
     _scans[scan_id]["scanned_resources"] = scanned_resources
     _persist_scan_record(scan_id)
     logger.info(
