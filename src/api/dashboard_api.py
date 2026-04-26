@@ -94,6 +94,14 @@ from src.notifications.slack_notifier import (
     send_verdict_notification,
 )
 
+# ---------------------------------------------------------------------------
+# Logging — must run at module-import time so app logs reach stdout under the
+# container's `CMD ["uvicorn", ...]` launch path (which never enters the
+# `__main__` block). `force=True` replaces any handler uvicorn already
+# installed so our level wins.
+# ---------------------------------------------------------------------------
+logging.basicConfig(level=logging.INFO, force=True)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -4201,7 +4209,7 @@ async def admin_reset(request: Request) -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    # Logging is already configured at module import time (above). No-op here.
     uvicorn.run(
         "src.api.dashboard_api:app",
         host=settings.api_host,
