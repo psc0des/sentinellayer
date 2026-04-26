@@ -20,6 +20,10 @@ azure-mgmt-policyinsights>=1.0.0
 azure-mgmt-web>=7.0.0
 azure-mgmt-containerservice>=30.0.0
 azure-mgmt-storage>=21.0.0
+# six: transitive dep of older azure-mgmt-* SDKs (Advisor + PolicyInsights).
+# Not auto-installed in slim base image; without it those detection sources
+# fail silently and the LLM agent retries until it hits the 3-error stop.
+six>=1.16.0
 
 # --- Microsoft Agent Framework ---
 agent-framework-core==1.0.0rc2
