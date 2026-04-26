@@ -198,6 +198,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | GET | `/api/inventory/refresh/{refresh_id}` | Poll background refresh status: `{status, resource_count?}` where status ∈ running/complete/error. |
 | GET | `/api/inventory` | Get the latest inventory snapshot. Query params: `subscription_id`, `summary_only`. Returns `404` if no snapshot exists. |
 | GET | `/api/inventory/status` | Staleness check — `{exists, refreshed_at, resource_count, type_summary, age_hours, stale}`. `stale=true` when age > `inventory_stale_hours` (default 24). |
+| GET | `/api/decisions/{decision_id}/playbook` | **Phase 34D — Tier 3 Playbook.** Returns a Playbook JSON (`action_type`, `resource_id`, `az_command`, `executable_args`, `rollback_command`, `expected_outcome`, `risk_level`, `estimated_duration_seconds`, `requires_downtime`, `supports_native_what_if`) for the given decision. Returns `404` with an explanation if no template exists for the action+resource combination (Tier 1 SDK tools handle those directly), or if the decision is not found. |
 
 ### Query parameters for `GET /api/evaluations`
 

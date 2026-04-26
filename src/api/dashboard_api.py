@@ -43,6 +43,7 @@ POST /api/execution/{execution_id}/condition/{index}/check    Force an auto-chec
 POST /api/execution/{execution_id}/force-execute              Admin bypass of unmet conditions.
 GET  /api/config                                  Safe system configuration — mode, timeouts, feature flags.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
+GET  /api/decisions/{decision_id}/playbook       Tier 3 remediation playbook for a governance decision.
 
 Run
 ---
@@ -3073,6 +3074,63 @@ async def get_evaluation_explanation(evaluation_id: str) -> dict:
 
     explanation = await _get_explainer().explain(verdict, action)
     return explanation.model_dump()
+
+
+@app.get("/api/decisions/{decision_id}/playbook")
+async def get_decision_playbook(decision_id: str) -> dict:
+    """Generate a Tier 3 remediation playbook for a governance decision.
+
+    Returns a Playbook JSON with the ``az`` command, rollback, risk level,
+    estimated duration, and expected outcome for the decision's proposed action.
+
+    Returns 404 if the decision is not found, or if no Tier 3 playbook
+    template exists for the action+resource combination (e.g. because a Tier 1
+    SDK tool already handles it, or the combination is not yet supported).
+    """
+    from src.core.playbook_generator import PlaybookUnsupportedError, generate_playbook  # noqa: PLC0415
+
+    # 1. Prefer a full ProposedAction from the execution gateway verdict_snapshot
+    #    (has proposed_sku, current_sku, resource_group, etc.)
+    action: ProposedAction | None = None
+    gateway = _get_execution_gateway()
+    records = gateway.get_records_for_verdict(decision_id)
+    if records:
+        verdict_obj = gateway._reconstruct_verdict(records[-1])  # noqa: SLF001
+        if verdict_obj is not None:
+            action = verdict_obj.proposed_action
+
+    # 2. Fall back to the flat tracker record (always available, fewer fields)
+    if action is None:
+        tracker_record = None
+        for r in _get_tracker().get_recent(limit=10_000):
+            if r.get("action_id") == decision_id:
+                tracker_record = r
+                break
+        if tracker_record is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Decision '{decision_id}' not found.",
+            )
+        try:
+            at = ActionType(tracker_record.get("action_type", "delete_resource"))
+        except ValueError:
+            at = ActionType.DELETE_RESOURCE
+        action = ProposedAction(
+            agent_id=tracker_record.get("agent_id", "unknown"),
+            action_type=at,
+            target=ActionTarget(
+                resource_id=tracker_record.get("resource_id", ""),
+                resource_type=tracker_record.get("resource_type", ""),
+            ),
+            reason=tracker_record.get("action_reason", tracker_record.get("verdict_reason", "")),
+        )
+
+    try:
+        playbook = generate_playbook(action, resource_details={})
+    except PlaybookUnsupportedError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return playbook.model_dump()
 
 
 # ---------------------------------------------------------------------------

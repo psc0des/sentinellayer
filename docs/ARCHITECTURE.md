@@ -931,7 +931,8 @@ dashboard/
     │   ├── ScanHistoryTable.jsx  # Cosmos-backed scan history table with agent/status filters + "View Log"/"Stop" actions; three-source isCancelling logic (scanState, localStorage, table-local); stale detection (>20 min running + no local state = "Stalled")
     │   ├── ScanLogViewer.jsx     # Dual-mode log viewer: live SSE (running scans) + historical structured display (completed scans)
     │   ├── ConnectedAgents.jsx   # [Legacy] Agent card grid — retained, no longer imported by Agents.jsx
-    │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge)
+    │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge), PlaybookPanel (Phase 34D)
+    │   ├── PlaybookPanel.jsx     # Phase 34D — Tier 3 remediation playbook: az command (copy), rollback, risk badge, duration, downtime; "Run via RuriSkry" disabled until Phase E
     │   ├── AgentControls.jsx     # [Legacy] Scan trigger panel — retained, no longer imported by Agents.jsx
     │   ├── LiveLogPanel.jsx      # [Legacy] SSE slide-out log — retained, no longer imported by Agents.jsx
     │   └── LiveActivityFeed.jsx  # Real-time verdict feed; rows open EvaluationDrilldown

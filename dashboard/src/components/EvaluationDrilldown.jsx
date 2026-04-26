@@ -17,6 +17,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub, rollbackAgentFix } from '../api'
 import TerraformPROverlay from './TerraformPROverlay'
+import PlaybookPanel from './PlaybookPanel'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1195,6 +1196,11 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                     </div>
                 )}
             </div>
+
+            {/* ═══════════════════════════════════════════════════════════════
+          Section 8 — Tier 3 Remediation Playbook (Phase 34D)
+          ═══════════════════════════════════════════════════════════════ */}
+            <PlaybookPanel decisionId={ev.action_id} />
 
             {/* Terraform PR overlay — rendered at fixed position, outside scroll flow */}
             {showPROverlay && executionStatus && (

@@ -631,7 +631,20 @@ RuriSkry **scans every resource type** in Azure (`Reader` is the only role for s
 
 All Tier 1 tools support **dry-run mode** — pass `dry_run=True` in the execute call to validate the full call path and write an audit record without making the mutating API call.
 
-For SQL, Cosmos DB, Key Vault, and all other resource types, the Execution Gateway still creates a Terraform PR for human review and merge. If your environment is not Terraform-managed, RuriSkry will still surface verdicts and recommendations for those types, but the action must be applied manually.
+**Tier 3 Playbook (Phase 34D)** — For resource types without a Tier 1 SDK tool, RuriSkry now generates a Tier 3 remediation playbook visible in the decision drilldown. The playbook shows the exact `az` CLI command to run, a rollback command where reversible, risk level, estimated duration, and whether the operation requires downtime. Supported combinations:
+
+| Resource | Operation |
+|---|---|
+| SQL Database | scale up / scale down |
+| Redis Cache | restart / scale up / rotate keys |
+| Key Vault | update config (soft-delete) |
+| Container Registry | scale up / scale down |
+| Cosmos DB | update config (consistency level) |
+| Service Bus namespace | scale up |
+
+The playbook "Run via RuriSkry" button is a placeholder — Phase E will add audited `az` CLI execution.
+
+For other resource types, the Execution Gateway still creates a Terraform PR for human review and merge. If your environment is not Terraform-managed, RuriSkry will still surface verdicts and recommendations for those types, but the action must be applied manually.
 
 **If you're deploying RuriSkry:**
 - Start with mock mode (`USE_LOCAL_MOCKS=true`) to understand how the decision pipeline works before connecting live Azure credentials
