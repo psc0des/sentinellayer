@@ -9,6 +9,11 @@
 [![Azure](https://img.shields.io/badge/cloud-Azure-0078D4.svg)](https://azure.microsoft.com)
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
+> ⚠️ **Heads-up — `main` has a known production scan-hang under active debugging (2026-04-27).**
+> Scans started via `POST /api/scan/all` get stuck with `event_count=0` in the live deployment; the failure is being narrowed down to an early step in `_run_agent_scan`. Local tests still pass (1219 pytest + 5 Playwright), so cloning, running tests, and exploring the code is unaffected — only the deployed scan workflow is impacted.
+>
+> **For the last known stable deployable version, use the [`v1` branch](https://github.com/psc0des/ruriskry/tree/v1)** (snapshot from before Phase 32/33/34 — workflow engine, conditional approvals, Tier 3 playbook generator, A2 Validator). `v1` is the previous-generation governance engine without the new workflow graph; it deploys end-to-end. A fix for `main` is expected in the next session — see [STATUS.md](STATUS.md) for the diagnostic plan.
+
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
 Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, and 1219 automated tests.
