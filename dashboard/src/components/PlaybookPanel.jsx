@@ -4,9 +4,10 @@
  * Displays the generated az CLI command (with copy button), rollback command,
  * risk level, estimated duration, downtime flag, and expected outcome.
  *
- * Phase E: "Run as dry-run" and "Run live" buttons are now functional.
- * Clicking "Run live" requires a window.confirm; Phase F will replace this
- * with a proper modal.  Results are displayed in an inline terminal block.
+ * Phase E: "Run as dry-run" and "Run live" buttons are functional.
+ * Phase F: Clicking either button opens ConfirmationModal, which fetches the
+ *          A2 Validator brief in parallel and gates execution until it arrives
+ *          (or until the 5s validator timeout fires).
  *
  * Props:
  *   decisionId — action_id UUID; used to fetch /api/decisions/{id}/playbook
@@ -15,6 +16,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { executePlaybook, fetchPlaybook } from '../api'
+import ConfirmationModal from './ConfirmationModal'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -125,10 +127,14 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
   const [error, setError]               = useState(null)
   const [notAvailable, setNotAvailable] = useState(false)
 
-  const [executing, setExecuting]   = useState(false)  // true while waiting for API
+  const [executing, setExecuting]   = useState(false)  // true while waiting for executor API
   const [execMode, setExecMode]     = useState(null)   // 'live' | 'dry_run'
   const [execResult, setExecResult] = useState(null)   // AzPlaybookExecution record
   const [execError, setExecError]   = useState(null)
+
+  // Phase F — ConfirmationModal state
+  const [modalOpen, setModalOpen]       = useState(false)
+  const [modalInitMode, setModalInitMode] = useState('live')
 
   useEffect(() => {
     if (!decisionId) return
@@ -147,21 +153,21 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
     return () => { cancelled = true }
   }, [decisionId])
 
-  async function handleExecute(mode) {
-    if (mode === 'live') {
-      const ok = window.confirm(
-        `Run az command against your Azure environment?\n\n` +
-        `${playbook.az_command}\n\n` +
-        `This will make a real change. Confirm to proceed.`
-      )
-      if (!ok) return
-    }
+  // Opens the ConfirmationModal pre-set to the requested mode
+  function handleOpenModal(mode) {
+    setModalInitMode(mode)
+    setModalOpen(true)
+  }
+
+  // Called by ConfirmationModal when the user clicks "Confirm and run" / "Confirm dry-run"
+  async function handleConfirm(mode, brief) {
+    setModalOpen(false)
     setExecuting(true)
     setExecMode(mode)
     setExecResult(null)
     setExecError(null)
     try {
-      const result = await executePlaybook(decisionId, mode, reviewedBy || 'dashboard-user')
+      const result = await executePlaybook(decisionId, mode, reviewedBy || 'dashboard-user', brief)
       setExecResult(result)
     } catch (err) {
       setExecError(err.message)
@@ -171,6 +177,17 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
   }
 
   return (
+    <>
+    {/* Phase F — Confirmation + Validator Modal */}
+    <ConfirmationModal
+      open={modalOpen}
+      onClose={() => setModalOpen(false)}
+      onConfirm={handleConfirm}
+      initialMode={modalInitMode}
+      playbook={playbook}
+      decisionId={decisionId}
+    />
+
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
       <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
         Remediation Playbook
@@ -264,9 +281,9 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
             </p>
 
             <div className="flex flex-wrap gap-2">
-              {/* Dry-run — always safe, no confirm needed */}
+              {/* Dry-run — opens ConfirmationModal pre-set to dry_run */}
               <button
-                onClick={() => handleExecute('dry_run')}
+                onClick={() => handleOpenModal('dry_run')}
                 disabled={executing}
                 className="flex items-center gap-1.5 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
               >
@@ -277,9 +294,9 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
                 )}
               </button>
 
-              {/* Live — requires window.confirm */}
+              {/* Live — opens ConfirmationModal pre-set to live */}
               <button
-                onClick={() => handleExecute('live')}
+                onClick={() => handleOpenModal('live')}
                 disabled={executing}
                 className="flex items-center gap-1.5 px-4 py-2 bg-green-600/20 hover:bg-green-600/30 border border-green-500/40 text-green-300 hover:text-green-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
               >
@@ -292,8 +309,8 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
             </div>
 
             <p className="text-[10px] text-slate-600">
-              Dry-run validates the command without making changes.
-              Live execution runs the az command against your Azure environment and writes a full audit record.
+              Both buttons open the safety review modal. The A2 Validator will review the command
+              (≤5s) before you confirm. Dry-run validates without making changes.
             </p>
           </div>
 
@@ -312,5 +329,6 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
         </div>
       )}
     </div>
+    </>
   )
 }

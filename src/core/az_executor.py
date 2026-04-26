@@ -146,6 +146,9 @@ async def execute_playbook(
     decision_id: str,
     cfg=None,
     _cosmos: CosmosAzExecutionClient | None = None,
+    validator_brief_id: str | None = None,
+    validator_brief_summary: str | None = None,
+    validator_brief_caveats: list[str] | None = None,
 ) -> AzPlaybookExecution:
     """Execute (or dry-run) a playbook command through the audited az executor.
 
@@ -187,6 +190,9 @@ async def execute_playbook(
             allowlist_matched=False,
             created_at=now,
             notes="REJECTED — command did not match any allowlist pattern.",
+            validator_brief_id=validator_brief_id,
+            validator_brief_summary=validator_brief_summary,
+            validator_brief_caveats=validator_brief_caveats,
         )
         _persist(cosmos, record)
         raise AllowlistDeniedError(
@@ -224,6 +230,9 @@ async def execute_playbook(
             created_at=now,
             executed_at=exec_at,
             notes=notes,
+            validator_brief_id=validator_brief_id,
+            validator_brief_summary=validator_brief_summary,
+            validator_brief_caveats=validator_brief_caveats,
         )
         _persist(cosmos, record)
         return record
@@ -254,6 +263,9 @@ async def execute_playbook(
         created_at=now,
         executed_at=exec_at,
         notes=notes,
+        validator_brief_id=validator_brief_id,
+        validator_brief_summary=validator_brief_summary,
+        validator_brief_caveats=validator_brief_caveats,
     )
     _persist(cosmos, record)
     return record

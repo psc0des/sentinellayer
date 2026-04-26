@@ -932,7 +932,8 @@ dashboard/
     │   ├── ScanLogViewer.jsx     # Dual-mode log viewer: live SSE (running scans) + historical structured display (completed scans)
     │   ├── ConnectedAgents.jsx   # [Legacy] Agent card grid — retained, no longer imported by Agents.jsx
     │   ├── EvaluationDrilldown.jsx # Full drilldown: SRI bars, explanation, counterfactuals, HITL action panel, ExecutionLogView (per-step log + verification badge), PlaybookPanel (Phase 34D)
-    │   ├── PlaybookPanel.jsx     # Phase 34D+E — Tier 3 remediation playbook: az command (copy), rollback, risk badge, duration, downtime; "Run as dry-run" + "▶ Run live" (window.confirm) buttons with inline ExecutionResult terminal
+    │   ├── PlaybookPanel.jsx     # Phase 34D+E+F — Tier 3 remediation playbook: az command (copy), rollback, risk badge, duration, downtime; both buttons now open ConfirmationModal (window.confirm removed)
+    │   ├── ConfirmationModal.jsx  # Phase 34F — A2 Validator modal: opens on button click, fetches ValidatorBrief in parallel (POST /validate), shows summary/caveats/risk badge, 3-button layout (Cancel / mode toggle / Confirm), enables Confirm when brief arrives or unavailable
     │   ├── AgentControls.jsx     # [Legacy] Scan trigger panel — retained, no longer imported by Agents.jsx
     │   ├── LiveLogPanel.jsx      # [Legacy] SSE slide-out log — retained, no longer imported by Agents.jsx
     │   └── LiveActivityFeed.jsx  # Real-time verdict feed; rows open EvaluationDrilldown

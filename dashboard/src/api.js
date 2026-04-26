@@ -689,20 +689,53 @@ export async function fetchPlaybook(decisionId) {
  * @param {string} decisionId - action_id UUID from the governance verdict
  * @param {'live'|'dry_run'} mode
  * @param {string} approvedBy - identity of the approving user (for audit trail)
+ * @param {object} [validatorBrief] - ValidatorBrief returned by validatePlaybook (optional)
  * @returns {Promise<object>} AzPlaybookExecution audit record
  */
-export async function executePlaybook(decisionId, mode, approvedBy) {
+export async function executePlaybook(decisionId, mode, approvedBy, validatorBrief = null) {
+  const body = { mode, approved_by: approvedBy }
+  if (validatorBrief) {
+    if (validatorBrief.brief_id) body.validator_brief_id = validatorBrief.brief_id
+    if (validatorBrief.summary) body.validator_brief_summary = validatorBrief.summary
+    if (validatorBrief.caveats?.length) body.validator_brief_caveats = validatorBrief.caveats
+  }
   const res = await apiFetch(
     `${BASE}/decisions/${encodeURIComponent(decisionId)}/playbook/execute`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, approved_by: approvedBy }),
+      body: JSON.stringify(body),
     }
   )
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(`API error ${res.status}: ${body.detail ?? 'execution failed'}`)
+    const err = await res.json().catch(() => ({}))
+    throw new Error(`API error ${res.status}: ${err.detail ?? 'execution failed'}`)
   }
   return res.json()
+}
+
+/**
+ * Call the A2 Validator Agent to get a safety brief for the playbook command.
+ * Always resolves (never rejects) — check brief.validator_status for "unavailable".
+ * @param {string} decisionId - action_id UUID from the governance verdict
+ * @param {string[]} [argv] - resolved az argv (from playbook.executable_args)
+ * @returns {Promise<object>} ValidatorBrief with brief_id, summary, caveats, risk_level, raw_text
+ */
+export async function validatePlaybook(decisionId, argv = []) {
+  try {
+    const res = await apiFetch(
+      `${BASE}/decisions/${encodeURIComponent(decisionId)}/validate`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolved_call: argv.length ? { argv } : {} }),
+      }
+    )
+    if (!res.ok) {
+      return { validator_status: 'unavailable', raw_text: '⚠ Validator unavailable — review the command carefully.', summary: '', caveats: [], risk_level: 'medium' }
+    }
+    return res.json()
+  } catch {
+    return { validator_status: 'unavailable', raw_text: '⚠ Validator unavailable — review the command carefully.', summary: '', caveats: [], risk_level: 'medium' }
+  }
 }

@@ -44,7 +44,8 @@ POST /api/execution/{execution_id}/force-execute              Admin bypass of un
 GET  /api/config                                  Safe system configuration — mode, timeouts, feature flags.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
 GET  /api/decisions/{decision_id}/playbook        Tier 3 remediation playbook for a governance decision.
-POST /api/decisions/{decision_id}/playbook/execute Execute (or dry-run) the playbook command via audited az CLI executor.
+POST /api/decisions/{decision_id}/validate         A2 Validator brief — GPT-4.1 critic call, 5s hard timeout, always returns (validator_status="unavailable" on timeout/error).
+POST /api/decisions/{decision_id}/playbook/execute Execute (or dry-run) the playbook command via audited az CLI executor. Accepts optional validator_brief_* fields for audit linkage.
 
 Run
 ---
@@ -3134,6 +3135,82 @@ async def get_decision_playbook(decision_id: str) -> dict:
     return playbook.model_dump()
 
 
+@app.post("/api/decisions/{decision_id}/validate")
+async def validate_decision_playbook(
+    decision_id: str,
+    body: dict = Body(default={}),
+) -> dict:
+    """Run the A2 Validator Agent against a proposed playbook command.
+
+    Called by the ConfirmationModal when it opens, in parallel with rendering.
+    Returns immediately if the validator times out (5s hard limit) — the UI
+    must not block execution on an unavailable brief.
+
+    Request body::
+
+        {"resolved_call": {"argv": ["az", "webapp", "restart", ...]}}
+
+    Returns:
+        :class:`~src.core.models.ValidatorBrief` JSON.
+        Always 200 — ``validator_status`` field carries "ok" / "unavailable" / "timeout".
+    """
+    from src.core.playbook_generator import PlaybookUnsupportedError, generate_playbook  # noqa: PLC0415
+    from src.core.validator_agent import validate_proposed_action  # noqa: PLC0415
+
+    resolved_call = body.get("resolved_call", {})
+
+    # Resolve action (same lookup as GET /playbook)
+    action: ProposedAction | None = None
+    gateway = _get_execution_gateway()
+    records = gateway.get_records_for_verdict(decision_id)
+    if records:
+        verdict_obj = gateway._reconstruct_verdict(records[-1])  # noqa: SLF001
+        if verdict_obj is not None:
+            action = verdict_obj.proposed_action
+
+    if action is None:
+        tracker_record = None
+        for r in _get_tracker().get_recent(limit=10_000):
+            if r.get("action_id") == decision_id:
+                tracker_record = r
+                break
+        if tracker_record is None:
+            raise HTTPException(status_code=404, detail=f"Decision '{decision_id}' not found.")
+        try:
+            at = ActionType(tracker_record.get("action_type", "delete_resource"))
+        except ValueError:
+            at = ActionType.DELETE_RESOURCE
+        action = ProposedAction(
+            agent_id=tracker_record.get("agent_id", "unknown"),
+            action_type=at,
+            target=ActionTarget(
+                resource_id=tracker_record.get("resource_id", ""),
+                resource_type=tracker_record.get("resource_type", ""),
+            ),
+            reason=tracker_record.get("action_reason", tracker_record.get("verdict_reason", "")),
+        )
+
+    # If resolved_call is empty, derive argv from playbook
+    if not resolved_call:
+        try:
+            playbook = generate_playbook(action, resource_details={})
+            resolved_call = {"argv": list(playbook.executable_args)}
+        except PlaybookUnsupportedError:
+            resolved_call = {}
+
+    brief = await validate_proposed_action(
+        action=action,
+        resolved_call=resolved_call,
+        decision={},
+        cfg=settings,
+    )
+    # Tag the brief with a stable ID so the execute endpoint can link it
+    import uuid as _uuid  # noqa: PLC0415
+    brief_dict = brief.model_dump()
+    brief_dict["brief_id"] = str(_uuid.uuid4())
+    return brief_dict
+
+
 @app.post("/api/decisions/{decision_id}/playbook/execute")
 async def execute_decision_playbook(
     decision_id: str,
@@ -3143,7 +3220,13 @@ async def execute_decision_playbook(
 
     Request body::
 
-        {"mode": "live" | "dry_run", "approved_by": "user@example.com"}
+        {
+          "mode": "live" | "dry_run",
+          "approved_by": "user@example.com",
+          "validator_brief_id": "<uuid>",        // optional — links brief to audit record
+          "validator_brief_summary": "...",       // optional — stored for postmortem
+          "validator_brief_caveats": ["...", ...] // optional — stored for postmortem
+        }
 
     Returns the :class:`~src.core.models.AzPlaybookExecution` audit record.
 
@@ -3160,6 +3243,11 @@ async def execute_decision_playbook(
     if mode not in ("live", "dry_run"):
         raise HTTPException(status_code=400, detail="mode must be 'live' or 'dry_run'")
     approved_by = _validate_reviewed_by(body.get("approved_by", ""))
+
+    # Optional validator brief linkage (Phase 34F)
+    validator_brief_id: str | None = body.get("validator_brief_id") or None
+    validator_brief_summary: str | None = body.get("validator_brief_summary") or None
+    validator_brief_caveats: list[str] | None = body.get("validator_brief_caveats") or None
 
     # Resolve playbook (same lookup logic as GET /playbook)
     action: ProposedAction | None = None
@@ -3204,6 +3292,9 @@ async def execute_decision_playbook(
             approved_by=approved_by,
             decision_id=decision_id,
             cfg=settings,
+            validator_brief_id=validator_brief_id,
+            validator_brief_summary=validator_brief_summary,
+            validator_brief_caveats=validator_brief_caveats,
         )
     except AllowlistDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

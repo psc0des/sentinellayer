@@ -412,6 +412,26 @@ class Playbook(BaseModel):
     supports_native_what_if: bool  # True → az ... --what-if is meaningful for this cmd
 
 
+# ============================================
+# Validator Brief (Phase 34F — A2 Validator Agent)
+# ============================================
+
+class ValidatorBrief(BaseModel):
+    """Safety brief produced by the A2 Validator Agent before execution.
+
+    The validator is a conservative critic LLM that reviews the resolved az
+    command and produces a summary, caveats, and risk level within a 5-second
+    hard timeout.  ``validator_status="unavailable"`` means the brief could not
+    be produced — execution is NOT blocked, but the UI shows a warning.
+    """
+    summary: str                          # ≤20 words: what the command does
+    caveats: list[str]                    # 2-5 specific things to check/watch
+    risk_level: Literal["low", "medium", "high"]
+    resource_state_at_validation: dict    # read-only SDK snapshot (may be empty)
+    validator_status: Literal["ok", "unavailable", "timeout"]
+    raw_text: str                         # full markdown brief for direct UI render
+
+
 class AzPlaybookExecution(BaseModel):
     """Audit record for a Tier 3 az CLI playbook execution (Phase 34E).
 
@@ -439,6 +459,10 @@ class AzPlaybookExecution(BaseModel):
     created_at: datetime
     executed_at: Optional[datetime] = None
     notes: str = ""
+    # Phase 34F — validator linkage (stored verbatim for postmortem traceability)
+    validator_brief_id: Optional[str] = None
+    validator_brief_summary: Optional[str] = None
+    validator_brief_caveats: Optional[list[str]] = None
 
 
 # ============================================
