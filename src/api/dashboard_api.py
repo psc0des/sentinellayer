@@ -3993,6 +3993,20 @@ async def get_config() -> dict:
     }
 
 
+@app.get("/api/workflow/diagram")
+async def get_workflow_diagram() -> dict:
+    """Return the governance workflow topology as a Mermaid string.
+
+    Topology is immutable, so the result is computed once and cached.
+    """
+    from src.core.workflows.visualizer import get_governance_workflow_mermaid
+
+    return {
+        "format": "mermaid",
+        "diagram": get_governance_workflow_mermaid(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoint — health check
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import NumberTicker from '../components/magicui/NumberTicker'
 import GlowCard from '../components/magicui/GlowCard'
 import VerdictBadge from '../components/magicui/VerdictBadge'
 import TableSkeleton from '../components/magicui/TableSkeleton'
+import WorkflowDiagram from '../components/WorkflowDiagram'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -719,6 +720,8 @@ export default function Overview() {
           </div>
         )}
       </GlowCard>
+
+      <WorkflowDiagram />
 
     </div>
   )

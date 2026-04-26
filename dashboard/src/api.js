@@ -596,6 +596,20 @@ export async function fetchConfig() {
 }
 
 /**
+ * Fetch the governance workflow topology as a Mermaid diagram string.
+ *
+ * The topology is immutable, so the backend caches the result; this is safe
+ * to call on every mount.
+ *
+ * @returns {Promise<{format: string, diagram: string}>}
+ */
+export async function fetchWorkflowDiagram() {
+  const res = await apiFetch(`${BASE}/workflow/diagram`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch workflow diagram`)
+  return res.json()
+}
+
+/**
  * Roll back a previously applied agent fix.
  * Only valid when status === 'applied'.
  * @param {string} executionId

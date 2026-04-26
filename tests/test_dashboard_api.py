@@ -607,6 +607,33 @@ class TestGetConfig:
         assert len(data["version"]) > 0
 
 
+class TestGetWorkflowDiagram:
+    """GET /api/workflow/diagram returns the governance workflow as Mermaid."""
+
+    def test_status_200(self, client):
+        res = client.get("/api/workflow/diagram")
+        assert res.status_code == 200
+
+    def test_response_shape(self, client):
+        data = client.get("/api/workflow/diagram").json()
+        assert data["format"] == "mermaid"
+        assert isinstance(data["diagram"], str)
+        assert data["diagram"].startswith("flowchart")
+
+    def test_diagram_contains_executor_nodes(self, client):
+        diagram = client.get("/api/workflow/diagram").json()["diagram"]
+        # Topology must include all 4 governance executors + dispatch + scoring + condition gate
+        for expected in ("dispatch", "blast_radius", "policy", "historical",
+                         "financial", "scoring", "condition_gate"):
+            assert expected in diagram, f"missing '{expected}' in diagram"
+
+    def test_diagram_is_cached(self, client):
+        # Two calls should return identical strings (lru_cache hit on 2nd)
+        first = client.get("/api/workflow/diagram").json()["diagram"]
+        second = client.get("/api/workflow/diagram").json()["diagram"]
+        assert first == second
+
+
 # ---------------------------------------------------------------------------
 # Phase 29 — GET /api/metrics executions block (3 tests)
 # ---------------------------------------------------------------------------
