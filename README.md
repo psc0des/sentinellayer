@@ -642,7 +642,12 @@ All Tier 1 tools support **dry-run mode** — pass `dry_run=True` in the execute
 | Cosmos DB | update config (consistency level) |
 | Service Bus namespace | scale up |
 
-The playbook "Run via RuriSkry" button is a placeholder — Phase E will add audited `az` CLI execution.
+**Phase 34E** adds audited `az` CLI execution directly from the dashboard. The playbook panel now has two buttons:
+
+- **Run as dry-run** — validates the command against a 13-pattern allowlist and writes an audit record, but does not execute. Safe to click at any time.
+- **▶ Run live** — runs the `az` command against your Azure environment after a confirmation dialog. Every execution (live, dry-run, and rejection) writes a full audit record to Cosmos DB with exit code, stdout, stderr, duration, and the approving user's identity.
+
+Safety invariants: commands are validated against a hard-coded allowlist before any subprocess call; `shell=False` is enforced always; the `executable_args` list (not the display string) is passed to the OS. Adding new commands to the allowlist requires a code change — nothing is configurable at runtime. Requires `az` CLI installed in the Container App image (see `docs/SETUP.md`).
 
 For other resource types, the Execution Gateway still creates a Terraform PR for human review and merge. If your environment is not Terraform-managed, RuriSkry will still surface verdicts and recommendations for those types, but the action must be applied manually.
 
