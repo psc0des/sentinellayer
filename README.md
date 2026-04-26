@@ -472,6 +472,9 @@ python examples/demo_live.py                # two-layer intelligence demo
 # Expected: 1219 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
+
+# Frontend / SSE / modal flows — Playwright (5 specs cover Phase 33B + 34F)
+cd dashboard && npx playwright test
 ```
 
 ### Set up Slack notifications (optional)
