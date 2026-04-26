@@ -8,10 +8,18 @@
 
 FROM python:3.11-slim
 
-# Install system dependencies needed by some Azure SDK packages
+# Install system dependencies needed by some Azure SDK packages,
+# plus the Azure CLI required by the Tier 3 playbook executor (Phase 34E/F).
+# `az` is invoked as a subprocess from src/core/az_executor.py with a hard
+# allowlist; without it installed, every live Tier 3 execution fails with
+# "command not found". Mock mode never invokes the subprocess.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         libffi-dev \
+        curl \
+        ca-certificates \
+    && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
