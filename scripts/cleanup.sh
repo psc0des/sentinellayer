@@ -149,10 +149,17 @@ if az group show --name "$RESOURCE_GROUP" --subscription "$SUBSCRIPTION_ID" &>/d
     --no-wait
   ok "Deletion started — Azure is removing all child resources in the background."
 
-  # Poll every 15s with an in-place heartbeat showing elapsed time. \r and
-  # \033[K (clear-to-EOL) keep the line stable instead of spamming the terminal.
-  # If output is piped (CI, tee), the carriage returns still produce readable
-  # logs since each new heartbeat overwrites visually but is preserved in raw.
+  # Capture initial resource count so the heartbeat can show real progress
+  # (e.g. "47 of 56 resources remaining") instead of just elapsed time. The
+  # baseline is taken AFTER az group delete returns — by then Azure has
+  # marked some resources for deletion but most are still listable.
+  INITIAL_COUNT=$(az resource list --resource-group "$RESOURCE_GROUP" \
+    --subscription "$SUBSCRIPTION_ID" --query "length(@)" -o tsv 2>/dev/null || echo "?")
+
+  # Poll every 15s with an in-place heartbeat showing elapsed time AND the
+  # number of resources still in the RG. \r and \033[K (clear-to-EOL) keep
+  # the line stable instead of spamming the terminal. If output is piped
+  # (CI, tee), the carriage returns still produce readable logs.
   START_TIME=$(date +%s)
   for i in $(seq 1 40); do
     if ! az group show --name "$RESOURCE_GROUP" --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
@@ -162,7 +169,10 @@ if az group show --name "$RESOURCE_GROUP" --subscription "$SUBSCRIPTION_ID" &>/d
       break
     fi
     ELAPSED=$(( $(date +%s) - START_TIME ))
-    printf "\r${BLUE}▶  Still deleting... %ds elapsed${NC}" "$ELAPSED"
+    REMAINING=$(az resource list --resource-group "$RESOURCE_GROUP" \
+      --subscription "$SUBSCRIPTION_ID" --query "length(@)" -o tsv 2>/dev/null || echo "?")
+    printf "\r\033[K${BLUE}▶  Still deleting... %ds elapsed — %s of %s resources remaining${NC}" \
+      "$ELAPSED" "$REMAINING" "$INITIAL_COUNT"
     if [[ "$i" -eq 40 ]]; then
       printf "\n"
       warn "Resource group still deleting after 10 minutes. Continuing anyway."
@@ -191,7 +201,9 @@ if az group show --name "$MONITOR_RG" --subscription "$TARGET_SUBSCRIPTION_ID" &
     --no-wait
 
   # Monitor RG is small (APR + action group); typically <30s. Same heartbeat
-  # pattern as the main RG so the user always sees progress.
+  # pattern as the main RG — shows resources remaining for real progress.
+  INITIAL_COUNT=$(az resource list --resource-group "$MONITOR_RG" \
+    --subscription "$TARGET_SUBSCRIPTION_ID" --query "length(@)" -o tsv 2>/dev/null || echo "?")
   START_TIME=$(date +%s)
   for i in $(seq 1 20); do
     if ! az group show --name "$MONITOR_RG" --subscription "$TARGET_SUBSCRIPTION_ID" &>/dev/null; then
@@ -201,7 +213,10 @@ if az group show --name "$MONITOR_RG" --subscription "$TARGET_SUBSCRIPTION_ID" &
       break
     fi
     ELAPSED=$(( $(date +%s) - START_TIME ))
-    printf "\r${BLUE}▶  Still deleting... %ds elapsed${NC}" "$ELAPSED"
+    REMAINING=$(az resource list --resource-group "$MONITOR_RG" \
+      --subscription "$TARGET_SUBSCRIPTION_ID" --query "length(@)" -o tsv 2>/dev/null || echo "?")
+    printf "\r\033[K${BLUE}▶  Still deleting... %ds elapsed — %s of %s resources remaining${NC}" \
+      "$ELAPSED" "$REMAINING" "$INITIAL_COUNT"
     if [[ "$i" -eq 20 ]]; then
       printf "\n"
       warn "Monitor resource group still deleting after 5 minutes. Continuing anyway."
@@ -270,6 +285,8 @@ if [[ "$DELETE_TFSTATE" == true ]]; then
       --no-wait
 
     # tfstate RG holds one storage account; usually <30s.
+    INITIAL_COUNT=$(az resource list --resource-group "$TFSTATE_RG" \
+      --subscription "$SUBSCRIPTION_ID" --query "length(@)" -o tsv 2>/dev/null || echo "?")
     START_TIME=$(date +%s)
     for i in $(seq 1 20); do
       if ! az group show --name "$TFSTATE_RG" --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
@@ -279,7 +296,10 @@ if [[ "$DELETE_TFSTATE" == true ]]; then
         break
       fi
       ELAPSED=$(( $(date +%s) - START_TIME ))
-      printf "\r${BLUE}▶  Still deleting... %ds elapsed${NC}" "$ELAPSED"
+      REMAINING=$(az resource list --resource-group "$TFSTATE_RG" \
+        --subscription "$SUBSCRIPTION_ID" --query "length(@)" -o tsv 2>/dev/null || echo "?")
+      printf "\r\033[K${BLUE}▶  Still deleting... %ds elapsed — %s of %s resources remaining${NC}" \
+        "$ELAPSED" "$REMAINING" "$INITIAL_COUNT"
       if [[ "$i" -eq 20 ]]; then
         printf "\n"
         warn "tfstate resource group still deleting after 5 minutes. Continuing anyway."
