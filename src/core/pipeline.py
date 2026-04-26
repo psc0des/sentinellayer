@@ -59,6 +59,8 @@ ThreadPoolExecutor pattern is correct to establish now — the code structure
 will not change when we swap in real Azure clients.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
