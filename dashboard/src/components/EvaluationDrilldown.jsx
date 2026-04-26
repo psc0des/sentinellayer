@@ -1200,7 +1200,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             {/* ═══════════════════════════════════════════════════════════════
           Section 8 — Tier 3 Remediation Playbook (Phase 34D)
           ═══════════════════════════════════════════════════════════════ */}
-            <PlaybookPanel decisionId={ev.action_id} />
+            <PlaybookPanel decisionId={ev.action_id} reviewedBy={reviewedBy} />
 
             {/* Terraform PR overlay — rendered at fixed position, outside scroll flow */}
             {showPROverlay && executionStatus && (

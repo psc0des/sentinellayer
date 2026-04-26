@@ -43,7 +43,8 @@ POST /api/execution/{execution_id}/condition/{index}/check    Force an auto-chec
 POST /api/execution/{execution_id}/force-execute              Admin bypass of unmet conditions.
 GET  /api/config                                  Safe system configuration — mode, timeouts, feature flags.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
-GET  /api/decisions/{decision_id}/playbook       Tier 3 remediation playbook for a governance decision.
+GET  /api/decisions/{decision_id}/playbook        Tier 3 remediation playbook for a governance decision.
+POST /api/decisions/{decision_id}/playbook/execute Execute (or dry-run) the playbook command via audited az CLI executor.
 
 Run
 ---
@@ -3131,6 +3132,83 @@ async def get_decision_playbook(decision_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return playbook.model_dump()
+
+
+@app.post("/api/decisions/{decision_id}/playbook/execute")
+async def execute_decision_playbook(
+    decision_id: str,
+    body: dict = Body(default={}),
+) -> dict:
+    """Execute (or dry-run) a Tier 3 playbook command via the audited az CLI executor.
+
+    Request body::
+
+        {"mode": "live" | "dry_run", "approved_by": "user@example.com"}
+
+    Returns the :class:`~src.core.models.AzPlaybookExecution` audit record.
+
+    Returns:
+        - 200: Execution record (exit_code, stdout, stderr, duration_ms, …)
+        - 403: Command does not match the executor allowlist
+        - 404: No playbook template for this decision's action+resource combo,
+               or the decision was not found.
+    """
+    from src.core.az_executor import AllowlistDeniedError, execute_playbook  # noqa: PLC0415
+    from src.core.playbook_generator import PlaybookUnsupportedError, generate_playbook  # noqa: PLC0415
+
+    mode = body.get("mode", "dry_run")
+    if mode not in ("live", "dry_run"):
+        raise HTTPException(status_code=400, detail="mode must be 'live' or 'dry_run'")
+    approved_by = _validate_reviewed_by(body.get("approved_by", ""))
+
+    # Resolve playbook (same lookup logic as GET /playbook)
+    action: ProposedAction | None = None
+    gateway = _get_execution_gateway()
+    records = gateway.get_records_for_verdict(decision_id)
+    if records:
+        verdict_obj = gateway._reconstruct_verdict(records[-1])  # noqa: SLF001
+        if verdict_obj is not None:
+            action = verdict_obj.proposed_action
+
+    if action is None:
+        tracker_record = None
+        for r in _get_tracker().get_recent(limit=10_000):
+            if r.get("action_id") == decision_id:
+                tracker_record = r
+                break
+        if tracker_record is None:
+            raise HTTPException(status_code=404, detail=f"Decision '{decision_id}' not found.")
+        try:
+            at = ActionType(tracker_record.get("action_type", "delete_resource"))
+        except ValueError:
+            at = ActionType.DELETE_RESOURCE
+        action = ProposedAction(
+            agent_id=tracker_record.get("agent_id", "unknown"),
+            action_type=at,
+            target=ActionTarget(
+                resource_id=tracker_record.get("resource_id", ""),
+                resource_type=tracker_record.get("resource_type", ""),
+            ),
+            reason=tracker_record.get("action_reason", tracker_record.get("verdict_reason", "")),
+        )
+
+    try:
+        playbook = generate_playbook(action, resource_details={})
+    except PlaybookUnsupportedError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        result = await execute_playbook(
+            playbook=playbook,
+            mode=mode,
+            approved_by=approved_by,
+            decision_id=decision_id,
+            cfg=settings,
+        )
+    except AllowlistDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return result.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------

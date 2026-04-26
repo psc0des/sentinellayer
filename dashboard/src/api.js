@@ -683,3 +683,26 @@ export async function fetchPlaybook(decisionId) {
   if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch playbook`)
   return res.json()
 }
+
+/**
+ * Execute (or dry-run) a Tier 3 playbook command via the audited az CLI executor.
+ * @param {string} decisionId - action_id UUID from the governance verdict
+ * @param {'live'|'dry_run'} mode
+ * @param {string} approvedBy - identity of the approving user (for audit trail)
+ * @returns {Promise<object>} AzPlaybookExecution audit record
+ */
+export async function executePlaybook(decisionId, mode, approvedBy) {
+  const res = await apiFetch(
+    `${BASE}/decisions/${encodeURIComponent(decisionId)}/playbook/execute`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, approved_by: approvedBy }),
+    }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(`API error ${res.status}: ${body.detail ?? 'execution failed'}`)
+  }
+  return res.json()
+}

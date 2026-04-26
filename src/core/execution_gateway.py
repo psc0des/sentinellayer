@@ -1015,6 +1015,8 @@ class ExecutionGateway:
             return
         self._loaded = True
         for raw in self._cosmos.get_all():
+            if raw.get("record_type") == "az_execution":
+                continue  # Phase 34E records — different schema, handled by AzExecutor
             try:
                 rec = ExecutionRecord.model_validate(raw)
                 self._records[rec.execution_id] = rec

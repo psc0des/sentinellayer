@@ -67,7 +67,9 @@ For all other resource types, RuriSkry raises a governance verdict and the Execu
 
 > **Dry-run mode (Phase 34A):** Every Tier 1 SDK tool accepts `dry_run=True`. In dry-run mode the SDK call is not made, but a full audit record is written to `governance-executions` with `mode="dry_run"`. Use dry-run to verify a remediation path without touching the resource.
 
-> **Tier 3 Playbook (Phase 34D):** For resource types without a Tier 1 SDK tool (SQL DB, Redis, Key Vault, Container Registry, Cosmos DB, Service Bus), RuriSkry generates a Tier 3 remediation playbook visible in the decision drilldown. The playbook shows the exact `az` CLI command, rollback command, risk level, and expected outcome. No additional Azure roles are required for playbook generation — it is informational only. Phase E will add audited `az` CLI execution via an allowlisted subprocess path.
+> **Tier 3 Playbook (Phase 34D):** For resource types without a Tier 1 SDK tool (SQL DB, Redis, Key Vault, Container Registry, Cosmos DB, Service Bus), RuriSkry generates a Tier 3 remediation playbook visible in the decision drilldown. The playbook shows the exact `az` CLI command, rollback command, risk level, and expected outcome.
+
+> **Tier 3 Execution (Phase 34E):** The playbook "Run via RuriSkry" button is now functional. Commands are validated against a 13-pattern allowlist before execution — new patterns require a code change. `shell=False` is a hard invariant. Every call (live, dry-run, rejected) writes a full `AzPlaybookExecution` audit record to `governance-executions`. **Requires `az` CLI installed in the Container App image** — add `RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash` to your Dockerfile. In mock mode (`USE_LOCAL_MOCKS=true`) the subprocess is never called and a synthetic result is returned. No new Azure roles are needed for execution — the executor inherits whatever roles the existing Managed Identity has.
 
 **The seven roles and which part of RuriSkry uses each:**
 

@@ -301,6 +301,91 @@ class CosmosExecutionClient:
                 )
 
 
+_DEFAULT_AZ_EXECUTIONS_DIR = (
+    Path(__file__).parent.parent.parent / "data" / "az_executions"
+)
+
+
+class CosmosAzExecutionClient:
+    """Read/write Phase 34E az CLI execution audit records.
+
+    Uses a separate mock directory (``data/az_executions/``) to avoid
+    polluting ``ExecutionGateway._ensure_loaded()`` which reads from
+    ``data/executions/``.  In live mode, writes to the same
+    ``governance-executions`` Cosmos container tagged with
+    ``record_type="az_execution"`` so the gateway skips them.
+
+    Partition key: ``/resource_id``
+    Document ID:   ``execution_id``
+    """
+
+    def __init__(self, cfg=None, az_executions_dir: Path | None = None) -> None:
+        self._cfg = cfg or _default_settings
+        self._dir: Path = az_executions_dir or _DEFAULT_AZ_EXECUTIONS_DIR
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = self._secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
+
+        self._is_mock: bool = (
+            self._cfg.use_local_mocks
+            or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
+        )
+
+        if self._is_mock:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._container = None
+        else:
+            from azure.cosmos import CosmosClient  # type: ignore[import]
+
+            client = CosmosClient(
+                url=self._cfg.cosmos_endpoint,
+                credential=self._cosmos_key,
+            )
+            db = client.get_database_client(self._cfg.cosmos_database)
+            self._container = db.get_container_client(
+                self._cfg.cosmos_container_executions
+            )
+
+    @property
+    def is_mock(self) -> bool:
+        return self._is_mock
+
+    def upsert(self, record: dict) -> None:
+        """Write one az execution audit record."""
+        doc = {**record, "id": record["execution_id"]}
+        if self._is_mock:
+            path = self._dir / f"{record['execution_id']}.json"
+            path.write_text(json.dumps(doc, indent=2, default=str), encoding="utf-8")
+        else:
+            self._container.upsert_item(doc)
+
+    def get_by_decision(self, decision_id: str) -> list[dict]:
+        """Return all az execution records for a decision (newest-first)."""
+        if self._is_mock:
+            results: list[dict] = []
+            for path in self._dir.glob("*.json"):
+                try:
+                    rec = json.loads(path.read_text(encoding="utf-8"))
+                    if rec.get("decision_id") == decision_id:
+                        results.append(rec)
+                except Exception:  # noqa: BLE001
+                    pass
+            return sorted(results, key=lambda r: r.get("created_at", ""), reverse=True)
+
+        query = "SELECT * FROM c WHERE c.decision_id = @did ORDER BY c._ts DESC"
+        return list(
+            self._container.query_items(
+                query,
+                parameters=[{"name": "@did", "value": decision_id}],
+                enable_cross_partition_query=True,
+            )
+        )
+
+
 _DEFAULT_INVENTORY_DIR = (
     Path(__file__).parent.parent.parent / "data" / "inventory"
 )
