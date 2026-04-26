@@ -148,14 +148,23 @@ if az group show --name "$RESOURCE_GROUP" --subscription "$SUBSCRIPTION_ID" &>/d
     --yes \
     --no-wait
   ok "Deletion started — Azure is removing all child resources in the background."
-  log "Waiting for deletion to complete..."
-  # Poll every 15s until the RG is gone
+
+  # Poll every 15s with an in-place heartbeat showing elapsed time. \r and
+  # \033[K (clear-to-EOL) keep the line stable instead of spamming the terminal.
+  # If output is piped (CI, tee), the carriage returns still produce readable
+  # logs since each new heartbeat overwrites visually but is preserved in raw.
+  START_TIME=$(date +%s)
   for i in $(seq 1 40); do
     if ! az group show --name "$RESOURCE_GROUP" --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
-      ok "Resource group deleted."
+      ELAPSED=$(( $(date +%s) - START_TIME ))
+      printf "\r\033[K"
+      ok "Resource group deleted (took ${ELAPSED}s)."
       break
     fi
+    ELAPSED=$(( $(date +%s) - START_TIME ))
+    printf "\r${BLUE}▶  Still deleting... %ds elapsed${NC}" "$ELAPSED"
     if [[ "$i" -eq 40 ]]; then
+      printf "\n"
       warn "Resource group still deleting after 10 minutes. Continuing anyway."
       warn "Check status: az group show --name $RESOURCE_GROUP --subscription $SUBSCRIPTION_ID"
     fi
@@ -178,8 +187,27 @@ if az group show --name "$MONITOR_RG" --subscription "$TARGET_SUBSCRIPTION_ID" &
   az group delete \
     --name "$MONITOR_RG" \
     --subscription "$TARGET_SUBSCRIPTION_ID" \
-    --yes
-  ok "Monitor resource group deleted."
+    --yes \
+    --no-wait
+
+  # Monitor RG is small (APR + action group); typically <30s. Same heartbeat
+  # pattern as the main RG so the user always sees progress.
+  START_TIME=$(date +%s)
+  for i in $(seq 1 20); do
+    if ! az group show --name "$MONITOR_RG" --subscription "$TARGET_SUBSCRIPTION_ID" &>/dev/null; then
+      ELAPSED=$(( $(date +%s) - START_TIME ))
+      printf "\r\033[K"
+      ok "Monitor resource group deleted (took ${ELAPSED}s)."
+      break
+    fi
+    ELAPSED=$(( $(date +%s) - START_TIME ))
+    printf "\r${BLUE}▶  Still deleting... %ds elapsed${NC}" "$ELAPSED"
+    if [[ "$i" -eq 20 ]]; then
+      printf "\n"
+      warn "Monitor resource group still deleting after 5 minutes. Continuing anyway."
+    fi
+    sleep 15
+  done
 else
   ok "Monitor resource group '$MONITOR_RG' does not exist in $TARGET_SUBSCRIPTION_ID — nothing to delete."
 fi
@@ -238,8 +266,26 @@ if [[ "$DELETE_TFSTATE" == true ]]; then
     az group delete \
       --name "$TFSTATE_RG" \
       --subscription "$SUBSCRIPTION_ID" \
-      --yes
-    ok "tfstate resource group deleted."
+      --yes \
+      --no-wait
+
+    # tfstate RG holds one storage account; usually <30s.
+    START_TIME=$(date +%s)
+    for i in $(seq 1 20); do
+      if ! az group show --name "$TFSTATE_RG" --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
+        ELAPSED=$(( $(date +%s) - START_TIME ))
+        printf "\r\033[K"
+        ok "tfstate resource group deleted (took ${ELAPSED}s)."
+        break
+      fi
+      ELAPSED=$(( $(date +%s) - START_TIME ))
+      printf "\r${BLUE}▶  Still deleting... %ds elapsed${NC}" "$ELAPSED"
+      if [[ "$i" -eq 20 ]]; then
+        printf "\n"
+        warn "tfstate resource group still deleting after 5 minutes. Continuing anyway."
+      fi
+      sleep 15
+    done
   else
     ok "tfstate resource group '$TFSTATE_RG' does not exist."
   fi
