@@ -34,7 +34,7 @@ Terraform in `infrastructure/terraform-core/` deploys (two providers: `hashicorp
 3. Foundry model deployment (`azurerm_cognitive_deployment`, default `gpt-4.1-mini` version `2025-04-14`, Standard, 150K TPM)
 4. **Foundry project** — fully Terraform-managed via AzAPI (`azapi_update_resource` to enable `allowProjectManagement`, `azapi_resource` to create the project). Set `create_foundry_project = true` in `terraform.tfvars`.
 5. Azure AI Search
-6. Azure Cosmos DB (SQL API) — seven containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`), `resource-inventory` (partition `/subscription_id`), `governance-checkpoints` (partition `/id` — Phase 33C, stores scan-level workflow checkpoints for resume support). Managed Identity auth; no connection string stored in tfstate.
+6. Azure Cosmos DB (SQL API) — eight containers, all Terraform-managed (`azurerm_cosmosdb_sql_container`): `governance-decisions` (partition `/resource_id`), `governance-agents` (partition `/name`), `governance-scan-runs` (partition `/agent_type`), `governance-alerts` (partition `/severity`), `governance-executions` (partition `/resource_id`), `resource-inventory` (partition `/subscription_id`), `governance-checkpoints` (partition `/id` — Phase 33C, stores scan-level workflow checkpoints for resume support), `governance-overrides` (partition `/fingerprint_hash` — Phase 35A, operator override feedback capture). Managed Identity auth; no connection string stored in tfstate.
 7. Azure Key Vault — purge protection enabled, 90-day soft-delete retention
 8. Azure Log Analytics
 9. Azure Container Registry (ACR) — admin disabled; Container App pulls via Managed Identity (`AcrPull` role)
@@ -305,7 +305,7 @@ pip install -r requirements.txt
 
 # 2. Run tests — no Azure credentials needed (mock mode)
 pytest tests/ -v
-# Expected: 1219 passed, 0 failed
+# Expected: 1225 passed, 0 failed
 
 # 3a. Mock mode (no Azure needed) — set in .env
 echo "USE_LOCAL_MOCKS=true" > .env

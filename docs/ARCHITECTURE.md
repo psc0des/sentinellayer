@@ -866,6 +866,7 @@ src/
 │   ├── scan_run_tracker.py    # Scan-run lifecycle → Cosmos DB / JSON (scan records)
 │   ├── alert_tracker.py       # Alert investigation lifecycle → Cosmos DB / JSON (alert records)
 │   ├── explanation_engine.py  # DecisionExplainer — factors, counterfactuals, LLM summary
+│   ├── override_capture.py    # Phase 35A: capture_override() fire-and-forget; compute_fingerprint_hash() 16-char SHA-256
 │   ├── execution_agent.py     # LLM-driven execution — plan() + execute() + verify() + rollback() four-phase agent
 │   ├── execution_gateway.py   # Verdict→IaC routing; HITL + conditional approval; delegates to ExecutionAgent; list_all()
 │   ├── terraform_pr_generator.py # GitHub PR creation via PyGithub (asyncio.to_thread)
