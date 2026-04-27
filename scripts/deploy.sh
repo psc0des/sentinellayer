@@ -60,7 +60,24 @@ log()  { echo -e "${BLUE}▶  $*${NC}"; }
 ok()   { echo -e "${GREEN}✓  $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 die()  { echo -e "${RED}✗  $*${NC}" >&2; exit 1; }
-step() { echo ""; echo -e "${BOLD}${BLUE}══ $* ══${NC}"; }
+
+# step "title" prints "══ Step N — title ══". The deploy script has several
+# conditional steps (Foundry quota check, Stage 1 skip on --stage2, remote state
+# setup only on first run), so a precise total can't be promised — but the
+# running counter gives the user a clear sense of progress.
+STEP_NUM=0
+step() {
+  STEP_NUM=$((STEP_NUM + 1))
+  echo ""
+  echo -e "${BOLD}${BLUE}══ Step ${STEP_NUM} — $* ══${NC}"
+}
+
+# Catch any unhandled command failure and print the line + command before exiting.
+# This fires for unexpected errors only — intentional die() calls already print
+# their own message and exit before the trap can fire.
+trap 'echo -e "\n${RED}${BOLD}✗  Unexpected error on line $LINENO${NC}" >&2
+      echo -e "${RED}   Failed command: $BASH_COMMAND${NC}" >&2
+      echo -e "${RED}   Re-run with: bash -x scripts/deploy.sh  (for full trace)${NC}" >&2' ERR
 
 # =============================================================================
 # --reset-admin: wipe the admin account from both the local filesystem file
@@ -350,7 +367,7 @@ done
 # provider alias). If target_subscription_id differs from subscription_id, that sub also
 # needs Microsoft.AlertsManagement registered — otherwise Terraform gets a 409 Conflict.
 TARGET_SUB_EARLY=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
-  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || true)
 if [[ -n "$TARGET_SUB_EARLY" && "$TARGET_SUB_EARLY" != "$SUBSCRIPTION_ID" ]]; then
   log "target_subscription_id ($TARGET_SUB_EARLY) differs from infra sub — registering Microsoft.AlertsManagement there too"
   for PROVIDER in Microsoft.AlertsManagement Microsoft.Insights; do
@@ -385,15 +402,33 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
     ok "Resource group already exists: $TFSTATE_RG"
   fi
 
-  # Create storage account if it doesn't exist
-  # Retry up to 4 times with 20s wait — new subscriptions have a propagation delay
-  # where the Storage API doesn't recognise the subscription for ~60s after creation.
-  if ! az storage account show --name "$TFSTATE_SA" --resource-group "$TFSTATE_RG" \
-       --subscription "$SUBSCRIPTION_ID" &>/dev/null; then
+  # Locate or create the tfstate storage account.
+  #
+  # Lookup order:
+  #   1. Subscription-wide check — finds the account even if a previous partial
+  #      deploy created it in a different resource group.
+  #   2. Create with the user suffix (ruriskrytf<suffix>).
+  #   3. If the name is globally taken by another user, fall back to a name
+  #      derived from the subscription ID (rrtf<first-20-of-sub-id>) which is
+  #      guaranteed unique — subscription IDs are globally unique in Azure.
+
+  _SA_EXISTING_RG=$(az storage account show \
+    --name "$TFSTATE_SA" \
+    --subscription "$SUBSCRIPTION_ID" \
+    --query "resourceGroup" -o tsv 2>/dev/null || true)
+
+  if [[ -n "$_SA_EXISTING_RG" ]]; then
+    if [[ "$_SA_EXISTING_RG" != "$TFSTATE_RG" ]]; then
+      warn "Storage account '$TFSTATE_SA' found in '$_SA_EXISTING_RG' (not '$TFSTATE_RG') — reusing it."
+      TFSTATE_RG="$_SA_EXISTING_RG"
+    fi
+    ok "Storage account already exists: $TFSTATE_SA (resource group: $TFSTATE_RG)"
+  else
     log "Creating storage account: $TFSTATE_SA"
     SA_CREATED=false
+    SA_ERR=""
     for attempt in 1 2 3 4; do
-      if az storage account create \
+      if SA_ERR=$(az storage account create \
            --name "$TFSTATE_SA" \
            --resource-group "$TFSTATE_RG" \
            --location "$TFSTATE_LOCATION" \
@@ -401,8 +436,27 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
            --sku Standard_LRS \
            --allow-blob-public-access false \
            --min-tls-version TLS1_2 \
-           --output none 2>/dev/null; then
+           --output none 2>&1); then
         SA_CREATED=true
+        break
+      fi
+      if echo "$SA_ERR" | grep -qi "StorageAccountAlreadyTaken\|already taken"; then
+        warn "Storage account name '$TFSTATE_SA' is globally taken by another user."
+        warn "Switching to subscription-derived name (guaranteed unique)..."
+        _SUB_SHORT=$(echo "$SUBSCRIPTION_ID" | tr -d '-' | cut -c1-20)
+        TFSTATE_SA="rrtf${_SUB_SHORT}"
+        log "Fallback storage account name: $TFSTATE_SA"
+        if SA_ERR=$(az storage account create \
+             --name "$TFSTATE_SA" \
+             --resource-group "$TFSTATE_RG" \
+             --location "$TFSTATE_LOCATION" \
+             --subscription "$SUBSCRIPTION_ID" \
+             --sku Standard_LRS \
+             --allow-blob-public-access false \
+             --min-tls-version TLS1_2 \
+             --output none 2>&1); then
+          SA_CREATED=true
+        fi
         break
       fi
       if [[ "$attempt" -lt 4 ]]; then
@@ -411,15 +465,13 @@ if [[ ! -f "$TF_DIR/backend.hcl" ]]; then
       fi
     done
     [[ "$SA_CREATED" == true ]] \
-      || die "Could not create storage account after 4 attempts.\n   Check: az storage account create --name $TFSTATE_SA --resource-group $TFSTATE_RG --subscription $SUBSCRIPTION_ID"
+      || die "Could not create storage account.\n   Azure error: $SA_ERR"
     az storage container create \
       --name tfstate \
       --account-name "$TFSTATE_SA" \
       --auth-mode login \
       --output none
     ok "Storage account created: $TFSTATE_SA"
-  else
-    ok "Storage account already exists: $TFSTATE_SA"
   fi
 
   # Generate backend.hcl
@@ -705,9 +757,9 @@ echo "VITE_API_URL=$BACKEND_URL" > "$DASHBOARD_DIR/.env.production"
 cd "$DASHBOARD_DIR"
 log "Installing dependencies..."
 if [[ -f "package-lock.json" ]]; then
-  npm ci --silent
+  npm ci --loglevel error
 else
-  npm install --silent
+  npm install --loglevel error
 fi
 
 log "Building..."
@@ -789,61 +841,17 @@ echo ""
 echo "  (GitHub PAT was handled during deploy. To rotate it later:"
 echo "   az keyvault secret set --vault-name $KV_NAME --name github-pat --value 'github_pat_xxx')"
 echo ""
+echo "  4. Connect Azure Monitor alerts to RuriSkry:"
+echo "       Set this URL as the webhook on any Azure Monitor Action Group:"
+echo "       $BACKEND_URL/api/alert-trigger"
+echo "       See docs/SETUP.md § Wire Azure Monitor Alerts for full setup."
+echo ""
 echo "  For subsequent code or infra changes, see:"
 echo "  infrastructure/terraform-core/deploy.md § Redeploy Workflows"
 echo ""
 
 # =============================================================================
-# 8. Wire demo environment to this backend (if deployed)
-# =============================================================================
-# If the user has also deployed infrastructure/terraform-demo, this step
-# injects the backend URL into the demo environment's Azure Monitor action
-# group so alerts flow into RuriSkry automatically.
-#
-# Skipped if:
-#   - terraform-demo/terraform.tfvars doesn't exist (demo not set up yet)
-#   - terraform-demo/.terraform doesn't exist (demo not initialised/applied)
-#   - alert_webhook_url is already set in demo terraform.tfvars
-
-DEMO_DIR="$REPO_ROOT/infrastructure/terraform-demo"
-
-if [[ -f "$DEMO_DIR/terraform.tfvars" && -d "$DEMO_DIR/.terraform" ]]; then
-  step "Wiring demo environment to RuriSkry backend"
-
-  CURRENT_WEBHOOK=$(grep -E '^alert_webhook_url\s*=' "$DEMO_DIR/terraform.tfvars" 2>/dev/null \
-    | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || echo "")
-
-  if [[ -z "$CURRENT_WEBHOOK" ]]; then
-    log "Injecting alert_webhook_url = $BACKEND_URL/api/alert-trigger"
-
-    # Replace existing line if present, otherwise append
-    if grep -qE '^alert_webhook_url\s*=' "$DEMO_DIR/terraform.tfvars"; then
-      sed -i "s|^alert_webhook_url\s*=.*|alert_webhook_url = \"$BACKEND_URL/api/alert-trigger\"|" \
-        "$DEMO_DIR/terraform.tfvars"
-    else
-      printf '\nalert_webhook_url = "%s/api/alert-trigger"\n' "$BACKEND_URL" \
-        >> "$DEMO_DIR/terraform.tfvars"
-    fi
-
-    log "Applying demo action group update..."
-    cd "$DEMO_DIR"
-    terraform apply -auto-approve -target=azurerm_monitor_action_group.prod
-    cd "$TF_DIR"
-    ok "Demo environment wired: alerts → $BACKEND_URL/api/alert-trigger"
-  else
-    ok "Demo environment already wired ($CURRENT_WEBHOOK) — skipping"
-  fi
-else
-  if [[ ! -f "$DEMO_DIR/terraform.tfvars" ]]; then
-    log "Demo environment not configured — skipping webhook wiring."
-    log "To wire it later, deploy terraform-demo then re-run: bash scripts/deploy.sh --stage2"
-  else
-    log "Demo environment not initialised — run 'terraform init && terraform apply' in terraform-demo first."
-  fi
-fi
-
-# =============================================================================
-# 9. Alert Processing Rule — owned by Terraform, no manual wiring needed
+# 8. Alert Processing Rule — owned by Terraform, no manual wiring needed
 # =============================================================================
 # The APR (azurerm_monitor_alert_processing_rule_action_group) is created by
 # Terraform in Stage 1. It is tied to no personal identity — it is an Azure
@@ -859,7 +867,7 @@ APR_NAME="apr-ruriskry-governance-fanout"
 # APR lives in the monitor RG in the TARGET subscription (not the infra RG)
 APR_RG=$(terraform -chdir="$TF_DIR" output -raw monitor_resource_group_name 2>/dev/null || true)
 TARGET_SUB=$(grep -E '^target_subscription_id\s*=' "$TF_DIR/terraform.tfvars" 2>/dev/null \
-  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]')
+  | sed 's/.*=\s*"\([^"]*\)".*/\1/' | tr -d '[:space:]' || true)
 ALERT_SUB="${TARGET_SUB:-$SUBSCRIPTION_ID}"
 
 APR_STATE=$(az monitor alert-processing-rule show \
