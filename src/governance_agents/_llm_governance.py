@@ -116,6 +116,59 @@ def parse_llm_decision(
     return clamped, text, adj_dicts
 
 
+def format_overrides_for_prompt(overrides: list) -> str:
+    """Format a list of VerdictOverride records as a prompt section for LLM agents.
+
+    Returns an empty string when the list is empty — cold-start safe; no section
+    is appended to the prompt when the override store has no relevant history.
+
+    Each entry shows the date, action context, original verdict, how the operator
+    overrode it, and the operator's stated reason — enough for the LLM to
+    calibrate its score against real human decisions.
+
+    Accepts both Pydantic ``VerdictOverride`` instances and raw ``dict`` records
+    so it works whether the caller uses the typed model or a raw Cosmos document.
+    """
+    if not overrides:
+        return ""
+
+    lines = [
+        "\n## Recent Operator Overrides",
+        "The following are real human decisions that overrode this system's verdicts.",
+        "Treat them as authoritative ground truth when calibrating your score.",
+    ]
+    for i, ov in enumerate(overrides, 1):
+        if isinstance(ov, dict):
+            ts_raw = ov.get("timestamp", "")
+            action_type = ov.get("action_type", "?")
+            resource_type = ov.get("resource_type", "?")
+            original_verdict = ov.get("original_verdict", "?")
+            original_sri = ov.get("original_sri", "?")
+            override_type = ov.get("override_type", "?")
+            reason = ov.get("operator_reason", "?")
+        else:
+            ts_raw = str(getattr(ov, "timestamp", ""))
+            action_type = getattr(ov, "action_type", "?")
+            resource_type = getattr(ov, "resource_type", "?")
+            original_verdict = getattr(ov, "original_verdict", "?")
+            original_sri = getattr(ov, "original_sri", "?")
+            _ot = getattr(ov, "override_type", "?")
+            override_type = _ot.value if hasattr(_ot, "value") else _ot
+            reason = getattr(ov, "operator_reason", "?")
+
+        date_str = ts_raw[:10] if isinstance(ts_raw, str) and len(ts_raw) >= 10 else str(ts_raw)
+        sri_str = f"{original_sri:.1f}" if isinstance(original_sri, (int, float)) else str(original_sri)
+
+        lines.append(
+            f"\n{i}. [{date_str}] {action_type} on {resource_type}"
+            f" (original verdict: {original_verdict}, SRI {sri_str})"
+        )
+        lines.append(f"   Operator action: {override_type}")
+        lines.append(f"   Operator reason: {reason}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def annotate_violations(
     violations: list,
     adj_list: list[dict],

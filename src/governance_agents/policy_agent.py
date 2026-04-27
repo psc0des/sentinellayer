@@ -320,18 +320,26 @@ class PolicyComplianceAgent:
         )
 
         from src.infrastructure.llm_throttle import run_with_throttle
-        from src.governance_agents._llm_governance import parse_llm_decision, annotate_violations
+        from src.governance_agents._llm_governance import (  # noqa: PLC0415
+            annotate_violations,
+            format_overrides_for_prompt,
+            parse_llm_decision,
+        )
+        from src.core.override_retrieval import retrieve_relevant_overrides  # noqa: PLC0415
 
         meta_str = json.dumps(resource_metadata or {})
         policies_summary = json.dumps(self._policies, indent=2)
         evidence_section = ""
         if action.evidence:
             evidence_section = f"\n## Observed Evidence\n{action.evidence.model_dump_json()}\n"
+        overrides = await retrieve_relevant_overrides(action)
+        override_section = format_overrides_for_prompt(overrides)
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
             f"## Ops Agent's Reasoning\n{action.reason}\n\n"
             f"## Resource Metadata\n{meta_str}\n"
             f"{evidence_section}\n"
+            f"{override_section}"
             f"## Organization Policies\n{policies_summary}\n\n"
             "INSTRUCTIONS: First call evaluate_policy_rules to get the baseline score. "
             "Reason about each violation and whether it truly applies given the ops agent's intent. "

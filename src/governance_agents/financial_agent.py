@@ -333,16 +333,23 @@ class FinancialImpactAgent:
         )
 
         from src.infrastructure.llm_throttle import run_with_throttle
-        from src.governance_agents._llm_governance import parse_llm_decision
+        from src.governance_agents._llm_governance import (  # noqa: PLC0415
+            format_overrides_for_prompt,
+            parse_llm_decision,
+        )
+        from src.core.override_retrieval import retrieve_relevant_overrides  # noqa: PLC0415
 
         evidence_section = ""
         if action.evidence:
             evidence_section = f"\n## Observed Evidence\n{action.evidence.model_dump_json()}\n"
 
+        overrides = await retrieve_relevant_overrides(action)
+        override_section = format_overrides_for_prompt(overrides)
         prompt = (
             f"## Proposed Action\n{action.model_dump_json()}\n\n"
             f"## Ops Agent's Reasoning\n{action.reason}\n"
             f"{evidence_section}\n"
+            f"{override_section}"
             "INSTRUCTIONS: First call evaluate_financial_rules to get the baseline score "
             "and cost analysis. Reason about whether the financial risk accurately reflects "
             "the business impact given the ops agent's intent. "

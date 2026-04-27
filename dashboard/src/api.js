@@ -729,6 +729,30 @@ export async function executePlaybook(decisionId, mode, approvedBy, validatorBri
 }
 
 /**
+ * Fetch operator override records (Phase 35C).
+ * @param {object} params - Optional filters: { limit, action_type, override_type }
+ * @returns {Promise<{ count: number, overrides: object[] }>}
+ */
+export async function fetchOverrides({ limit = 50, action_type = null, override_type = null } = {}) {
+  const params = new URLSearchParams({ limit })
+  if (action_type) params.set('action_type', action_type)
+  if (override_type) params.set('override_type', override_type)
+  const res = await apiFetch(`${BASE}/overrides?${params}`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch overrides`)
+  return res.json()
+}
+
+/**
+ * Fetch aggregate override statistics for the Overview dashboard card (Phase 35C).
+ * @returns {Promise<{ total: number, by_override_type: object, top_action_types: object[], most_overridden_verdict: string }>}
+ */
+export async function fetchOverridesMetrics() {
+  const res = await apiFetch(`${BASE}/overrides/metrics`)
+  if (!res.ok) throw new Error(`API error ${res.status}: failed to fetch override metrics`)
+  return res.json()
+}
+
+/**
  * Call the A2 Validator Agent to get a safety brief for the playbook command.
  * Always resolves (never rejects) — check brief.validator_status for "unavailable".
  * @param {string} decisionId - action_id UUID from the governance verdict

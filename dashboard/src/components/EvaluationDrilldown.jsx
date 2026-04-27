@@ -18,6 +18,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub, rollbackAgentFix } from '../api'
 import TerraformPROverlay from './TerraformPROverlay'
 import PlaybookPanel from './PlaybookPanel'
+import OverrideHistoryPanel from './OverrideHistoryPanel'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1201,6 +1202,14 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
           Section 8 — Tier 3 Remediation Playbook (Phase 34D)
           ═══════════════════════════════════════════════════════════════ */}
             <PlaybookPanel decisionId={ev.action_id} reviewedBy={reviewedBy} />
+
+            {/* ═══════════════════════════════════════════════════════════════
+          Section 9 — Override History (Phase 35C)
+          ═══════════════════════════════════════════════════════════════ */}
+            <OverrideHistoryPanel
+                actionType={ev.action_type ?? ev.proposed_action?.action_type}
+                resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
+            />
 
             {/* Terraform PR overlay — rendered at fixed position, outside scroll flow */}
             {showPROverlay && executionStatus && (

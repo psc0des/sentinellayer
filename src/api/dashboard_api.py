@@ -46,6 +46,8 @@ POST /api/admin/reset                            ⚠ Dev/test only — wipe all 
 GET  /api/decisions/{decision_id}/playbook        Tier 3 remediation playbook for a governance decision.
 POST /api/decisions/{decision_id}/validate         A2 Validator brief — GPT-4.1 critic call, 5s hard timeout, always returns (validator_status="unavailable" on timeout/error).
 POST /api/decisions/{decision_id}/playbook/execute Execute (or dry-run) the playbook command via audited az CLI executor. Accepts optional validator_brief_* fields for audit linkage.
+GET  /api/overrides                              List recent operator override records (Phase 35C).
+GET  /api/overrides/metrics                      Aggregate stats: total, by_override_type, top_action_types (Phase 35C).
 
 Run
 ---
@@ -4258,6 +4260,128 @@ async def admin_reset(request: Request) -> dict:
         "deleted": deleted,
         "total": total,
         "note": "Cosmos DB data (if any) was NOT touched. Restart the server to reload seed data.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 35C — Override history endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/overrides")
+async def list_overrides(
+    limit: int = Query(default=50, ge=1, le=500),
+    action_type: str | None = Query(default=None),
+    override_type: str | None = Query(default=None),
+) -> dict:
+    """Return recent operator override records, newest-first.
+
+    Optional query parameters:
+    - **limit**: Maximum number of records (1–500, default 50).
+    - **action_type**: Filter by action type (e.g. ``restart_service``).
+    - **override_type**: Filter by override type (e.g. ``force_execute``).
+
+    Returns:
+        ``{"count": N, "overrides": [<VerdictOverride dicts>]}``
+    """
+    from src.infrastructure.cosmos_client import CosmosOverrideClient  # noqa: PLC0415
+
+    client = CosmosOverrideClient()
+
+    if client.is_mock:
+        # Mock mode: load all files and filter/sort in Python
+        from pathlib import Path  # noqa: PLC0415
+        overrides_dir = Path(__file__).parent.parent.parent / "data" / "overrides"
+        import json as _json  # noqa: PLC0415
+        records: list[dict] = []
+        if overrides_dir.exists():
+            for path in overrides_dir.glob("*.json"):
+                try:
+                    rec = _json.loads(path.read_text(encoding="utf-8"))
+                    records.append(rec)
+                except Exception:  # noqa: BLE001
+                    pass
+        records.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    else:
+        # Live mode: cross-partition query
+        query = f"SELECT TOP {limit} * FROM c ORDER BY c._ts DESC"
+        records = list(
+            client._container.query_items(  # noqa: SLF001
+                query, enable_cross_partition_query=True
+            )
+        )
+
+    if action_type:
+        records = [r for r in records if r.get("action_type") == action_type]
+    if override_type:
+        records = [r for r in records if r.get("override_type") == override_type]
+
+    records = records[:limit]
+    # Strip Cosmos internal metadata
+    cleaned = [
+        {k: v for k, v in r.items() if not k.startswith("_") and k != "id"}
+        for r in records
+    ]
+    return {"count": len(cleaned), "overrides": cleaned}
+
+
+@app.get("/api/overrides/metrics")
+async def override_metrics() -> dict:
+    """Return aggregate statistics across all stored operator overrides.
+
+    Used by the Overview dashboard card to show at-a-glance override intelligence.
+
+    Returns:
+        ```json
+        {
+          "total": N,
+          "by_override_type": {"force_execute": N, "dismiss_escalated": N, ...},
+          "top_action_types": [{"action_type": "restart_service", "count": N}, ...],
+          "most_overridden_verdict": "escalated"
+        }
+        ```
+    """
+    from collections import Counter  # noqa: PLC0415
+    from src.infrastructure.cosmos_client import CosmosOverrideClient  # noqa: PLC0415
+
+    client = CosmosOverrideClient()
+
+    if client.is_mock:
+        from pathlib import Path as _Path  # noqa: PLC0415
+        import json as _json  # noqa: PLC0415
+        overrides_dir = _Path(__file__).parent.parent.parent / "data" / "overrides"
+        records: list[dict] = []
+        if overrides_dir.exists():
+            for path in overrides_dir.glob("*.json"):
+                try:
+                    records.append(_json.loads(path.read_text(encoding="utf-8")))
+                except Exception:  # noqa: BLE001
+                    pass
+    else:
+        query = "SELECT * FROM c"
+        records = list(
+            client._container.query_items(  # noqa: SLF001
+                query, enable_cross_partition_query=True
+            )
+        )
+
+    by_override_type: dict[str, int] = Counter(
+        r.get("override_type", "unknown") for r in records
+    )
+    by_action_type: Counter = Counter(r.get("action_type", "unknown") for r in records)
+    by_verdict: Counter = Counter(r.get("original_verdict", "unknown") for r in records)
+
+    top_action_types = [
+        {"action_type": at, "count": cnt}
+        for at, cnt in by_action_type.most_common(5)
+    ]
+    most_overridden = by_verdict.most_common(1)[0][0] if by_verdict else None
+
+    return {
+        "total": len(records),
+        "by_override_type": dict(by_override_type),
+        "top_action_types": top_action_types,
+        "most_overridden_verdict": most_overridden,
     }
 
 

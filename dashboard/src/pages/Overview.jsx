@@ -19,7 +19,7 @@ import {
   CheckCircle, AlertTriangle, Clock, Zap, TrendingUp, RefreshCw, Cpu,
   Activity as ActivityIcon, Terminal,
 } from 'lucide-react'
-import { fetchAgentLastRun } from '../api'
+import { fetchAgentLastRun, fetchOverridesMetrics } from '../api'
 import NumberTicker from '../components/magicui/NumberTicker'
 import GlowCard from '../components/magicui/GlowCard'
 import VerdictBadge from '../components/magicui/VerdictBadge'
@@ -264,6 +264,89 @@ function ExecutionMetricsCard({ executions }) {
   )
 }
 
+// ── OverrideMetricsCard ────────────────────────────────────────────────────
+
+function OverrideMetricsCard({ data }) {
+  if (!data) return null
+  const { total, by_override_type = {}, top_action_types = [], most_overridden_verdict } = data
+
+  const OVERRIDE_COLORS = {
+    force_execute:     'text-rose-400',
+    dismiss_approved:  'text-slate-400',
+    dismiss_escalated: 'text-amber-400',
+    satisfy_condition: 'text-emerald-400',
+    reverse_denial:    'text-purple-400',
+  }
+  const OVERRIDE_LABELS = {
+    force_execute:     'Force Execute',
+    dismiss_approved:  'Dismiss Approved',
+    dismiss_escalated: 'Dismiss Escalated',
+    satisfy_condition: 'Satisfy Condition',
+    reverse_denial:    'Reverse Denial',
+  }
+
+  return (
+    <GlowCard color="teal" intensity="low" className="p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <ActivityIcon className="w-4 h-4 text-teal-400" />
+          <h2 className="text-sm font-semibold text-slate-300">Override Feedback</h2>
+        </div>
+        <span className="text-[10px] text-slate-600 font-mono uppercase tracking-wider">Phase 35</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Total Overrides</p>
+          <p className="text-2xl font-bold text-teal-400 tabular-nums" style={{ fontFamily: 'var(--font-data)' }}>
+            <NumberTicker value={total ?? 0} />
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1">Most Overridden</p>
+          <p className={`text-sm font-semibold capitalize ${
+            most_overridden_verdict === 'escalated' ? 'text-yellow-400' :
+            most_overridden_verdict === 'approved'  ? 'text-green-400' :
+            most_overridden_verdict === 'denied'    ? 'text-red-400' : 'text-slate-400'
+          }`}>
+            {most_overridden_verdict ?? '—'}
+          </p>
+        </div>
+      </div>
+
+      {Object.keys(by_override_type).length > 0 && (
+        <div className="border-t border-slate-800/60 pt-3 space-y-1.5">
+          {Object.entries(by_override_type)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([type, count]) => (
+              <div key={type} className="flex items-center justify-between text-xs">
+                <span className={OVERRIDE_COLORS[type] ?? 'text-slate-400'}>
+                  {OVERRIDE_LABELS[type] ?? type}
+                </span>
+                <span className="tabular-nums text-slate-500">{count}</span>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {top_action_types.length > 0 && (
+        <div className="border-t border-slate-800/60 mt-3 pt-3">
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold mb-1.5">Top Overridden Actions</p>
+          <div className="space-y-1">
+            {top_action_types.slice(0, 3).map(({ action_type, count }) => (
+              <div key={action_type} className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-mono">{action_type?.replace(/_/g, ' ')}</span>
+                <span className="tabular-nums text-slate-500">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </GlowCard>
+  )
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function Overview() {
@@ -272,6 +355,7 @@ export default function Overview() {
 
   const [recentScans, setRecentScans] = useState([])
   const [scansLoading, setScansLoading] = useState(true)
+  const [overrideMetrics, setOverrideMetrics] = useState(null)
 
   function loadScans() {
     setScansLoading(true)
@@ -287,6 +371,10 @@ export default function Overview() {
   }
 
   useEffect(() => { loadScans() }, [])
+
+  useEffect(() => {
+    fetchOverridesMetrics().then(setOverrideMetrics).catch(() => {})
+  }, [])
 
   const lastScanTime = recentScans.reduce((latest, scan) => {
     const t = scan.completed_at ?? scan.started_at
@@ -395,8 +483,8 @@ export default function Overview() {
         />
       </div>
 
-      {/* ── Alerts + Execution metrics ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* ── Alerts + Execution metrics + Override metrics ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <AlertsCard
           total={alertTotal}
           active={alertActive}
@@ -404,6 +492,7 @@ export default function Overview() {
           resolutionRate={alertResolutionRate}
         />
         <ExecutionMetricsCard executions={metrics?.executions} />
+        <OverrideMetricsCard data={overrideMetrics} />
       </div>
 
       {/* ── SRI trend + pending reviews ── */}

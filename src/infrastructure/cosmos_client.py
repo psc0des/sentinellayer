@@ -773,3 +773,125 @@ class CosmosOverrideClient:
             )
         )
         return results
+
+    def get_by_action_resource(
+        self,
+        action_type: str,
+        resource_type: str,
+        limit: int = 5,
+        days: int = 90,
+    ) -> list[dict]:
+        """Return recent overrides for a given action_type + resource_type.
+
+        Phase 35B tier-2 fallback — broader than fingerprint, cross-partition.
+
+        Args:
+            action_type: Action type string (e.g. ``"restart_service"``).
+            resource_type: Azure resource type (e.g. ``"Microsoft.Compute/virtualMachines"``).
+            limit: Maximum records to return.
+            days: Only return overrides within this many days.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        if self._is_mock:
+            results: list[dict] = []
+            for path in self._dir.glob("*.json"):
+                try:
+                    rec = json.loads(path.read_text(encoding="utf-8"))
+                    if rec.get("action_type") != action_type:
+                        continue
+                    if rec.get("resource_type") != resource_type:
+                        continue
+                    ts_str = rec.get("timestamp", "")
+                    if ts_str:
+                        try:
+                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            if ts < cutoff:
+                                continue
+                        except ValueError:
+                            pass
+                    results.append(rec)
+                except Exception:  # noqa: BLE001
+                    pass
+            return sorted(
+                results, key=lambda r: r.get("timestamp", ""), reverse=True
+            )[:limit]
+
+        query = (
+            f"SELECT TOP {limit} * FROM c "
+            "WHERE c.action_type = @at "
+            "AND c.resource_type = @rt "
+            "AND c.timestamp >= @cutoff "
+            "ORDER BY c._ts DESC"
+        )
+        return list(
+            self._container.query_items(
+                query,
+                parameters=[
+                    {"name": "@at", "value": action_type},
+                    {"name": "@rt", "value": resource_type},
+                    {"name": "@cutoff", "value": cutoff.isoformat()},
+                ],
+                enable_cross_partition_query=True,
+            )
+        )
+
+    def get_by_action_type(
+        self,
+        action_type: str,
+        limit: int = 5,
+        days: int = 90,
+    ) -> list[dict]:
+        """Return recent overrides for a given action_type.
+
+        Phase 35B tier-3 fallback — broadest possible match.
+
+        Args:
+            action_type: Action type string (e.g. ``"restart_service"``).
+            limit: Maximum records to return.
+            days: Only return overrides within this many days.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        if self._is_mock:
+            results: list[dict] = []
+            for path in self._dir.glob("*.json"):
+                try:
+                    rec = json.loads(path.read_text(encoding="utf-8"))
+                    if rec.get("action_type") != action_type:
+                        continue
+                    ts_str = rec.get("timestamp", "")
+                    if ts_str:
+                        try:
+                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            if ts < cutoff:
+                                continue
+                        except ValueError:
+                            pass
+                    results.append(rec)
+                except Exception:  # noqa: BLE001
+                    pass
+            return sorted(
+                results, key=lambda r: r.get("timestamp", ""), reverse=True
+            )[:limit]
+
+        query = (
+            f"SELECT TOP {limit} * FROM c "
+            "WHERE c.action_type = @at "
+            "AND c.timestamp >= @cutoff "
+            "ORDER BY c._ts DESC"
+        )
+        return list(
+            self._container.query_items(
+                query,
+                parameters=[
+                    {"name": "@at", "value": action_type},
+                    {"name": "@cutoff", "value": cutoff.isoformat()},
+                ],
+                enable_cross_partition_query=True,
+            )
+        )

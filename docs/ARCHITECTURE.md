@@ -262,7 +262,7 @@ Two Terraform providers are used: `hashicorp/azurerm` (~> 4.0) for standard reso
 | Azure Cosmos DB — `governance-alerts` | `AlertTracker` | `COSMOS_ENDPOINT` | Managed Identity auth; partition key `/severity` |
 | Azure Cosmos DB — `governance-scan-runs` | `ScanRunTracker` | `COSMOS_CONTAINER_SCAN_RUNS` | Managed Identity auth; partition key `/agent_type` |
 | Azure Cosmos DB — `governance-executions` | `CosmosExecutionClient` → `ExecutionGateway` | `COSMOS_CONTAINER_EXECUTIONS` | Managed Identity auth; partition key `/resource_id`; survives Container App revision deployments — replaces ephemeral `data/executions/*.json` |
-| Azure Cosmos DB — `governance-overrides` | `CosmosOverrideClient` → `capture_override()` | `COSMOS_CONTAINER_OVERRIDES` | Phase 35A; Managed Identity auth; partition key `/fingerprint_hash` — groups overrides by action+resource+context for Phase 35B similarity retrieval |
+| Azure Cosmos DB — `governance-overrides` | `CosmosOverrideClient` → `capture_override()` / `retrieve_relevant_overrides()` | `COSMOS_CONTAINER_OVERRIDES` | Phase 35A+B; Managed Identity auth; partition key `/fingerprint_hash` — groups overrides by action+resource+context; 3-tier retrieval (fingerprint T1, action+resource T2, action T3) injects past operator decisions into all 4 LLM governance agents |
 | Azure Cosmos DB — `governance-agents` (admin auth) | `CosmosAdminClient` → `_get_admin()` / `_save_admin()` | `COSMOS_ENDPOINT` | Stores hashed admin credentials (`id="_admin_auth"`, partition `_system`); three-layer read: memory → `data/admin_auth.json` → Cosmos; survives Container App revision rotation |
 | Azure Key Vault | All secrets at runtime | `AZURE_KEYVAULT_URL` | `purge_protection_enabled=false`; `soft_delete_retention_days=7` (set purge protection true in regulated production) |
 | Azure Container Registry | Backend image pull | — | `admin_enabled=false`; User-Assigned MI has `AcrPull` role — no credentials in tfstate. Container App starts with MCR placeholder image; `deploy.sh` swaps to ACR image after role propagates. |
@@ -867,6 +867,7 @@ src/
 │   ├── alert_tracker.py       # Alert investigation lifecycle → Cosmos DB / JSON (alert records)
 │   ├── explanation_engine.py  # DecisionExplainer — factors, counterfactuals, LLM summary
 │   ├── override_capture.py    # Phase 35A: capture_override() fire-and-forget; compute_fingerprint_hash() 16-char SHA-256
+│   ├── override_retrieval.py  # Phase 35B: retrieve_relevant_overrides() — 3-tier fallback (fingerprint/action+resource/action); cold-start safe
 │   ├── execution_agent.py     # LLM-driven execution — plan() + execute() + verify() + rollback() four-phase agent
 │   ├── execution_gateway.py   # Verdict→IaC routing; HITL + conditional approval; delegates to ExecutionAgent; list_all()
 │   ├── terraform_pr_generator.py # GitHub PR creation via PyGithub (asyncio.to_thread)
