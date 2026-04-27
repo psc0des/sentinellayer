@@ -29,6 +29,7 @@ Usage::
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.config import settings as _default_settings
@@ -611,3 +612,164 @@ class CosmosAdminClient:
             logger.info("CosmosAdminClient: admin auth deleted from Cosmos")
         except Exception as exc:  # noqa: BLE001
             logger.warning("CosmosAdminClient: delete failed — %s", exc)
+
+
+_DEFAULT_OVERRIDES_DIR = (
+    Path(__file__).parent.parent.parent / "data" / "overrides"
+)
+
+
+class CosmosOverrideClient:
+    """Read/write operator override records from Cosmos DB or local JSON files.
+
+    Written by ``capture_override()`` whenever an operator force-executes,
+    dismisses, or satisfies a condition.  Read by Phase 35B retrieval to
+    inject relevant past overrides into LLM prompts.
+
+    Partition key: ``/fingerprint_hash``  (range-query workload — groups
+    overrides by action+resource+context for similarity retrieval)
+    Document ID:   ``override_id``
+    """
+
+    def __init__(self, cfg=None, overrides_dir: Path | None = None) -> None:
+        self._cfg = cfg or _default_settings
+        self._dir: Path = overrides_dir or _DEFAULT_OVERRIDES_DIR
+        self._secrets = KeyVaultSecretResolver(self._cfg)
+        self._cosmos_key = self._secrets.resolve(
+            direct_value=self._cfg.cosmos_key,
+            secret_name=getattr(self._cfg, "cosmos_key_secret_name", ""),
+            setting_name="COSMOS_KEY",
+        )
+
+        self._is_mock: bool = (
+            self._cfg.use_local_mocks
+            or not self._cfg.cosmos_endpoint
+            or not self._cosmos_key
+        )
+
+        if self._is_mock:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            self._container = None
+            logger.info(
+                "CosmosOverrideClient: LOCAL MOCK mode (JSON files at %s).", self._dir
+            )
+        else:
+            from azure.cosmos import CosmosClient  # type: ignore[import]
+
+            client = CosmosClient(
+                url=self._cfg.cosmos_endpoint,
+                credential=self._cosmos_key,
+            )
+            db = client.get_database_client(self._cfg.cosmos_database)
+            self._container = db.get_container_client(
+                self._cfg.cosmos_container_overrides
+            )
+            logger.info(
+                "CosmosOverrideClient: connected to %s / %s",
+                self._cfg.cosmos_database,
+                self._cfg.cosmos_container_overrides,
+            )
+
+    @property
+    def is_mock(self) -> bool:
+        return self._is_mock
+
+    def upsert(self, record: dict) -> None:
+        """Insert or update one override record.
+
+        The record must have ``override_id`` (used as ``id``) and
+        ``fingerprint_hash`` (partition key).
+        """
+        doc = {**record, "id": record["override_id"]}
+        if self._is_mock:
+            path = self._dir / f"{record['override_id']}.json"
+            path.write_text(json.dumps(doc, indent=2, default=str), encoding="utf-8")
+            logger.debug("CosmosOverrideClient(mock): wrote %s", path.name)
+        else:
+            self._container.upsert_item(doc)
+            logger.debug("CosmosOverrideClient: upserted %s", record["override_id"])
+
+    def get_by_execution_id(self, execution_id: str) -> dict | None:
+        """Return the existing override for this execution_id, or None.
+
+        Used for idempotency: replaying the same API call must not create
+        a second record.
+        """
+        if self._is_mock:
+            for path in self._dir.glob("*.json"):
+                try:
+                    rec = json.loads(path.read_text(encoding="utf-8"))
+                    if rec.get("execution_id") == execution_id:
+                        return rec
+                except Exception:  # noqa: BLE001
+                    pass
+            return None
+
+        query = "SELECT TOP 1 * FROM c WHERE c.execution_id = @eid"
+        results = list(
+            self._container.query_items(
+                query,
+                parameters=[{"name": "@eid", "value": execution_id}],
+                enable_cross_partition_query=True,
+            )
+        )
+        return results[0] if results else None
+
+    def get_by_fingerprint(
+        self, fingerprint_hash: str, limit: int = 5, days: int = 90
+    ) -> list[dict]:
+        """Return recent overrides matching a fingerprint hash, newest-first.
+
+        Used by Phase 35B retrieval to find relevant past overrides for
+        injection into LLM prompts.
+
+        Args:
+            fingerprint_hash: Hash produced by ``compute_fingerprint_hash()``.
+            limit: Maximum records to return.
+            days: Only return overrides within this many days.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        if self._is_mock:
+            results: list[dict] = []
+            for path in self._dir.glob("*.json"):
+                try:
+                    rec = json.loads(path.read_text(encoding="utf-8"))
+                    if rec.get("fingerprint_hash") != fingerprint_hash:
+                        continue
+                    ts_str = rec.get("timestamp", "")
+                    if ts_str:
+                        try:
+                            ts = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")
+                            )
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                            if ts < cutoff:
+                                continue
+                        except ValueError:
+                            pass
+                    results.append(rec)
+                except Exception:  # noqa: BLE001
+                    pass
+            return sorted(
+                results, key=lambda r: r.get("timestamp", ""), reverse=True
+            )[:limit]
+
+        query = (
+            f"SELECT TOP {limit} * FROM c "
+            "WHERE c.fingerprint_hash = @fh "
+            "AND c.timestamp >= @cutoff "
+            "ORDER BY c._ts DESC"
+        )
+        results = list(
+            self._container.query_items(
+                query,
+                parameters=[
+                    {"name": "@fh", "value": fingerprint_hash},
+                    {"name": "@cutoff", "value": cutoff.isoformat()},
+                ],
+                partition_key=fingerprint_hash,
+            )
+        )
+        return results

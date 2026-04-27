@@ -482,3 +482,57 @@ class AuditRecord(BaseModel):
     policy_violations: list[PolicyViolation] = []
     similar_incidents: list[str] = []
     full_evaluation: dict = {}
+
+
+# ============================================
+# Verdict Override Models (Phase 35A — Override Feedback Loop)
+# ============================================
+
+class OverrideType(str, Enum):
+    """How the operator overrode the system's governance verdict."""
+    FORCE_EXECUTE = "force_execute"       # Admin bypassed unmet APPROVED_IF conditions
+    DISMISS_APPROVED = "dismiss_approved"   # APPROVED verdict dismissed without running
+    DISMISS_ESCALATED = "dismiss_escalated"  # ESCALATED verdict dismissed by operator
+    SATISFY_CONDITION = "satisfy_condition"  # APPROVED_IF condition manually marked satisfied
+    REVERSE_DENIAL = "reverse_denial"      # DENIED verdict ran anyway — flag for review
+
+
+class VerdictOverride(BaseModel):
+    """An operator override of a system-generated governance verdict.
+
+    Written to the ``governance-overrides`` Cosmos container whenever an
+    operator force-executes, dismisses, or satisfies a condition.  Phase 35B
+    reads these to inject relevant past overrides into LLM prompts as
+    in-context examples — teaching the system what its operators actually do.
+
+    ``record_type = "verdict_override"`` is a discriminator that lets a
+    container hold heterogeneous record types safely (same pattern as
+    ``AzPlaybookExecution.record_type = "az_execution"``).
+    """
+    record_type: Literal["verdict_override"] = "verdict_override"
+
+    override_id: str                        # UUID
+    decision_id: str                        # FK → governance-decisions (= action_id)
+    execution_id: Optional[str] = None      # FK → governance-executions
+    action_id: str                          # FK → ProposedAction.action_id
+
+    # Snapshot of the action at override time — denormalised for fast retrieval
+    action_type: str
+    resource_type: str
+    resource_id: str
+    is_production: bool
+    is_critical: bool
+
+    # Verdict snapshot
+    original_verdict: str                   # "approved" | "escalated" | "denied" | "approved_if"
+    original_sri: float
+    original_sri_breakdown: dict[str, float]
+
+    # The override itself
+    override_type: OverrideType
+    operator_id: str
+    operator_reason: str                    # ≥20 chars for FORCE_EXECUTE / REVERSE_DENIAL
+    timestamp: datetime
+
+    # Similarity hash — Cosmos partition key; groups overrides by action+context
+    fingerprint_hash: str

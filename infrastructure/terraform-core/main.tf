@@ -474,6 +474,31 @@ resource "azurerm_cosmosdb_sql_container" "governance_checkpoints" {
   }
 }
 
+# Partition key /fingerprint_hash groups overrides by similarity for fast
+# range-query retrieval (Phase 35B).  No TTL — overrides should persist
+# indefinitely; Phase 35B retrieval enforces the 90-day recency window.
+resource "azurerm_cosmosdb_sql_container" "governance_overrides" {
+  name                = "governance-overrides"
+  resource_group_name = azurerm_resource_group.ruriskry.name
+  account_name        = azurerm_cosmosdb_account.ruriskry.name
+  database_name       = azurerm_cosmosdb_sql_database.ruriskry.name
+
+  partition_key_paths   = ["/fingerprint_hash"]
+  partition_key_version = 2
+
+  indexing_policy {
+    indexing_mode = "consistent"
+
+    included_path {
+      path = "/*"
+    }
+
+    excluded_path {
+      path = "/original_sri_breakdown/*"
+    }
+  }
+}
+
 # =============================================================================
 # 7. Key Vault secrets (service credentials)
 # =============================================================================
@@ -1125,6 +1150,7 @@ resource "azurerm_management_lock" "ruriskry_rg" {
     azurerm_cosmosdb_sql_container.governance_executions,
     azurerm_cosmosdb_sql_container.resource_inventory,
     azurerm_cosmosdb_sql_container.governance_checkpoints,
+    azurerm_cosmosdb_sql_container.governance_overrides,
     azurerm_ai_services.foundry,
     azurerm_search_service.ruriskry,
     azurerm_key_vault.ruriskry,

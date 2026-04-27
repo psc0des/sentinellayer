@@ -752,6 +752,7 @@ Env vars and secrets are wired automatically by Terraform — you don't ship a `
 | `COSMOS_CONTAINER_INVENTORY` | Live only | `resource-inventory` | Container for resource inventory snapshots — partition key `/subscription_id` (Terraform-managed) |
 | `COSMOS_CONTAINER_AGENTS` | Live only | `governance-agents` | Container for agent registration records and admin auth backup (Terraform-managed) |
 | `COSMOS_CONTAINER_CHECKPOINTS` | Live only | `governance-checkpoints` | Container for scan-level workflow checkpoints — enables `POST /api/scan/{id}/resume` to re-evaluate from where a scan left off (Phase 33C, Terraform-managed) |
+| `COSMOS_CONTAINER_OVERRIDES` | Live only | `governance-overrides` | Container for operator override records — partition key `/fingerprint_hash` for similarity retrieval (Phase 35A, Terraform-managed) |
 | `INVENTORY_STALE_HOURS` | No | `24` | Hours after which an inventory snapshot is considered stale. Dashboard shows an amber warning and recommends refreshing before scans. |
 | `AZURE_SUBSCRIPTION_ID_DISPLAY` | No | `""` | Optional human-friendly label shown next to the subscription ID in the Inventory page header. |
 | `DEMO_MODE` | No | `false` | `true` = ops agents return hardcoded sample proposals (no Azure OpenAI needed). Full governance pipeline still runs. |

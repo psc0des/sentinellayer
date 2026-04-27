@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     cosmos_container_inventory: str = "resource-inventory"
     cosmos_container_agents: str = "governance-agents"
     cosmos_container_checkpoints: str = "governance-checkpoints"  # Phase 33C
+    cosmos_container_overrides: str = "governance-overrides"      # Phase 35A
     inventory_stale_hours: int = 24          # warn in UI if older than this
     azure_subscription_id_display: str = ""  # human-friendly label (optional)
 

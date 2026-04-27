@@ -32,15 +32,15 @@ GET  /api/execution/pending-reviews              List all ESCALATED verdicts awa
 GET  /api/execution/by-action/{action_id}        Execution status for a governance verdict.
 GET  /api/execution/{execution_id}/record        Fetch a single execution record by execution_id.
 POST /api/execution/{execution_id}/approve       Human approves an escalated verdict.
-POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict.
+POST /api/execution/{execution_id}/dismiss       Human dismisses a verdict. Writes VerdictOverride (Phase 35A).
 GET  /api/github/repos                           List GitHub repos accessible via GITHUB_TOKEN (for PR overlay).
 POST /api/execution/{execution_id}/create-pr     Create Terraform PR from manual_required record (body: iac_repo, iac_path optional).
 GET  /api/execution/{execution_id}/agent-fix-preview  Preview az CLI fix commands.
 POST /api/execution/{execution_id}/agent-fix-execute  Execute az CLI fix commands.
 POST /api/execution/{execution_id}/rollback           Reverse a previously applied agent fix.
-POST /api/execution/{execution_id}/condition/{index}/satisfy  Mark a condition satisfied (human confirmation).
+POST /api/execution/{execution_id}/condition/{index}/satisfy  Mark a condition satisfied (human confirmation). Writes VerdictOverride (Phase 35A).
 POST /api/execution/{execution_id}/condition/{index}/check    Force an auto-check of one condition.
-POST /api/execution/{execution_id}/force-execute              Admin bypass of unmet conditions.
+POST /api/execution/{execution_id}/force-execute              Admin bypass of unmet conditions. Writes VerdictOverride (Phase 35A). Requires justification ≥20 chars.
 GET  /api/config                                  Safe system configuration — mode, timeouts, feature flags.
 POST /api/admin/reset                            ⚠ Dev/test only — wipe all local data and reset in-memory state.
 GET  /api/decisions/{decision_id}/playbook        Tier 3 remediation playbook for a governance decision.
@@ -79,13 +79,16 @@ from src.core.execution_gateway import ExecutionGateway
 from src.core.models import (
     ActionTarget,
     ActionType,
+    ExecutionRecord,
     ExecutionStatus,
     GovernanceVerdict,
+    OverrideType,
     ProposedAction,
     SRIBreakdown,
     SRIVerdict,
     Urgency,
 )
+from src.core.override_capture import capture_override as _capture_override
 from src.core.scan_run_tracker import ScanRunTracker
 from src.operational_agents import is_compliant_reason
 from src.notifications.slack_notifier import (
@@ -1256,6 +1259,28 @@ def _get_execution_gateway() -> ExecutionGateway:
     if _execution_gateway is None:
         _execution_gateway = ExecutionGateway()
     return _execution_gateway
+
+
+async def _capture_override_safe(
+    record: ExecutionRecord,
+    override_type: OverrideType,
+    operator_id: str,
+    reason: str,
+) -> None:
+    """Fire-and-forget wrapper around capture_override.
+
+    Failures are logged as warnings and swallowed — override capture is
+    a side effect and must never break the primary API response.
+    """
+    try:
+        await _capture_override(record, override_type, operator_id, reason)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "override_capture: failed to record %s override for exec %s — %s",
+            override_type.value,
+            record.execution_id[:8],
+            exc,
+        )
 
 
 def _get_alert_tracker():
@@ -3434,9 +3459,18 @@ async def dismiss_execution(execution_id: str, body: dict = Body(default={})) ->
     reason = body.get("reason", "")
     try:
         record = await gateway.dismiss_execution(execution_id, reviewed_by, reason)
-        return record.model_dump(mode="json")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Phase 35A: capture the dismiss as an override signal
+    override_type = (
+        OverrideType.DISMISS_ESCALATED
+        if record.verdict == SRIVerdict.ESCALATED
+        else OverrideType.DISMISS_APPROVED
+    )
+    await _capture_override_safe(
+        record, override_type, reviewed_by, reason or "dismissed without reason"
+    )
+    return record.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
@@ -3898,6 +3932,11 @@ async def satisfy_condition(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Phase 35A: capture condition satisfaction as an override signal
+    note = (body.get("note") or "").strip() or "condition satisfied"
+    await _capture_override_safe(
+        record, OverrideType.SATISFY_CONDITION, satisfied_by, note
+    )
     return record.model_dump(mode="json")
 
 
@@ -3942,6 +3981,12 @@ async def force_execute_conditional(
     justification = (body.get("justification") or "").strip()
     if not justification:
         raise HTTPException(status_code=400, detail="justification is required for force-execute")
+    # Phase 35A: force-execute bypasses governance — reason must be substantive
+    if len(justification) < 20:
+        raise HTTPException(
+            status_code=400,
+            detail="justification must be at least 20 characters for force-execute",
+        )
     gateway = _get_execution_gateway()
     try:
         record = await gateway.force_execute(execution_id, admin_user, justification)
@@ -3949,6 +3994,7 @@ async def force_execute_conditional(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _capture_override_safe(record, OverrideType.FORCE_EXECUTE, admin_user, justification)
     return record.model_dump(mode="json")
 
 
