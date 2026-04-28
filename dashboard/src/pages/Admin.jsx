@@ -80,13 +80,13 @@ export default function Admin() {
     }
   }
 
-  if (!loggedInUser) {
+  if (loggedInUser !== 'admin') {
     return (
       <div className="p-6 flex items-center justify-center min-h-64">
         <div className="text-center space-y-2">
           <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
           <p className="text-sm font-semibold text-slate-200">Access Denied</p>
-          <p className="text-xs text-slate-500">Administrator authentication required to view this page.</p>
+          <p className="text-xs text-slate-500">Administrator account required to view this page.</p>
         </div>
       </div>
     )

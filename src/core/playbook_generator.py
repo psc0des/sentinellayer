@@ -373,6 +373,33 @@ _TEMPLATES: dict[tuple[str, str], _Tmpl] = {
     ),
     # ── Virtual Machines ────────────────────────────────────────────────────
 
+    ("update_config", "microsoft.compute/virtualmachines"): _Tmpl(
+        cmd=(
+            "az vm boot-diagnostics enable --name {name} --resource-group {rg}"
+        ),
+        args=[
+            "az", "vm", "boot-diagnostics", "enable",
+            "--name", "{name}", "--resource-group", "{rg}",
+        ],
+        rollback=(
+            "az vm boot-diagnostics disable --name {name} --resource-group {rg}"
+        ),
+        rollback_args=[
+            "az", "vm", "boot-diagnostics", "disable",
+            "--name", "{name}", "--resource-group", "{rg}",
+        ],
+        outcome=(
+            "Boot diagnostics enabled on the VM — captures serial console output "
+            "and screenshots for post-restart debugging. Uses managed storage by "
+            "default in modern subscriptions. Append --storage <account> if an "
+            "explicit storage account is required."
+        ),
+        risk="low",
+        duration=60,
+        downtime=False,
+        what_if=False,
+    ),
+
     ("delete_resource", "microsoft.compute/virtualmachines"): _Tmpl(
         cmd=(
             "az vm delete --name {name} --resource-group {rg} --yes"
@@ -517,6 +544,20 @@ def supported_combinations() -> list[tuple[str, str]]:
     return list(_TEMPLATES.keys())
 
 
+def _extract_rule_name(action: ProposedAction) -> str:
+    """Return the NSG rule name for templates that need {rule}.
+
+    Priority: explicit nsg_rule_names on the action → /securityRules/<name>
+    segment in the resource_id → human-readable placeholder.
+    """
+    if getattr(action, 'nsg_rule_names', None):
+        return action.nsg_rule_names[0]
+    rid = action.target.resource_id or ''
+    if '/securityRules/' in rid:
+        return rid.split('/securityRules/')[-1]
+    return 'RULE_NAME'
+
+
 def generate_playbook(
     action: ProposedAction,
     resource_details: dict | None = None,
@@ -566,6 +607,7 @@ def generate_playbook(
             or action.target.proposed_sku
             or 'S2'
         ),
+        'rule': _extract_rule_name(action),
     }
 
     def fill(s: str) -> str:

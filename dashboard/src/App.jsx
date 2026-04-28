@@ -250,7 +250,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
       {/* Onboarding guide — shown once after first-time admin setup */}
       {showOnboarding && <OnboardingModal onClose={closeOnboarding} />}
 
-      <Sidebar pendingCount={pendingReviews.length} alertCount={alertCount} />
+      <Sidebar pendingCount={pendingReviews.length} alertCount={alertCount} loggedInUser={loggedInUser} />
 
       <div className="flex-1 flex flex-col min-w-0 bg-dots">
 

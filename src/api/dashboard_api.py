@@ -1614,13 +1614,30 @@ async def get_resource_risk(resource_id: str) -> dict:
 async def list_agents() -> dict:
     """Return all A2A agents registered with RuriSkry.
 
-    Each entry includes counters for approved, denied, and escalated
+    Each entry includes counters for approved, denied, escalated, and approved_if
     proposals so the dashboard can show per-agent governance stats.
 
     Returns a list of agent entries sorted by most-recently-seen first.
     """
     registry = _get_registry()
     agents = registry.get_connected_agents()
+
+    # Backfill approved_if_count for agent records written before Phase 32 —
+    # those records have no approved_if_count field so the card total mismatches.
+    agents_missing_ai = [a for a in agents if "approved_if_count" not in a]
+    if agents_missing_ai:
+        all_decisions = _get_tracker().get_recent(limit=10_000)
+        # Build per-agent_id count from decision tracker
+        ai_by_agent: dict[str, int] = {}
+        for d in all_decisions:
+            if (d.get("decision") or "").lower() == "approved_if":
+                aid = d.get("agent_id", "")
+                if aid:
+                    ai_by_agent[aid] = ai_by_agent.get(aid, 0) + 1
+        for agent in agents_missing_ai:
+            agent_id = agent.get("name") or agent.get("id") or ""
+            agent["approved_if_count"] = ai_by_agent.get(agent_id, 0)
+
     return {"count": len(agents), "agents": agents}
 
 
@@ -2609,6 +2626,14 @@ async def list_scan_history(
         entry.setdefault("proposals_count", len(r.get("proposed_actions", [])))
         entry.setdefault("evaluations_count", len(r.get("evaluations", [])))
         entry.setdefault("scanned_resources_count", len(r.get("scanned_resources", [])))
+        # Recompute approved_if from evaluations at read time — historical records
+        # stored APPROVED_IF as denied before the verdict model was extended.
+        evals = r.get("evaluations", [])
+        if evals:
+            ai_count = sum(1 for e in evals if (e.get("decision") or "").lower() == "approved_if")
+            totals = entry.setdefault("totals", {})
+            totals["approved_if"] = ai_count
+            totals["denied"] = max(0, totals.get("denied", 0) - ai_count)
         cleaned.append(entry)
     return {"count": len(cleaned), "scans": cleaned}
 
@@ -3062,6 +3087,43 @@ async def test_notification() -> dict:
 
 _explainer = None
 
+# Keyed by policy ID — used to enrich flat violation stubs at read time.
+_POLICY_CATALOG: dict[str, dict] = {}
+
+
+def _get_policy_catalog() -> dict[str, dict]:
+    """Return (and lazily populate) a {policy_id → policy_dict} lookup."""
+    global _POLICY_CATALOG
+    if not _POLICY_CATALOG:
+        try:
+            path = Path(__file__).parent.parent.parent / "data" / "policies.json"
+            with open(path, encoding="utf-8") as fh:
+                for p in json.load(fh):
+                    _POLICY_CATALOG[p["id"]] = p
+        except Exception:
+            logger.warning("Could not load policies.json for violation enrichment.")
+    return _POLICY_CATALOG
+
+
+def _enrich_violations(violations: list[dict]) -> list[dict]:
+    """Fill missing name/severity on violation dicts from the policy catalog.
+
+    Historical tracker records store only {policy_id} — this restores the full
+    metadata so the explanation engine doesn't display 'Unknown Policy'.
+    """
+    catalog = _get_policy_catalog()
+    enriched = []
+    for v in violations:
+        if not isinstance(v, dict):
+            enriched.append(v)
+            continue
+        pid = v.get("policy_id", "")
+        if pid in catalog and ("name" not in v or "severity" not in v):
+            pol = catalog[pid]
+            v = {**v, "name": pol.get("name", "Unknown Policy"), "severity": pol.get("severity", "medium")}
+        enriched.append(v)
+    return enriched
+
 
 def _get_explainer():
     """Return the module-level DecisionExplainer singleton."""
@@ -3133,6 +3195,12 @@ async def get_evaluation_explanation(evaluation_id: str) -> dict:
                     "violations": [{"policy_id": pid} for pid in flat_violations]
                 }
             }
+
+    # Enrich any violations that are missing name/severity (historical records
+    # built before the explanation engine expected full policy metadata).
+    policy_sub = stored_agent_results.get("policy", {}) if isinstance(stored_agent_results, dict) else {}
+    if policy_sub.get("violations"):
+        policy_sub["violations"] = _enrich_violations(policy_sub["violations"])
 
     verdict = GovernanceVerdict(
         action_id=evaluation_id,

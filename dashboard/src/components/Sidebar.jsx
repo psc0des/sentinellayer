@@ -22,7 +22,7 @@ const NAV = [
   { to: '/alerts',     icon: Zap,             label: 'Alerts' },
 ]
 
-export default function Sidebar({ pendingCount = 0, alertCount = 0 }) {
+export default function Sidebar({ pendingCount = 0, alertCount = 0, loggedInUser = null }) {
   return (
     <aside
       className="w-56 shrink-0 flex flex-col"
@@ -164,8 +164,8 @@ export default function Sidebar({ pendingCount = 0, alertCount = 0 }) {
         })}
       </nav>
 
-      {/* ── Admin link ── */}
-      <div className="px-2 pb-2">
+      {/* ── Admin link — only visible to the admin account ── */}
+      {loggedInUser === 'admin' && <div className="px-2 pb-2">
         <NavLink
           to="/admin"
           className={({ isActive }) =>
@@ -190,7 +190,7 @@ export default function Sidebar({ pendingCount = 0, alertCount = 0 }) {
             </>
           )}
         </NavLink>
-      </div>
+      </div>}
 
       {/* ── System status indicator ── */}
       <div
