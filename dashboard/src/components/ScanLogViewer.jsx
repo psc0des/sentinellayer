@@ -312,6 +312,13 @@ function HistoricalLogBody({ scanId }) {
                 {proposals} proposal{proposals !== 1 ? 's' : ''} queued · stopped before completion
               </p>
             </div>
+          ) : data.status === 'error' ? (
+            <div className="text-center py-8 space-y-2">
+              <p className="text-sm font-medium text-rose-400">Scan failed — no evaluations completed</p>
+              <p className="text-xs text-slate-500">
+                Check the scan duration; a ~100 min runtime indicates a governance timeout.
+              </p>
+            </div>
           ) : (
             <div className="text-center py-8 space-y-2">
               <p className="text-sm font-medium text-green-400">Scan completed — no issues found</p>
@@ -364,6 +371,14 @@ export default function ScanLogViewer({
   const handleClose = useCallback(() => {
     onClose()
   }, [onClose])
+
+  // BUG-009: Close modal on Escape key
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (e) => { if (e.key === 'Escape') handleClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, handleClose])
 
   if (!isOpen) return null
 

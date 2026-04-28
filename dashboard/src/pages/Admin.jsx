@@ -54,16 +54,17 @@ function ModeBadge({ mode }) {
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function Admin() {
-  const { fetchAll } = useOutletContext()
+  const { fetchAll, loggedInUser } = useOutletContext()
   const [config, setConfig] = useState(null)
   const [configError, setConfigError] = useState(null)
   const [resetting, setResetting] = useState(false)
 
   useEffect(() => {
+    if (!loggedInUser) return
     fetchConfig()
       .then(setConfig)
       .catch(e => setConfigError(e.message))
-  }, [])
+  }, [loggedInUser])
 
   async function handleReset() {
     if (!window.confirm('Delete ALL local evaluation, scan, alert and execution data? This cannot be undone.')) return
@@ -77,6 +78,18 @@ export default function Admin() {
     } finally {
       setResetting(false)
     }
+  }
+
+  if (!loggedInUser) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-64">
+        <div className="text-center space-y-2">
+          <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+          <p className="text-sm font-semibold text-slate-200">Access Denied</p>
+          <p className="text-xs text-slate-500">Administrator authentication required to view this page.</p>
+        </div>
+      </div>
+    )
   }
 
   return (

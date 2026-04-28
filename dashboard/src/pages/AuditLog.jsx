@@ -216,7 +216,7 @@ function ScanPanel({ scan, onClose }) {
           {/* Outcome summary — now includes total scanned */}
           <section>
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Outcome Summary</h3>
-            <div className="grid grid-cols-4 gap-2">
+            <div className={`grid gap-2 ${(totals.approved_if ?? 0) > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
               <div className="bg-slate-800/60 border border-slate-700 rounded-lg p-2.5 text-center">
                 <p className="text-lg font-bold text-slate-200">{displayResources.length}</p>
                 <p className="text-xs text-slate-500 mt-0.5">Scanned</p>
@@ -225,6 +225,12 @@ function ScanPanel({ scan, onClose }) {
                 <p className="text-lg font-bold text-emerald-400">{totals.approved ?? 0}</p>
                 <p className="text-xs text-slate-500 mt-0.5">Approved</p>
               </div>
+              {(totals.approved_if ?? 0) > 0 && (
+                <div className="bg-teal-500/10 border border-teal-500/20 rounded-lg p-2.5 text-center">
+                  <p className="text-lg font-bold text-teal-400">{totals.approved_if}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Cond. Appr.</p>
+                </div>
+              )}
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 text-center">
                 <p className="text-lg font-bold text-amber-400">{totals.escalated ?? 0}</p>
                 <p className="text-xs text-slate-500 mt-0.5">Escalated</p>
@@ -603,11 +609,12 @@ export default function AuditLog() {
                         {duration ?? '—'}
                       </td>
                       <td className="px-4 py-2.5">
-                        {(totals.approved ?? 0) + (totals.escalated ?? 0) + (totals.denied ?? 0) > 0 ? (
+                        {(totals.approved ?? 0) + (totals.escalated ?? 0) + (totals.denied ?? 0) + (totals.approved_if ?? 0) > 0 ? (
                           <div className="flex items-center gap-2 text-xs tabular-nums">
-                            {(totals.approved  ?? 0) > 0 && <span className="text-emerald-400">{totals.approved}✓</span>}
-                            {(totals.escalated ?? 0) > 0 && <span className="text-amber-400">{totals.escalated}⚠</span>}
-                            {(totals.denied    ?? 0) > 0 && <span className="text-rose-400">{totals.denied}✗</span>}
+                            {(totals.approved    ?? 0) > 0 && <span className="text-emerald-400">{totals.approved}✓</span>}
+                            {(totals.approved_if ?? 0) > 0 && <span className="text-teal-400">{totals.approved_if}~</span>}
+                            {(totals.escalated   ?? 0) > 0 && <span className="text-amber-400">{totals.escalated}⚠</span>}
+                            {(totals.denied      ?? 0) > 0 && <span className="text-rose-400">{totals.denied}✗</span>}
                           </div>
                         ) : (
                           <span className="text-xs text-slate-600">—</span>

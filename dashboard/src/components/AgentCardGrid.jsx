@@ -293,11 +293,12 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
   const online      = isOnline(agent.last_seen)
   const isRunning   = scan.status === 'running'
   const isStopping  = scan.status === 'stopping'
-  const total     = agent.total_actions_proposed ?? 0
-  const approved  = agent.approval_count ?? 0
-  const denied    = agent.denial_count ?? 0
-  const escalated = agent.escalation_count ?? 0
-  const pct       = (n) => (total > 0 ? (n / total) * 100 : 0)
+  const total       = agent.total_actions_proposed ?? 0
+  const approved    = agent.approval_count ?? 0
+  const denied      = agent.denial_count ?? 0
+  const escalated   = agent.escalation_count ?? 0
+  const approvedIf  = agent.approved_if_count ?? 0
+  const pct         = (n) => (total > 0 ? (n / total) * 100 : 0)
   const elapsed   = useElapsed((isRunning || isStopping) ? scan.startedAt : null)
   const { Icon }  = meta
 
@@ -354,14 +355,16 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
             <div className="w-full rounded-full" style={{ background: 'rgba(51,65,85,0.5)' }} />
           ) : (
             <>
-              {approved  > 0 && <div className="bg-emerald-500/80" style={{ width: `${pct(approved)}%` }} />}
-              {escalated > 0 && <div className="bg-amber-500/80"   style={{ width: `${pct(escalated)}%` }} />}
-              {denied    > 0 && <div className="bg-rose-500/80"    style={{ width: `${pct(denied)}%` }} />}
+              {approved   > 0 && <div className="bg-emerald-500/80" style={{ width: `${pct(approved)}%` }} />}
+              {approvedIf > 0 && <div className="bg-teal-500/80"    style={{ width: `${pct(approvedIf)}%` }} />}
+              {escalated  > 0 && <div className="bg-amber-500/80"   style={{ width: `${pct(escalated)}%` }} />}
+              {denied     > 0 && <div className="bg-rose-500/80"    style={{ width: `${pct(denied)}%` }} />}
             </>
           )}
         </div>
-        <div className="flex justify-between text-[11px]">
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
           <span className="text-emerald-400/80">{approved} appr.</span>
+          {approvedIf > 0 && <span className="text-teal-400/80">{approvedIf} cond.</span>}
           <span className="text-amber-400/80">{escalated} esc.</span>
           <span className="text-rose-400/80">{denied} denied</span>
         </div>

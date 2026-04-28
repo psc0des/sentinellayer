@@ -397,7 +397,7 @@ export default function Overview() {
   const sriColor = avgSri <= 25 ? 'green' : avgSri <= 60 ? 'amber' : 'red'
 
   const alertTotal          = alerts?.length ?? 0
-  const alertActive         = (alerts ?? []).filter(a => a.status === 'firing' || a.status === 'investigating').length
+  const alertActive         = (alerts ?? []).filter(a => a.status === 'pending' || a.status === 'investigating').length
   const alertResolved       = (alerts ?? []).filter(a => a.status === 'resolved').length
   const alertResolutionRate = alertTotal > 0 ? Math.round(alertResolved / alertTotal * 100) : null
 

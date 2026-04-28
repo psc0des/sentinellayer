@@ -151,15 +151,17 @@ class AgentRegistry:
         logger.info("AgentRegistry: registered new agent '%s'", name)
         return entry
 
+    _COSMOS_INTERNAL_FIELDS = frozenset({"_rid", "_self", "_etag", "_attachments", "_ts"})
+
     def get_connected_agents(self) -> list[dict[str, Any]]:
         """Return all registered agents, sorted by most-recently-seen first.
 
         Returns:
-            List of agent entry dicts.
+            List of agent entry dicts with Cosmos internal metadata stripped.
         """
         agents = self._load_all()
         agents.sort(key=lambda a: a.get("last_seen", ""), reverse=True)
-        return agents
+        return [{k: v for k, v in a.items() if k not in self._COSMOS_INTERNAL_FIELDS} for a in agents]
 
     def get_agent_stats(self, name: str) -> dict[str, Any] | None:
         """Return the registry entry for one agent.
@@ -194,6 +196,8 @@ class AgentRegistry:
             entry["denial_count"] = entry.get("denial_count", 0) + 1
         elif decision_lower == "escalated":
             entry["escalation_count"] = entry.get("escalation_count", 0) + 1
+        elif decision_lower == "approved_if":
+            entry["approved_if_count"] = entry.get("approved_if_count", 0) + 1
 
         self._save_entry(entry)
         logger.debug(

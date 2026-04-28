@@ -186,7 +186,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
       fetchEvaluations(200),
       fetchMetrics(),
       fetchAgents(),
-      fetchPendingReviews().catch(() => ({ pending_reviews: [] })),
+      fetchPendingReviews().catch(() => ({ reviews: [] })),
       fetchScanHistory(200).catch(() => ({ scans: [] })),
       fetchAlerts(200).catch(() => ({ alerts: [] })),
       fetchInventoryStatus().catch(() => null),
@@ -194,7 +194,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
     setEvaluations(evalsData.evaluations ?? [])
     setMetrics(metricsData)
     setAgents(agentsData.agents ?? [])
-    setPendingReviews(reviewsData.pending_reviews ?? [])
+    setPendingReviews(reviewsData.reviews ?? [])
     setScans(scansData.scans ?? [])
     setAlerts(alertsData.alerts ?? [])
     setInventoryStatus(invStatus)
@@ -242,7 +242,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   if (loading) return <LoadingScreen />
   if (error)   return <ErrorScreen message={error} onRetry={load} />
 
-  const alertCount = alerts.filter(a => a.status === 'firing' || a.status === 'investigating').length
+  const alertCount = alerts.filter(a => a.status === 'pending' || a.status === 'investigating').length
   const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll, loggedInUser }
 
   return (

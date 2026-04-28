@@ -371,6 +371,135 @@ _TEMPLATES: dict[tuple[str, str], _Tmpl] = {
         downtime=False,
         what_if=False,
     ),
+    # ── Virtual Machines ────────────────────────────────────────────────────
+
+    ("delete_resource", "microsoft.compute/virtualmachines"): _Tmpl(
+        cmd=(
+            "az vm delete --name {name} --resource-group {rg} --yes"
+        ),
+        args=[
+            "az", "vm", "delete",
+            "--name", "{name}", "--resource-group", "{rg}",
+            "--yes",
+        ],
+        rollback=None,
+        rollback_args=None,
+        outcome=(
+            "Virtual machine deleted. All associated OS and data disks are detached "
+            "but not automatically deleted — verify disk cleanup separately."
+        ),
+        risk="high",
+        duration=120,
+        downtime=True,
+        what_if=False,
+    ),
+
+    ("restart_service", "microsoft.compute/virtualmachines"): _Tmpl(
+        cmd=(
+            "az vm restart --name {name} --resource-group {rg}"
+        ),
+        args=[
+            "az", "vm", "restart",
+            "--name", "{name}", "--resource-group", "{rg}",
+        ],
+        rollback=None,
+        rollback_args=None,
+        outcome=(
+            "Virtual machine restarted. Guest OS will reboot and services will resume "
+            "automatically. Expect 2–5 minutes of downtime."
+        ),
+        risk="medium",
+        duration=300,
+        downtime=True,
+        what_if=False,
+    ),
+
+    ("scale_down", "microsoft.compute/virtualmachines"): _Tmpl(
+        cmd=(
+            "az vm resize --name {name} --resource-group {rg} --size {sku}"
+        ),
+        args=[
+            "az", "vm", "resize",
+            "--name", "{name}", "--resource-group", "{rg}",
+            "--size", "{sku}",
+        ],
+        rollback=(
+            "az vm resize --name {name} --resource-group {rg} --size {current_sku}"
+        ),
+        rollback_args=[
+            "az", "vm", "resize",
+            "--name", "{name}", "--resource-group", "{rg}",
+            "--size", "{current_sku}",
+        ],
+        outcome=(
+            "VM resized to a smaller SKU; reduces compute cost. "
+            "A reboot is required — expect 3–5 minutes of downtime."
+        ),
+        risk="medium",
+        duration=300,
+        downtime=True,
+        what_if=False,
+    ),
+
+    # ── Network Security Groups ─────────────────────────────────────────────
+
+    ("modify_nsg", "microsoft.network/networksecuritygroups"): _Tmpl(
+        cmd=(
+            "az network nsg rule update --nsg-name {name} "
+            "--resource-group {rg} --name {rule} --access Deny"
+        ),
+        args=[
+            "az", "network", "nsg", "rule", "update",
+            "--nsg-name", "{name}", "--resource-group", "{rg}",
+            "--name", "{rule}", "--access", "Deny",
+        ],
+        rollback=(
+            "az network nsg rule update --nsg-name {name} "
+            "--resource-group {rg} --name {rule} --access Allow"
+        ),
+        rollback_args=[
+            "az", "network", "nsg", "rule", "update",
+            "--nsg-name", "{name}", "--resource-group", "{rg}",
+            "--name", "{rule}", "--access", "Allow",
+        ],
+        outcome=(
+            "NSG rule access changed to Deny, restricting the flagged traffic path. "
+            "Verify connectivity requirements before applying in production."
+        ),
+        risk="medium",
+        duration=30,
+        downtime=False,
+        what_if=False,
+    ),
+
+    ("update_config", "microsoft.network/networksecuritygroups"): _Tmpl(
+        cmd=(
+            "az network nsg rule update --nsg-name {name} "
+            "--resource-group {rg} --name {rule} --access Deny"
+        ),
+        args=[
+            "az", "network", "nsg", "rule", "update",
+            "--nsg-name", "{name}", "--resource-group", "{rg}",
+            "--name", "{rule}", "--access", "Deny",
+        ],
+        rollback=(
+            "az network nsg rule update --nsg-name {name} "
+            "--resource-group {rg} --name {rule} --access Allow"
+        ),
+        rollback_args=[
+            "az", "network", "nsg", "rule", "update",
+            "--nsg-name", "{name}", "--resource-group", "{rg}",
+            "--name", "{rule}", "--access", "Allow",
+        ],
+        outcome=(
+            "NSG rule updated to restrict flagged access. "
+            "Review existing connections that may be interrupted."
+        ),
+        risk="medium",
+        duration=30,
+        downtime=False,
+        what_if=False,
+    ),
 }
 
 # Alias: some callers use "microsoft.cosmosdb/databaseaccounts" colloquially

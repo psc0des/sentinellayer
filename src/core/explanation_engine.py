@@ -279,7 +279,9 @@ class DecisionExplainer:
             + historical * settings.sri_weight_historical
             + cost * settings.sri_weight_cost
         )
-        return round(min(raw, 100.0), 2)
+        # Round to 1 decimal so predicted_new_score and the embedded explanation
+        # text (which formats the same value with :.1f) are always identical.
+        return round(min(raw, 100.0), 1)
 
     def _verdict_for_score(self, composite: float, has_critical: bool = False) -> str:
         """Determine verdict label for a given composite score."""

@@ -259,15 +259,14 @@ def test_cosmosdb_alias_works():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("action_type,resource_type,rid_suffix", [
-    # Tier 1 — already handled by SDK tools
-    (ActionType.RESTART_SERVICE, "Microsoft.Compute/virtualMachines",     "/Microsoft.Compute/virtualMachines/vm-01"),
+    # Tier 1 — already handled by SDK tools (no Tier 3 template)
     (ActionType.SCALE_UP,        "Microsoft.Web/serverfarms",             "/Microsoft.Web/serverfarms/plan-01"),
     (ActionType.RESTART_SERVICE, "Microsoft.Web/sites",                  "/Microsoft.Web/sites/app-01"),
     (ActionType.SCALE_UP,        "Microsoft.ContainerService/managedClusters", "/Microsoft.ContainerService/managedClusters/aks-01"),
     (ActionType.ROTATE_STORAGE_KEY, "Microsoft.Storage/storageAccounts", "/Microsoft.Storage/storageAccounts/storage01"),
-    # Truly unsupported
-    (ActionType.DELETE_RESOURCE, "Microsoft.Compute/virtualMachines",    "/Microsoft.Compute/virtualMachines/vm-01"),
+    # Truly unsupported combinations
     (ActionType.CREATE_RESOURCE, "Microsoft.Network/virtualNetworks",    "/Microsoft.Network/virtualNetworks/vnet-01"),
+    (ActionType.DELETE_RESOURCE, "Microsoft.Network/publicIPAddresses",  "/Microsoft.Network/publicIPAddresses/ip-01"),
 ])
 def test_unsupported_combination_raises(action_type, resource_type, rid_suffix):
     rid = f"{_SUB}{rid_suffix}"
@@ -280,9 +279,9 @@ def test_unsupported_combination_raises(action_type, resource_type, rid_suffix):
 # supported_combinations() utility
 # ---------------------------------------------------------------------------
 
-def test_supported_combinations_has_ten_or_more():
+def test_supported_combinations_has_fifteen_or_more():
     combos = supported_combinations()
-    assert len(combos) >= 10, f"Expected at least 10 templates, got {len(combos)}"
+    assert len(combos) >= 15, f"Expected at least 15 templates, got {len(combos)}"
 
 
 def test_supported_combinations_are_tuples():

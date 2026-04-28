@@ -989,7 +989,7 @@ async def _run_agent_scan(
         pipeline = RuriSkryPipeline(inventory=inventory)
         tracker = _get_tracker()
         evaluations: list[dict] = []
-        approved = escalated = denied = 0
+        approved = escalated = denied = approved_if = 0
 
         # ── Phase 33C: Scan-level checkpoint ──────────────────────────────
         # Save the full proposal list BEFORE the evaluation loop so a crash
@@ -1156,10 +1156,13 @@ async def _run_agent_scan(
             )
 
             evaluations.append(verdict.model_dump(mode="json"))
-            if decision == "approved":
+            decision_lower = decision.lower()
+            if decision_lower == "approved":
                 approved += 1
-            elif decision == "escalated":
+            elif decision_lower == "escalated":
                 escalated += 1
+            elif decision_lower == "approved_if":
+                approved_if += 1
             else:
                 denied += 1
 
@@ -1172,7 +1175,7 @@ async def _run_agent_scan(
             if registry_name:
                 _get_registry().update_agent_stats(registry_name, decision)
 
-        summary = f"{approved} approved, {escalated} escalated, {denied} denied"
+        summary = f"{approved} approved, {escalated} escalated, {denied} denied, {approved_if} approved_if"
         _scans[scan_id].update(
             {
                 "status": "error" if scan_error else "complete",
@@ -1184,6 +1187,7 @@ async def _run_agent_scan(
                     "approved": approved,
                     "escalated": escalated,
                     "denied": denied,
+                    "approved_if": approved_if,
                 },
             }
         )
@@ -1783,7 +1787,7 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
         pipeline = RuriSkryPipeline(inventory=alert_inventory)
         tracker = _get_tracker()
         verdicts: list[dict] = []
-        approved = escalated = denied = 0
+        approved = escalated = denied = approved_if = 0
 
         for i, action in enumerate(proposals, start=1):
             resource_name = action.target.resource_id.split("/")[-1]
@@ -1831,10 +1835,13 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
                 "execution_id": exec_id,
                 "execution_status": exec_status_val,
             })
-            if decision == "approved":
+            decision_lower = decision.lower()
+            if decision_lower == "approved":
                 approved += 1
-            elif decision == "escalated":
+            elif decision_lower == "escalated":
                 escalated += 1
+            elif decision_lower == "approved_if":
+                approved_if += 1
             else:
                 denied += 1
 
@@ -1850,7 +1857,7 @@ async def _run_alert_investigation(alert_id: str, alert_payload: dict) -> None:
             "proposals_count": len(proposals),
             "proposals": [p.model_dump(mode="json") for p in proposals],
             "verdicts": verdicts,
-            "totals": {"approved": approved, "escalated": escalated, "denied": denied},
+            "totals": {"approved": approved, "escalated": escalated, "denied": denied, "approved_if": approved_if},
         })
         _persist_alert_record(alert_id)
 
@@ -2877,6 +2884,7 @@ async def _resume_agent_scan(
     approved = sum(1 for e in evaluations if e.get("decision") == "approved")
     escalated = sum(1 for e in evaluations if e.get("decision") == "escalated")
     denied = sum(1 for e in evaluations if e.get("decision") == "denied")
+    approved_if = sum(1 for e in evaluations if e.get("decision") == "approved_if")
 
     try:
         for i, action in enumerate(remaining_proposals, start=1):
@@ -2923,19 +2931,22 @@ async def _resume_agent_scan(
                 logger.warning("scan %s resume: execution gateway failed — %s", scan_id[:8], exc)
 
             evaluations.append(verdict.model_dump(mode="json"))
-            if decision == "approved":
+            decision_lower = decision.lower()
+            if decision_lower == "approved":
                 approved += 1
-            elif decision == "escalated":
+            elif decision_lower == "escalated":
                 escalated += 1
+            elif decision_lower == "approved_if":
+                approved_if += 1
             else:
                 denied += 1
 
-        summary = f"{approved} approved, {escalated} escalated, {denied} denied"
+        summary = f"{approved} approved, {escalated} escalated, {denied} denied, {approved_if} approved_if"
         _scans[scan_id].update({
             "status": "complete",
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "evaluations": evaluations,
-            "totals": {"approved": approved, "escalated": escalated, "denied": denied},
+            "totals": {"approved": approved, "escalated": escalated, "denied": denied, "approved_if": approved_if},
         })
         _persist_scan_record(scan_id)
         await _emit_event(
@@ -3110,6 +3121,19 @@ async def get_evaluation_explanation(evaluation_id: str) -> dict:
         urgency=Urgency(proposed.get("urgency", "low")),
     )
 
+    # Rebuild agent_results — the tracker stores only flat violation policy IDs,
+    # not the full nested structure the explanation engine expects.  Reconstruct
+    # enough of the policy sub-tree so risk highlights read from live data.
+    stored_agent_results = record.get("agent_results", record.get("full_evaluation", {}))
+    if not stored_agent_results:
+        flat_violations = record.get("violations", [])
+        if flat_violations:
+            stored_agent_results = {
+                "policy": {
+                    "violations": [{"policy_id": pid} for pid in flat_violations]
+                }
+            }
+
     verdict = GovernanceVerdict(
         action_id=evaluation_id,
         timestamp=datetime.fromisoformat(record["timestamp"]) if isinstance(record.get("timestamp"), str) else record.get("timestamp", datetime.now(timezone.utc)),
@@ -3117,7 +3141,7 @@ async def get_evaluation_explanation(evaluation_id: str) -> dict:
         skry_risk_index=sri_breakdown,
         decision=SRIVerdict(record.get("decision", "approved")),
         reason=record.get("verdict_reason", record.get("reason", "")),
-        agent_results=record.get("agent_results", record.get("full_evaluation", {})),
+        agent_results=stored_agent_results,
     )
 
     explanation = await _get_explainer().explain(verdict, action)
@@ -4042,11 +4066,19 @@ async def get_terraform_stub(execution_id: str) -> dict:
 
 
 @app.get("/api/config")
-async def get_config() -> dict:
+async def get_config(request: Request) -> dict:
     """Return safe system configuration — no secrets.
 
     Returns mode, timeout, concurrency, and feature flags.
+    Requires a valid session token; exposed configuration includes Azure
+    subscription ID so it must not be public.
     """
+    # Only enforce auth when an admin account exists (mirrors the POST middleware logic).
+    if _get_admin() is not None:
+        auth_hdr = request.headers.get("Authorization", "")
+        raw_token = auth_hdr[7:].strip() if auth_hdr.startswith("Bearer ") else ""
+        if not _validate_session(raw_token):
+            raise HTTPException(status_code=401, detail="Authentication required.")
     mode = "live" if (not settings.use_local_mocks and settings.azure_openai_endpoint) else "mock"
     return {
         "mode": mode,

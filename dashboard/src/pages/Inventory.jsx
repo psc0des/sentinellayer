@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { RefreshCw, Server, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
-import { refreshInventory, fetchRefreshStatus, fetchInventory } from '../api'
+import { refreshInventory, fetchRefreshStatus, fetchInventory, fetchInventoryStatus } from '../api'
 import GlowCard from '../components/magicui/GlowCard'
 import NumberTicker from '../components/magicui/NumberTicker'
 
@@ -155,9 +155,16 @@ export default function Inventory() {
     async function load() {
       setLoading(true)
       try {
-        const inv = await fetchInventory()
+        const [inv, status] = await Promise.all([
+          fetchInventory(),
+          fetchInventoryStatus().catch(() => null),
+        ])
         setInventory(inv)
-        if (inv) {
+        // Prefer the status response (includes backend-authoritative stale flag);
+        // fall back to deriving metadata from the inventory response.
+        if (status) {
+          setInvStatus(status)
+        } else if (inv) {
           setInvStatus({
             exists: true,
             refreshed_at: inv.refreshed_at,
@@ -338,8 +345,8 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Filter row */}
-      {resources.length > 0 && (
+      {/* Filter row — only render after load to avoid count flicker (BUG-005) */}
+      {resources.length > 0 && !loading && (
         <div className="flex gap-3 flex-wrap">
           <select
             value={typeFilter}

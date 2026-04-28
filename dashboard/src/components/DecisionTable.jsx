@@ -190,6 +190,7 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh, initia
         >
           <option value="all">All verdicts</option>
           <option value="approved">Approved</option>
+          <option value="approved_if">Approved If</option>
           <option value="escalated">Escalated</option>
           <option value="denied">Denied</option>
         </select>
