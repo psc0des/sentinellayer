@@ -3106,10 +3106,11 @@ def _get_policy_catalog() -> dict[str, dict]:
 
 
 def _enrich_violations(violations: list[dict]) -> list[dict]:
-    """Fill missing name/severity on violation dicts from the policy catalog.
+    """Fill name/severity on violation dicts from the policy catalog.
 
     Historical tracker records store only {policy_id} — this restores the full
     metadata so the explanation engine doesn't display 'Unknown Policy'.
+    Always overwrites from catalog so stale/wrong values are also corrected.
     """
     catalog = _get_policy_catalog()
     enriched = []
@@ -3118,7 +3119,7 @@ def _enrich_violations(violations: list[dict]) -> list[dict]:
             enriched.append(v)
             continue
         pid = v.get("policy_id", "")
-        if pid in catalog and ("name" not in v or "severity" not in v):
+        if pid in catalog:
             pol = catalog[pid]
             v = {**v, "name": pol.get("name", "Unknown Policy"), "severity": pol.get("severity", "medium")}
         enriched.append(v)
@@ -3269,6 +3270,9 @@ async def get_decision_playbook(decision_id: str) -> dict:
         playbook = generate_playbook(action, resource_details={})
     except PlaybookUnsupportedError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Playbook generation failed for decision %s: %s", decision_id, exc)
+        raise HTTPException(status_code=500, detail=f"Playbook generation error: {exc}") from exc
 
     return playbook.model_dump()
 
