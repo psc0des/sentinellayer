@@ -155,6 +155,14 @@ class Settings(BaseSettings):
     # Env var: EXECUTION_GATEWAY_ENABLED=true
     execution_gateway_enabled: bool = False
 
+    # --- Universal Rules Engine (Phase 40 — default ON) ---
+    # When true, operational agents run the deterministic rules engine pre-pass
+    # before invoking the LLM.  Rule-derived findings are proposed first; the LLM
+    # enriches them and looks for gaps.  Set false to revert to pre-Phase-40 behaviour
+    # (LLM is the sole coverage mechanism).
+    # Env var: USE_RULES_ENGINE=false  (to opt out)
+    use_rules_engine: bool = True
+
     # --- Agent Framework Workflows (Phase 33D — default ON) ---
     # When true, pipeline.evaluate() delegates to the WorkflowBuilder graph instead
     # of the hand-rolled asyncio.gather() path.  Behavior is identical; the workflow

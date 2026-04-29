@@ -1176,6 +1176,22 @@ async def _run_agent_scan(
                 _get_registry().update_agent_stats(registry_name, decision)
 
         summary = f"{approved} approved, {escalated} escalated, {denied} denied, {approved_if} approved_if"
+
+        # Phase 40G: build coverage manifest from rules prescan findings
+        _coverage_manifest: dict = {}
+        if settings.use_rules_engine and inventory is not None:
+            from src.rules.base import Category as _Category
+            from src.rules.agent_integration import build_coverage_manifest as _build_manifest
+            _cat_map = {
+                "cost": [_Category.COST],
+                "monitoring": [_Category.RELIABILITY],
+                "deploy": [_Category.SECURITY, _Category.HYGIENE],
+            }
+            _cats = _cat_map.get(agent_type, [])
+            # Gather all rule findings from agent scan_notes (they're stored on agent object)
+            _agent_rule_findings = getattr(agent, "_last_rule_findings", [])
+            _coverage_manifest = _build_manifest(inventory, _agent_rule_findings, _cats)
+
         _scans[scan_id].update(
             {
                 "status": "error" if scan_error else "complete",
@@ -1189,6 +1205,7 @@ async def _run_agent_scan(
                     "denied": denied,
                     "approved_if": approved_if,
                 },
+                "coverage_manifest": _coverage_manifest,
             }
         )
         _persist_scan_record(scan_id)
@@ -2591,6 +2608,69 @@ async def get_inventory_status(
         "type_summary": inv.get("type_summary", {}),
         "age_hours": round(age_hours, 1) if age_hours is not None else None,
         "stale": stale,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint 12a-ii — coverage status (Phase 40F)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/coverage/status")
+async def get_coverage_status() -> dict:
+    """Return the current rules engine coverage and API preflight status.
+
+    Response:
+        {
+            "apis": {
+                "resource_graph": {"ok": bool, "latency_ms": int, "error": str|None},
+                "advisor": {...},
+                ...
+            },
+            "rules": {
+                "total": int,
+                "by_category": {"cost": int, "security": int, ...},
+                "load_errors": [...]
+            },
+            "cached": bool
+        }
+    """
+    from src.rules import all_rules
+    from src.rules.base import get_load_errors
+    from src.infrastructure.coverage_status import get_cached, get_or_refresh
+
+    cached = get_cached()
+    api_status: dict
+    is_cached = cached is not None
+    if is_cached:
+        api_status = cached
+    else:
+        if settings.use_local_mocks:
+            # In mock mode preflight calls would fail — return a synthetic OK result.
+            api_status = {
+                api: {"ok": True, "latency_ms": 0, "error": None}
+                for api in ("resource_graph", "advisor", "policy_insights", "defender", "resource_health")
+            }
+        else:
+            try:
+                api_status = await get_or_refresh(settings)
+                is_cached = False
+            except Exception as exc:
+                api_status = {"error": str(exc)}
+
+    rules = all_rules()
+    by_cat: dict[str, int] = {}
+    for r in rules:
+        by_cat[r.category.value] = by_cat.get(r.category.value, 0) + 1
+
+    return {
+        "apis": api_status,
+        "rules": {
+            "total": len(rules),
+            "by_category": by_cat,
+            "load_errors": get_load_errors(),
+        },
+        "cached": is_cached,
     }
 
 

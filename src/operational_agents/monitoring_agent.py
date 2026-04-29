@@ -412,6 +412,29 @@ class MonitoringAgent:
 
         proposals_holder: list[ProposedAction] = []
         scan_notes: list[str] = []
+        _rule_findings: list = []  # populated by rules prescan for coverage manifest
+
+        # ── Phase 40E: Universal Rules Engine pre-pass (scan mode only) ────────
+        # Alert mode is a targeted investigation — running subscription-wide
+        # reliability rules would be noise. Pre-pass runs in scan mode only.
+        rules_findings_text = ""
+        if self._cfg.use_rules_engine and not alert_payload and inventory is not None:
+            from src.rules.base import Category
+            from src.rules.agent_integration import run_rules_prescan
+            rule_proposals, _rule_findings, rules_findings_text = run_rules_prescan(
+                inventory, [Category.RELIABILITY], _AGENT_ID
+            )
+            proposals_holder.extend(rule_proposals)
+            self._last_rule_findings = _rule_findings
+            scan_notes.append(
+                f"Rules engine: {len(_rule_findings)} reliability finding(s) → "
+                f"{len(rule_proposals)} proposal(s)"
+            )
+            if len(_rule_findings) < 1 and len(inventory) > 50:
+                scan_notes.append(
+                    "coverage_warning: 0 rule findings on >50-resource inventory — "
+                    "check rule coverage"
+                )
 
         # ── Pre-scan: Microsoft APIs detect first (scan mode only) ────────────
         # Alert mode is a targeted investigation — mixing subscription-wide
@@ -516,14 +539,15 @@ class MonitoringAgent:
                         line += f" | Hint: {f['remediation']}"
                     findings_lines.append(line)
                 findings_lines.append("")
-                findings_text = "\n".join(findings_lines)
+                api_findings_text = "\n".join(findings_lines)
             else:
-                findings_text = (
+                api_findings_text = (
                     "=== PRE-COMPUTED FINDINGS: No high-severity reliability issues detected "
                     "by Microsoft APIs ===\n"
                 )
+            findings_text = (rules_findings_text + "\n" + api_findings_text) if rules_findings_text else api_findings_text
         else:
-            findings_text = ""
+            findings_text = rules_findings_text  # alert mode: rules text only (usually empty)
 
         @af.tool(
             name="query_metrics",
@@ -867,16 +891,28 @@ class MonitoringAgent:
                     "auto-proposed (LLM did not cover them)"
                 )
 
+            # Phase 40E: dedup — rule-derived proposals win over LLM re-proposals.
+            if self._cfg.use_rules_engine:
+                from src.rules.agent_integration import dedup_proposals as _dedup_mon
+                proposals_holder = _dedup_mon(proposals_holder)
+
             # Post-scan integrity log.
+            rule_count_mon = sum(
+                1 for p in proposals_holder
+                if (p.reason or "").startswith(("[UNIV-", "[TYPE-"))
+            )
             auto_count = sum(
                 1 for p in proposals_holder
                 if p.reason.startswith(("ADVISOR-HIGH:", "DEFENDER-HIGH:", "POLICY-NONCOMPLIANT:"))
             )
-            llm_count = len(proposals_holder) - auto_count
+            llm_count = len(proposals_holder) - rule_count_mon - auto_count
+            scan_notes.append(
+                f"rules_completed: {len(_rule_findings)} finding(s)"
+            )
             if proposals_holder:
                 scan_notes.append(
                     f"Scan complete — {len(proposals_holder)} proposal(s): "
-                    f"{auto_count} deterministic, {llm_count} LLM-originated"
+                    f"{rule_count_mon} rules-engine, {auto_count} API, {llm_count} LLM-originated"
                 )
             else:
                 scan_notes.append(

@@ -1,0 +1,386 @@
+{
+  "_comment": "Synthetic fixture representing a 311-resource Azure subscription. Resource IDs/IPs sanitized. Resource names preserved to match integration test assertions.",
+  "resources": [
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-network/providers/Microsoft.Compute/virtualMachines/Logic-OpenVPN",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "Logic-OpenVPN",
+      "location": "eastus",
+      "tags": {},
+      "powerState": "VM deallocated",
+      "properties": { "provisioningState": "Succeeded" },
+      "identity": {}
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-data/providers/Microsoft.Compute/disks/OrceDataBase_DataDisk_0",
+      "type": "Microsoft.Compute/disks",
+      "name": "OrceDataBase_DataDisk_0",
+      "location": "eastus",
+      "tags": {},
+      "sku": { "name": "Premium_LRS" },
+      "properties": { "diskState": "Unattached", "diskSizeGB": 128, "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-data/providers/Microsoft.Compute/disks/OldOrphanDisk-Logs",
+      "type": "Microsoft.Compute/disks",
+      "name": "OldOrphanDisk-Logs",
+      "location": "eastus",
+      "tags": {},
+      "sku": { "name": "Standard_LRS" },
+      "properties": { "diskState": "Unattached", "diskSizeGB": 64, "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-compute/providers/Microsoft.Compute/virtualMachines/dev-test-vm-01",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "dev-test-vm-01",
+      "location": "eastus",
+      "tags": {},
+      "powerState": "VM deallocated",
+      "properties": { "provisioningState": "Succeeded" },
+      "identity": {}
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-compute/providers/Microsoft.Compute/virtualMachines/dev-test-vm-02",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "dev-test-vm-02",
+      "location": "eastus",
+      "tags": {},
+      "powerState": "VM deallocated",
+      "properties": { "provisioningState": "Succeeded" },
+      "identity": {}
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-storage/providers/Microsoft.Storage/storageAccounts/prodstorageaccount01",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "prodstorageaccount01",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "sku": { "name": "Standard_LRS" },
+      "properties": {
+        "supportsHttpsTrafficOnly": false,
+        "allowBlobPublicAccess": true,
+        "publicNetworkAccess": "Enabled",
+        "minimumTlsVersion": "TLS1_0",
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-storage/providers/Microsoft.Storage/storageAccounts/devstorageacct99",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "devstorageacct99",
+      "location": "eastus",
+      "tags": { "environment": "dev" },
+      "sku": { "name": "Standard_LRS" },
+      "properties": {
+        "supportsHttpsTrafficOnly": false,
+        "allowBlobPublicAccess": true,
+        "publicNetworkAccess": "Enabled",
+        "minimumTlsVersion": "TLS1_1",
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-keys/providers/Microsoft.KeyVault/vaults/ruriskry-prod-kv",
+      "type": "Microsoft.KeyVault/vaults",
+      "name": "ruriskry-prod-kv",
+      "location": "eastus",
+      "tags": { "environment": "prod", "costcenter": "infra" },
+      "properties": {
+        "enableSoftDelete": false,
+        "enablePurgeProtection": null,
+        "publicNetworkAccess": "Enabled",
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-keys/providers/Microsoft.KeyVault/vaults/ruriskry-backup-kv",
+      "type": "Microsoft.KeyVault/vaults",
+      "name": "ruriskry-backup-kv",
+      "location": "westus",
+      "tags": { "environment": "prod" },
+      "properties": {
+        "enableSoftDelete": true,
+        "enablePurgeProtection": null,
+        "publicNetworkAccess": "Disabled",
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-data/providers/Microsoft.DocumentDB/databaseAccounts/ruriskry-cosmos-prod",
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "name": "ruriskry-cosmos-prod",
+      "location": "eastus",
+      "tags": { "environment": "prod", "owner": "platform", "costcenter": "data" },
+      "properties": {
+        "publicNetworkAccess": "Enabled",
+        "enableAutomaticFailover": false,
+        "locations": [{ "locationName": "East US", "failoverPriority": 0 }],
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-nsg/providers/Microsoft.Network/networkSecurityGroups/nsg-prod-management",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "nsg-prod-management",
+      "location": "eastus",
+      "tags": {},
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowSSH",
+            "properties": {
+              "direction": "Inbound",
+              "access": "Allow",
+              "priority": 100,
+              "protocol": "TCP",
+              "sourceAddressPrefix": "*",
+              "destinationPortRange": "22"
+            }
+          },
+          {
+            "name": "AllowRDP",
+            "properties": {
+              "direction": "Inbound",
+              "access": "Allow",
+              "priority": 110,
+              "protocol": "TCP",
+              "sourceAddressPrefix": "Internet",
+              "destinationPortRange": "3389"
+            }
+          }
+        ],
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-nsg/providers/Microsoft.Network/networkSecurityGroups/nsg-dev-wildcard",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "nsg-dev-wildcard",
+      "location": "eastus",
+      "tags": {},
+      "properties": {
+        "securityRules": [
+          {
+            "name": "AllowAll",
+            "properties": {
+              "direction": "Inbound",
+              "access": "Allow",
+              "priority": 100,
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "destinationPortRange": "*"
+            }
+          }
+        ],
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-net/providers/Microsoft.Network/publicIPAddresses/pip-dev-orphan-01",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "pip-dev-orphan-01",
+      "location": "eastus",
+      "tags": {},
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "ipAddress": "10.0.0.1",
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-net/providers/Microsoft.Network/publicIPAddresses/pip-dev-orphan-02",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "pip-dev-orphan-02",
+      "location": "eastus",
+      "tags": {},
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "ipAddress": "10.0.0.2",
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-net/providers/Microsoft.Network/networkInterfaces/nic-orphan-dev-01",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "nic-orphan-dev-01",
+      "location": "eastus",
+      "tags": {},
+      "properties": { "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-net/providers/Microsoft.Network/networkInterfaces/nic-orphan-dev-02",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "nic-orphan-dev-02",
+      "location": "eastus",
+      "tags": {},
+      "properties": { "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-containers/providers/Microsoft.ContainerRegistry/registries/ruriskryprodacr",
+      "type": "Microsoft.ContainerRegistry/registries",
+      "name": "ruriskryprodacr",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "sku": { "name": "Basic" },
+      "properties": {
+        "adminUserEnabled": true,
+        "anonymousPullEnabled": false,
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-apps/providers/Microsoft.Web/sites/ruriskry-api-prod",
+      "type": "Microsoft.Web/sites",
+      "name": "ruriskry-api-prod",
+      "location": "eastus",
+      "tags": { "environment": "prod", "owner": "platform" },
+      "kind": "app,linux,container",
+      "properties": {
+        "httpsOnly": false,
+        "siteConfig": { "ftpsState": "AllAllowed" },
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-apps/providers/Microsoft.Web/sites/ruriskry-func-prod",
+      "type": "Microsoft.Web/sites",
+      "name": "ruriskry-func-prod",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "kind": "functionapp,linux",
+      "properties": {
+        "httpsOnly": true,
+        "siteConfig": { "ftpsState": "FtpsOnly" },
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-containers/providers/Microsoft.App/containerApps/ruriskry-backend",
+      "type": "Microsoft.App/containerApps",
+      "name": "ruriskry-backend",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "properties": {
+        "template": {
+          "scale": { "minReplicas": 1, "maxReplicas": 1 }
+        },
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-aks/providers/Microsoft.ContainerService/managedClusters/prod-aks-cluster",
+      "type": "Microsoft.ContainerService/managedClusters",
+      "name": "prod-aks-cluster",
+      "location": "eastus",
+      "tags": { "environment": "prod", "owner": "platform" },
+      "properties": {
+        "kubernetesVersion": "1.26.6",
+        "agentPoolProfiles": [
+          { "name": "nodepool1", "enableAutoScaling": false, "count": 3 },
+          { "name": "nodepool2", "enableAutoScaling": false, "count": 2 }
+        ],
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-sql/providers/Microsoft.Sql/servers/ruriskry-sql-prod",
+      "type": "Microsoft.Sql/servers",
+      "name": "ruriskry-sql-prod",
+      "location": "eastus",
+      "tags": { "environment": "prod", "owner": "data-team", "costcenter": "data" },
+      "properties": { "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-ops/providers/Microsoft.OperationsManagement/solutions/Security(prod-la-workspace)",
+      "type": "Microsoft.OperationsManagement/solutions",
+      "name": "Security(prod-la-workspace)",
+      "location": "eastus",
+      "tags": {},
+      "properties": { "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-ops/providers/Microsoft.OperationsManagement/solutions/WireData(prod-la-workspace)",
+      "type": "Microsoft.OperationsManagement/solutions",
+      "name": "WireData(prod-la-workspace)",
+      "location": "eastus",
+      "tags": {},
+      "properties": { "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-storage/providers/Microsoft.RecoveryServices/vaults/ruriskry-recovery-vault",
+      "type": "Microsoft.RecoveryServices/vaults",
+      "name": "ruriskry-recovery-vault",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "properties": { "protectedItemCount": 0, "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-compute/providers/Microsoft.Compute/virtualMachines/vm-prod-worker-01",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "vm-prod-worker-01",
+      "location": "eastus",
+      "tags": { "environment": "prod", "owner": "platform" },
+      "powerState": "VM running",
+      "properties": { "provisioningState": "Succeeded" },
+      "identity": { "type": "SystemAssigned" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-compute/providers/Microsoft.Compute/virtualMachines/vm-prod-worker-02",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "vm-prod-worker-02",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "powerState": "VM running",
+      "properties": { "provisioningState": "Succeeded" },
+      "identity": {}
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-compute/providers/Microsoft.Compute/virtualMachines/vm-prod-worker-03",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "vm-prod-worker-03",
+      "location": "eastus",
+      "tags": {},
+      "powerState": "VM running",
+      "properties": { "provisioningState": "Failed" },
+      "identity": {}
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-keyvault/providers/Microsoft.Network/applicationGateways/agw-prod-01",
+      "type": "Microsoft.Network/applicationGateways",
+      "name": "agw-prod-01",
+      "location": "eastus",
+      "tags": { "environment": "prod" },
+      "properties": { "provisioningState": "Succeeded" }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-extra/providers/Microsoft.Network/publicIPAddresses/pip-attached-01",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "pip-attached-01",
+      "location": "eastus",
+      "tags": { "environment": "dev" },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "ipAddress": "10.0.1.1",
+        "ipConfiguration": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-dev-extra/providers/Microsoft.Network/loadBalancers/lb-dev/frontendIPConfigurations/feip"
+        },
+        "provisioningState": "Succeeded"
+      }
+    },
+    {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-prod-storage/providers/Microsoft.Storage/storageAccounts/cleanprodsa",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "cleanprodsa",
+      "location": "eastus",
+      "tags": { "environment": "prod", "owner": "platform", "costcenter": "storage" },
+      "sku": { "name": "Standard_GRS" },
+      "properties": {
+        "supportsHttpsTrafficOnly": true,
+        "allowBlobPublicAccess": false,
+        "publicNetworkAccess": "Disabled",
+        "minimumTlsVersion": "TLS1_2",
+        "provisioningState": "Succeeded"
+      }
+    }
+  ]
+}

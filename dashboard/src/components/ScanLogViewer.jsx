@@ -15,6 +15,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { BASE, fetchScanStatus } from '../api'
 import VerdictBadge from './magicui/VerdictBadge'
+import CoverageManifestPanel from './CoverageManifestPanel'
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -304,6 +305,13 @@ function HistoricalLogBody({ scanId }) {
           )}
         </div>
       </div>
+
+      {/* Coverage manifest — per-category rule match counts for this scan */}
+      {data.coverage_manifest && (
+        <div className="px-4 py-3 border-b border-slate-800 shrink-0">
+          <CoverageManifestPanel manifest={data.coverage_manifest} />
+        </div>
+      )}
 
       {/* Evaluations list */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">

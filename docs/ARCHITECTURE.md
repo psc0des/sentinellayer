@@ -57,6 +57,71 @@ GovernanceVerdict returned to caller
 
 ---
 
+## Universal Rules Engine (Phase 40 — default ON)
+
+Before operational agents call any Microsoft APIs or LLMs, a **three-layer deterministic rules
+engine** runs against the full resource inventory. This gives the system broad coverage across all
+311+ resource types without requiring per-type LLM prompts.
+
+```
+Resource Inventory (from Cosmos / KQL)
+    │
+    ▼
+InventoryIndex built once per scan
+    │   O(1) by_type(), get(), is_referenced() (ARM cross-ref)
+    │
+    ▼
+evaluate_inventory(resources, category=None)
+    │   pkgutil.walk_packages auto-loads all @rule functions
+    │   Rule failures → logged, never abort scans
+    │
+    ├── Layer 1: Universal Rules (UNIV-*)  ← 26 rules, any resource with matching property
+    │     security/: public network access, TLS, blob public, KV, managed identity, ACR, web
+    │     cost/:     deallocated VMs, unattached disks/NICs/IPs/snapshots, empty vaults
+    │     reliability/: provisioning failures, SKU mismatches, missing diag settings
+    │     hygiene/:  missing tags, zero tags
+    │
+    ├── Layer 2: Microsoft API Enrichment (Advisor, Defender, Policy, ResourceHealth)
+    │     api_preflight.py — async checks, 403 → role hint cached 300s
+    │
+    └── Layer 3: Type-Aware Rules (TYPE-*)  ← 8 rules, deep schema inspection
+          nsg/:    internet-exposed mgmt ports, wildcard any→any, missing deny-all
+          aks/:    autoscaler disabled, outdated K8s version
+          web/:    client cert not required
+          sql/:    no failover group
+          cosmos/: auto-failover disabled
+    │
+    ▼
+run_rules_prescan(inventory, categories, agent_id)
+    │   findings → ProposedAction via finding_to_proposal()
+    │   findings_text built for LLM prompt injection
+    │
+    ▼
+Agent-specific scan (Cost / Monitoring / Deploy)
+    │   LLM prompt includes pre-computed findings_text
+    │   LLM acts as enricher/validator, not discovery mechanism
+    │
+    ▼
+dedup_proposals(rule_proposals + llm_proposals)
+    │   Dedup key: (resource_id, action_type)
+    │   Rule-derived proposals win over LLM re-proposals
+    │
+    ▼
+build_coverage_manifest(inventory, findings, categories)
+    │   Stored in scan record: rules_applied, rules_matched,
+    │   by-category breakdown, types_uncovered (≤50)
+    │
+    ▼
+CoverageManifestPanel (UI) — visible in scan log viewer
+CoverageStatusBanner  (UI) — amber warning on Agents page when APIs degrade
+```
+
+**Config flag:** `USE_RULES_ENGINE=false` (env) → `use_rules_engine: bool` in `config.py` opts out.
+
+**Coverage API:** `GET /api/coverage/status` — preflight result with per-API `{ok, latency_ms, error}` plus rules summary. TTL=300s in-memory cache.
+
+---
+
 ## Agent Framework Workflow Engine (Phase 33D — default ON)
 
 The governance pipeline runs as a formal **7-executor workflow graph** built with `WorkflowBuilder`

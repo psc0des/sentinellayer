@@ -148,6 +148,11 @@ NEVER skip a finding — the governance engine handles deduplication.
 # ---------------------------------------------------------------------------
 
 
+def _is_rule_derived_cost(proposal) -> bool:
+    reason = proposal.reason or ""
+    return reason.startswith("[UNIV-") or reason.startswith("[TYPE-")
+
+
 class CostOptimizationAgent:
     """Scans the Azure environment and proposes cost-saving actions.
 
@@ -271,6 +276,29 @@ class CostOptimizationAgent:
 
         proposals_holder: list[ProposedAction] = []
         scan_notes: list[str] = []
+        _rule_findings: list = []  # populated by rules prescan for coverage manifest
+
+        # ── Phase 40E: Universal Rules Engine pre-pass ─────────────────────────
+        # Deterministic rules run first against the inventory so rule-derived
+        # findings are always present, even if the LLM call fails.
+        rules_findings_text = ""
+        if self._cfg.use_rules_engine and inventory is not None:
+            from src.rules.base import Category
+            from src.rules.agent_integration import run_rules_prescan, dedup_proposals as _dedup
+            rule_proposals, _rule_findings, rules_findings_text = run_rules_prescan(
+                inventory, [Category.COST], _AGENT_ID
+            )
+            proposals_holder.extend(rule_proposals)
+            self._last_rule_findings = _rule_findings
+            scan_notes.append(
+                f"Rules engine: {len(_rule_findings)} cost finding(s) → "
+                f"{len(rule_proposals)} proposal(s)"
+            )
+            if len(_rule_findings) < 1 and len(inventory) > 50:
+                scan_notes.append(
+                    "coverage_warning: 0 rule findings on >50-resource inventory — "
+                    "check rule coverage"
+                )
 
         # ── Pre-scan: Microsoft APIs detect first ─────────────────────────────
         # Run Advisor (Cost) and Policy BEFORE the LLM scan so the agent
@@ -332,6 +360,7 @@ class CostOptimizationAgent:
             scan_notes.append(f"Pre-scan: Azure Policy unavailable ({exc})")
 
         # Build findings summary to inject into the LLM prompt.
+        # Phase 40E: rules engine findings take precedence; API findings appended after.
         if raw_findings:
             findings_lines = [
                 f"=== PRE-COMPUTED FINDINGS: {len(raw_findings)} cost issue(s) from Microsoft APIs ===",
@@ -346,12 +375,13 @@ class CostOptimizationAgent:
                 line = f"[{i}] [{f.get('source', '?')}] Resource: {r_name} — {f.get('description', '?')}"
                 findings_lines.append(line)
             findings_lines.append("")
-            findings_text = "\n".join(findings_lines)
+            api_findings_text = "\n".join(findings_lines)
         else:
-            findings_text = (
+            api_findings_text = (
                 "=== PRE-COMPUTED FINDINGS: No high-impact cost issues detected by "
                 "Microsoft APIs ===\n"
             )
+        findings_text = (rules_findings_text + "\n" + api_findings_text) if rules_findings_text else api_findings_text
 
         @af.tool(
             name="query_resource_graph",
@@ -658,16 +688,26 @@ class CostOptimizationAgent:
                 "auto-proposed (LLM did not cover them)"
             )
 
+        # Phase 40E: dedup — rule-derived proposals win over LLM re-proposals.
+        if self._cfg.use_rules_engine:
+            from src.rules.agent_integration import dedup_proposals as _dedup_cost
+            proposals_holder = _dedup_cost(proposals_holder)
+
         # Post-scan log — counts per detection path.
+        rule_count = sum(1 for p in proposals_holder if _is_rule_derived_cost(p))
         auto_count = sum(
             1 for p in proposals_holder
             if p.reason.startswith(("ADVISOR-HIGH:", "POLICY-NONCOMPLIANT:"))
         )
-        llm_count = len(proposals_holder) - auto_count
+        llm_count = len(proposals_holder) - rule_count - auto_count
+        scan_notes.append(
+            f"rules_completed: {len(_rule_findings)} finding(s), "
+            f"categories={{'cost': len([f for f in _rule_findings if f.category.value == 'cost'])}}"
+        )
         if proposals_holder:
             scan_notes.append(
                 f"Scan complete — {len(proposals_holder)} proposal(s): "
-                f"{auto_count} deterministic, {llm_count} LLM-originated"
+                f"{rule_count} rules-engine, {auto_count} API, {llm_count} LLM-originated"
             )
         else:
             scan_notes.append(

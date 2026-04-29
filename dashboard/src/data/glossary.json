@@ -190,5 +190,37 @@
     "short": "When an operator forces a verdict different from RuriSkry's recommendation — captured for future learning.",
     "long": "Every force-execute, dismiss, and condition-satisfy action is captured as a VerdictOverride keyed by the action's fingerprint hash. The Historical Agent uses this signal: similar past overrides increase the chance the current proposal is judged the same way (Phase 35B retrieval, three-tier fallback).",
     "related": ["historical-agent", "governance-verdict"]
+  },
+  {
+    "id": "universal-rule",
+    "term": "Universal Rule",
+    "category": "concept",
+    "short": "A deterministic rule that applies to any Azure resource sharing a common property — runs before the LLM.",
+    "long": "Universal rules (UNIV-*) target cross-cutting properties present on many resource types: public network access, TLS version, managed identity, missing tags, unattached disks, and so on. They fire regardless of which specific service a resource belongs to, giving RuriSkry broad coverage without per-type special-casing. Each rule is a single Python function decorated with @rule and auto-loaded at startup.",
+    "related": ["type-aware-rule", "coverage-manifest", "governance-verdict"]
+  },
+  {
+    "id": "type-aware-rule",
+    "term": "Type-Aware Rule",
+    "category": "concept",
+    "short": "A deterministic rule that targets a specific Azure resource type — NSG, AKS, SQL, Cosmos, etc.",
+    "long": "Type-aware rules (TYPE-*) inspect service-specific schema fields that only exist on one resource kind. Examples: NSG inbound rules with wildcard source IPs (TYPE-NSG-001), AKS clusters with autoscaler disabled (TYPE-AKS-001), SQL servers without a failover group (TYPE-SQL-001). They complement universal rules by going deeper on high-risk service types.",
+    "related": ["universal-rule", "coverage-manifest"]
+  },
+  {
+    "id": "coverage-manifest",
+    "term": "Coverage Manifest",
+    "category": "concept",
+    "short": "Per-scan record of how many rules ran, matched, and which resource types had no rules applied.",
+    "long": "After every scan RuriSkry records a coverage_manifest in the scan record: total rules applied, total rules matched, a per-category breakdown (security / cost / reliability / hygiene), and a list of resource types that had no applicable rule. The Coverage Manifest Panel in the scan log viewer surfaces this data so operators can see exactly how thorough each scan was.",
+    "related": ["universal-rule", "type-aware-rule", "coverage-degraded"]
+  },
+  {
+    "id": "coverage-degraded",
+    "term": "Coverage Degraded",
+    "category": "concept",
+    "short": "Warning state shown when one or more Microsoft enrichment APIs are inaccessible due to missing RBAC roles.",
+    "long": "RuriSkry's rules engine (Layer 1) runs deterministically using data from the resource inventory alone. Layer 2 enrichment — Azure Advisor, Policy Insights, Defender, Resource Health — requires additional permissions. If a preflight check returns HTTP 403, the banner lists the API and the role needed to restore full coverage. The deterministic rules continue to run unaffected.",
+    "related": ["coverage-manifest", "universal-rule"]
   }
 ]

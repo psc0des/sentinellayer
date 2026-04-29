@@ -19,6 +19,7 @@ import useScanManager from '../hooks/useScanManager'
 import AgentCardGrid from '../components/AgentCardGrid'
 import ScanHistoryTable from '../components/ScanHistoryTable'
 import ScanLogViewer from '../components/ScanLogViewer'
+import CoverageStatusBanner from '../components/CoverageStatusBanner'
 
 export default function Agents() {
   const { agents, inventoryStatus, fetchAll } = useOutletContext()
@@ -113,6 +114,9 @@ export default function Agents() {
           Connected agents — trigger scans, view live logs, and review run history
         </p>
       </div>
+
+      {/* Coverage degraded banner — shown when Microsoft APIs are missing permissions */}
+      <CoverageStatusBanner />
 
       {/* Stopping banner — shown while cancellation is pending, or for 8s after stop */}
       {showStoppingBanner && (
