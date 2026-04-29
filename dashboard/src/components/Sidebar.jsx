@@ -143,20 +143,6 @@ export default function Sidebar({ pendingCount = 0, alertCount = 0, loggedInUser
                     </span>
                   )}
 
-                  {/* Overview pending badge */}
-                  {to === '/overview' && pendingCount > 0 && (
-                    <span
-                      className="text-[10px] font-bold text-white rounded-full px-1.5 min-w-[18px] text-center leading-[18px]"
-                      style={{
-                        background: 'rgba(245,158,11,0.2)',
-                        border: '1px solid rgba(245,158,11,0.4)',
-                        color: '#fcd34d',
-                        fontFamily: 'var(--font-data)',
-                      }}
-                    >
-                      {pendingCount}
-                    </span>
-                  )}
                 </>
               )}
             </NavLink>

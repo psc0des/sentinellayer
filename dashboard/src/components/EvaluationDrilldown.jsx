@@ -603,88 +603,83 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     ]
 
     return (
-        <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-
-            {/* ── Back Button ── */}
-            <button
-                onClick={onBack}
-                className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors mb-2"
-            >
-                <span>←</span> Back to Dashboard
-            </button>
+        <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
 
             {/* ═══════════════════════════════════════════════════════════════
           Section 1 — Verdict Header
           ═══════════════════════════════════════════════════════════════ */}
             <div className={`rounded-xl border ${vc.border} ${vc.bg} p-6 shadow-lg ${vc.glow}`}>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                    {/* Large verdict badge */}
-                    <div className="flex items-center gap-3">
-                        <span className="text-4xl">{vc.emoji}</span>
-                        <div>
-                            <h1 className={`text-2xl font-black ${vc.text} flex items-center gap-2`}>
-                                {vc.label}
-                                {VERDICT_TERM[(ev.verdict ?? '').toLowerCase()] && (
-                                    <InfoIcon termId={VERDICT_TERM[(ev.verdict ?? '').toLowerCase()]} size={16} />
+                <div className="lg:grid lg:grid-cols-3 gap-6">
+
+                    {/* Left col (spans 2): verdict badge + metadata */}
+                    <div className="lg:col-span-2">
+                        <div className="flex items-center gap-3 mb-4">
+                            <span className="text-4xl">{vc.emoji}</span>
+                            <div>
+                                <h1 className={`text-2xl font-black ${vc.text} flex items-center gap-2`}>
+                                    {vc.label}
+                                    {VERDICT_TERM[(ev.verdict ?? '').toLowerCase()] && (
+                                        <InfoIcon termId={VERDICT_TERM[(ev.verdict ?? '').toLowerCase()]} size={16} />
+                                    )}
+                                </h1>
+                                <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
+                                    Governance Verdict
+                                    <InfoIcon termId="governance-verdict" size={11} />
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                            <div>
+                                <span className="text-slate-500 block">Resource</span>
+                                <span className="text-slate-200 font-mono truncate block" title={ev.resource_id}>
+                                    {shortResource(ev.resource_id)}
+                                </span>
+                                {ev.resource_type && (
+                                    <span className="text-slate-600 block truncate" title={ev.resource_type}>
+                                        {ev.resource_type.split('/').pop()}
+                                    </span>
                                 )}
-                            </h1>
-                            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
-                                Governance Verdict
-                                <InfoIcon termId="governance-verdict" size={11} />
+                            </div>
+                            <div>
+                                <span className="text-slate-500 block">Action Proposed</span>
+                                <span className="text-slate-200 font-medium capitalize">
+                                    {ev.action_type?.replace(/_/g, ' ') ?? '—'}
+                                </span>
+                            </div>
+                            <div>
+                                <span className="text-slate-500 block">Proposed By</span>
+                                <span className="text-blue-400 font-mono">{ev.agent_id ?? '—'}</span>
+                            </div>
+                            <div>
+                                <span className="text-slate-500 block">Timestamp</span>
+                                <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Right col: SRI hero + why proposed */}
+                    <div className="lg:col-span-1 mt-5 lg:mt-0 lg:border-l lg:border-slate-700/60 lg:pl-6 flex flex-col justify-between">
+                        <div className="text-right">
+                            <div className={`text-5xl font-black tabular-nums ${vc.text}`}>
+                                {(Math.round((sri.sri_composite ?? 0) * 10) / 10).toFixed(1)}
+                            </div>
+                            <p className="text-xs text-slate-500 flex items-center gap-1 justify-end mt-1">
+                                SRI™ Composite
+                                <InfoIcon termId="sri-score" size={11} />
                             </p>
                         </div>
-                    </div>
 
-                    {/* SRI composite — large number */}
-                    <div className="sm:ml-auto text-right">
-                        <div className={`text-4xl font-black tabular-nums ${vc.text}`}>
-                            {(Math.round((sri.sri_composite ?? 0) * 10) / 10).toFixed(1)}
-                        </div>
-                        <p className="text-xs text-slate-500 flex items-center gap-1 justify-end">
-                            SRI™ Composite
-                            <InfoIcon termId="sri-score" size={11} />
-                        </p>
-                    </div>
-                </div>
-
-                {/* Resource + Agent info */}
-                <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div>
-                        <span className="text-slate-500 block">Resource</span>
-                        <span className="text-slate-200 font-mono truncate block" title={ev.resource_id}>
-                            {shortResource(ev.resource_id)}
-                        </span>
-                        {ev.resource_type && (
-                            <span className="text-slate-600 block truncate" title={ev.resource_type}>
-                                {ev.resource_type.split('/').pop()}
-                            </span>
+                        {ev.action_reason && (
+                            <div className="mt-4 text-xs">
+                                <span className="text-slate-500 block mb-1">Why proposed</span>
+                                <p className={`${vc.bg} ${vc.border} border rounded-lg px-3 py-2 text-slate-300 leading-relaxed`}>
+                                    {ev.action_reason}
+                                </p>
+                            </div>
                         )}
                     </div>
-                    <div>
-                        <span className="text-slate-500 block">Action Proposed</span>
-                        <span className="text-slate-200 font-medium capitalize">
-                            {ev.action_type?.replace(/_/g, ' ') ?? '—'}
-                        </span>
-                    </div>
-                    <div>
-                        <span className="text-slate-500 block">Proposed By</span>
-                        <span className="text-blue-400 font-mono">{ev.agent_id ?? '—'}</span>
-                    </div>
-                    <div>
-                        <span className="text-slate-500 block">Timestamp</span>
-                        <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
-                    </div>
                 </div>
-
-                {/* Why the agent proposed this action */}
-                {ev.action_reason && (
-                    <div className="mt-4 text-xs">
-                        <span className="text-slate-500 block mb-1">Why proposed</span>
-                        <p className={`${vc.bg} ${vc.border} border rounded-lg px-3 py-2 text-slate-300 leading-relaxed`}>
-                            {ev.action_reason}
-                        </p>
-                    </div>
-                )}
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
@@ -695,32 +690,30 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                     SRI™ Dimensional Breakdown
                     <InfoIcon termId="sri-score" />
                 </h2>
-                <div className="space-y-4">
+                <div className="space-y-3">
                     {dimensions.map((dim, i) => {
                         const score = sri[dim.key] ?? 0
                         const weighted = (score * dim.weight).toFixed(1)
                         const pct = Math.min((score / 100) * 100, 100)
                         const isPrimary = explanation?.contributing_factors?.[0]?.dimension?.includes(dim.label.split(' ')[0])
                         return (
-                            <div key={dim.key}>
-                                <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs text-slate-300 flex items-center gap-1.5">
-                                        {isPrimary && <span className="text-yellow-400" title="Primary factor">⭐</span>}
-                                        {dim.label}
-                                    </span>
-                                    <span className="text-xs tabular-nums text-slate-400">
-                                        {weighted}/{dim.maxW}
-                                        <span className="text-slate-600 ml-1">
-                                            (score {score.toFixed(0)} × {dim.weight})
-                                        </span>
-                                    </span>
-                                </div>
-                                <div className="w-full h-2.5 bg-slate-700 rounded-full overflow-hidden">
+                            <div key={dim.key} className="flex items-center gap-3">
+                                <span className="w-48 shrink-0 text-xs text-slate-300 flex items-center gap-1.5">
+                                    {isPrimary && <span className="text-yellow-400" title="Primary factor">⭐</span>}
+                                    {dim.label}
+                                </span>
+                                <div className="flex-1 h-2.5 bg-slate-700 rounded-full overflow-hidden">
                                     <div
                                         className={`h-full rounded-full transition-all duration-700 ${barColor(score)} ${isPrimary ? 'ring-1 ring-yellow-400/50' : ''}`}
                                         style={{ width: `${pct}%` }}
                                     />
                                 </div>
+                                <span className="w-36 shrink-0 text-right text-xs tabular-nums text-slate-400">
+                                    {weighted}/{dim.maxW}
+                                    <span className="text-slate-600 ml-1">
+                                        ({score.toFixed(0)} × {dim.weight})
+                                    </span>
+                                </span>
                             </div>
                         )
                     })}
@@ -869,38 +862,46 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
-          Section 6 — Audit Trail
+          Section 6 — Audit Trail + Override History (side-by-side on lg+)
           ═══════════════════════════════════════════════════════════════ */}
-            <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                    Audit Trail
-                </h2>
+            <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                        Audit Trail
+                    </h2>
 
-                <div className="grid grid-cols-2 gap-4 text-xs mb-4">
-                    <div>
-                        <span className="text-slate-500 block">Decision ID</span>
-                        <span className="text-slate-300 font-mono break-all">{ev.action_id ?? '—'}</span>
+                    <div className="grid grid-cols-2 gap-4 text-xs mb-4">
+                        <div>
+                            <span className="text-slate-500 block">Decision ID</span>
+                            <span className="text-slate-300 font-mono break-all">{ev.action_id ?? '—'}</span>
+                        </div>
+                        <div>
+                            <span className="text-slate-500 block">Timestamp</span>
+                            <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
+                        </div>
                     </div>
-                    <div>
-                        <span className="text-slate-500 block">Timestamp</span>
-                        <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
-                    </div>
+
+                    {/* Collapsible JSON */}
+                    <button
+                        onClick={() => setJsonExpanded(!jsonExpanded)}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                    >
+                        <span className={`transition-transform ${jsonExpanded ? 'rotate-90' : ''}`}>▶</span>
+                        {jsonExpanded ? 'Hide' : 'Show'} Full Verdict JSON
+                    </button>
+
+                    {jsonExpanded && (
+                        <pre className="mt-3 text-xs text-slate-400 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-80 border border-slate-700">
+                            {JSON.stringify(ev, null, 2)}
+                        </pre>
+                    )}
                 </div>
 
-                {/* Collapsible JSON */}
-                <button
-                    onClick={() => setJsonExpanded(!jsonExpanded)}
-                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
-                >
-                    <span className={`transition-transform ${jsonExpanded ? 'rotate-90' : ''}`}>▶</span>
-                    {jsonExpanded ? 'Hide' : 'Show'} Full Verdict JSON
-                </button>
-
-                {jsonExpanded && (
-                    <pre className="mt-3 text-xs text-slate-400 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-80 border border-slate-700">
-                        {JSON.stringify(ev, null, 2)}
-                    </pre>
-                )}
+                {/* Override History sits alongside Audit Trail */}
+                <OverrideHistoryPanel
+                    actionType={ev.action_type ?? ev.proposed_action?.action_type}
+                    resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
+                />
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
@@ -1248,14 +1249,6 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
           Section 8 — Tier 3 Remediation Playbook (Phase 34D)
           ═══════════════════════════════════════════════════════════════ */}
             <PlaybookPanel decisionId={ev.action_id} reviewedBy={reviewedBy} />
-
-            {/* ═══════════════════════════════════════════════════════════════
-          Section 9 — Override History (Phase 35C)
-          ═══════════════════════════════════════════════════════════════ */}
-            <OverrideHistoryPanel
-                actionType={ev.action_type ?? ev.proposed_action?.action_type}
-                resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
-            />
 
             {/* Satisfy condition inline modal */}
             {showSatisfyInput !== null && (

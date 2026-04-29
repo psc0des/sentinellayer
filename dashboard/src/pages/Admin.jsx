@@ -93,7 +93,7 @@ export default function Admin() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl mx-auto">
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
 
       {/* ── Page header ── */}
       <div className="flex items-center gap-3">
@@ -105,6 +105,8 @@ export default function Admin() {
           <p className="text-xs text-slate-500 mt-0.5">System configuration and management</p>
         </div>
       </div>
+
+      <div className="grid lg:grid-cols-2 gap-6">
 
       {/* ── System Configuration ── */}
       <GlowCard color="slate" intensity="low" className="p-5">
@@ -167,6 +169,8 @@ export default function Admin() {
           </button>
         </div>
       </GlowCard>
+
+      </div>
 
     </div>
   )

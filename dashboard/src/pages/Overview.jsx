@@ -403,7 +403,7 @@ export default function Overview() {
   const alertResolutionRate = alertTotal > 0 ? Math.round(alertResolved / alertTotal * 100) : null
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
 
       {/* ── Status banner ── */}
       <GlowCard
