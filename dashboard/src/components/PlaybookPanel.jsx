@@ -16,6 +16,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { executePlaybook, fetchPlaybook } from '../api'
+import InfoIcon from './glossary/InfoIcon'
 import ConfirmationModal from './ConfirmationModal'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -189,8 +190,9 @@ export default function PlaybookPanel({ decisionId, reviewedBy }) {
     />
 
     <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-      <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
+      <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-1.5">
         Remediation Playbook
+        <InfoIcon termId="remediation-playbook" />
       </h2>
 
       {loading && (

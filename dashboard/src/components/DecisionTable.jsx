@@ -11,6 +11,7 @@
 import React, { useState, useMemo } from 'react'
 import { ArrowUpDown, ArrowUp, ArrowDown, Search, Download, X } from 'lucide-react'
 import VerdictBadge from './magicui/VerdictBadge'
+import InfoIcon from './glossary/InfoIcon'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -273,7 +274,9 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh, initia
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 hidden sm:table-cell">Action</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 hidden md:table-cell">Agent</th>
                 <ThCol field="sri"     className="text-right">SRI</ThCol>
-                <ThCol field="verdict" className="text-center">Verdict</ThCol>
+                <ThCol field="verdict" className="text-center">
+                  <span className="inline-flex items-center gap-1">Verdict <InfoIcon termId="governance-verdict" size={11} /></span>
+                </ThCol>
                 <ThCol field="timestamp" className="text-right hidden md:table-cell">Time</ThCol>
               </tr>
             </thead>

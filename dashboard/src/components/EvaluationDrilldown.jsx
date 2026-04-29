@@ -19,6 +19,15 @@ import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix
 import TerraformPROverlay from './TerraformPROverlay'
 import PlaybookPanel from './PlaybookPanel'
 import OverrideHistoryPanel from './OverrideHistoryPanel'
+import InfoIcon from './glossary/InfoIcon'
+
+// Map verdict string → glossary term id for the inline info icon
+const VERDICT_TERM = {
+    approved: 'approved',
+    approved_if: 'approved-if',
+    escalated: 'escalated',
+    denied: 'denied',
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -613,8 +622,16 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                     <div className="flex items-center gap-3">
                         <span className="text-4xl">{vc.emoji}</span>
                         <div>
-                            <h1 className={`text-2xl font-black ${vc.text}`}>{vc.label}</h1>
-                            <p className="text-xs text-slate-500 mt-0.5">Governance Verdict</p>
+                            <h1 className={`text-2xl font-black ${vc.text} flex items-center gap-2`}>
+                                {vc.label}
+                                {VERDICT_TERM[(ev.verdict ?? '').toLowerCase()] && (
+                                    <InfoIcon termId={VERDICT_TERM[(ev.verdict ?? '').toLowerCase()]} size={16} />
+                                )}
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1">
+                                Governance Verdict
+                                <InfoIcon termId="governance-verdict" size={11} />
+                            </p>
                         </div>
                     </div>
 
@@ -623,7 +640,10 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                         <div className={`text-4xl font-black tabular-nums ${vc.text}`}>
                             {(Math.round((sri.sri_composite ?? 0) * 10) / 10).toFixed(1)}
                         </div>
-                        <p className="text-xs text-slate-500">SRI™ Composite</p>
+                        <p className="text-xs text-slate-500 flex items-center gap-1 justify-end">
+                            SRI™ Composite
+                            <InfoIcon termId="sri-score" size={11} />
+                        </p>
                     </div>
                 </div>
 
@@ -671,8 +691,9 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
           Section 2 — SRI™ Breakdown (4 horizontal bars)
           ═══════════════════════════════════════════════════════════════ */}
             <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-1.5">
                     SRI™ Dimensional Breakdown
+                    <InfoIcon termId="sri-score" />
                 </h2>
                 <div className="space-y-4">
                     {dimensions.map((dim, i) => {

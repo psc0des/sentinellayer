@@ -43,7 +43,9 @@ import Admin     from './pages/Admin'
 import Inventory from './pages/Inventory'
 import Login     from './pages/Login'
 import Setup     from './pages/Setup'
-import { RefreshCw, Bell, LogOut } from 'lucide-react'
+import Glossary  from './pages/Glossary'
+import { RefreshCw, Bell, LogOut, BookOpen } from 'lucide-react'
+import { NavLink } from 'react-router-dom'
 
 // ── Loading / Error screens ────────────────────────────────────────────────
 
@@ -307,6 +309,22 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
             <RefreshCw className="w-4 h-4" />
           </button>
 
+          {/* Glossary & FAQ */}
+          <NavLink
+            to="/glossary"
+            className={({ isActive }) =>
+              `flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors ${
+                isActive
+                  ? 'text-teal-300 bg-teal-500/10'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`
+            }
+            title="Glossary & FAQ"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            Glossary
+          </NavLink>
+
           {/* User + logout */}
           {loggedInUser && (
             <div className="flex items-center gap-2 pl-1 border-l border-slate-700/50">
@@ -352,6 +370,7 @@ export default function App() {
               <Route path="alerts"      element={<Alerts />} />
               <Route path="audit"       element={<AuditLog />} />
               <Route path="admin"       element={<Admin />} />
+              <Route path="glossary"    element={<Glossary />} />
               <Route path="*"           element={<Navigate to="/overview" replace />} />
             </Route>
           </Routes>

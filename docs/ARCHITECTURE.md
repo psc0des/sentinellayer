@@ -969,3 +969,23 @@ dashboard/                     # Vite + React frontend
 
 2. **Legacy mock resources** — `vm-23`, `api-server-03`, `web-tier-01`, `nsg-east`, `aks-prod`,
    `storageshared01`. These are referenced by all unit tests and must not be removed.
+
+## Inline Glossary & FAQ (Phase 36 — frontend)
+
+A single source of truth (`dashboard/src/data/glossary.json`) drives two surfaces. This pattern keeps inline help and the glossary page from drifting:
+
+```
+glossary.json
+    │
+    ├─→ <InfoIcon termId="…">      placed inline next to verdicts, agents, key labels.
+    │       Click → popover with the term's `short` definition + a
+    │       "Learn more →" link that deep-links to /glossary#term-id.
+    │
+    └─→ /glossary page             searchable A–Z view of every term
+            grouped by category. Hash deep-links scroll + briefly highlight.
+```
+
+- **Single edit, both surfaces.** Adding a new term or fixing a definition is one JSON change.
+- **Schema enforcement.** `dashboard/scripts/validate-glossary.mjs` checks unique ids, valid categories (`verdict | agent | tier | score | playbook | concept`), `short ≤ 140` chars, and that every `related` id resolves to a real entry.
+- **Click-only popovers.** No hover trigger — works on mobile and avoids accidental opens. Popovers ESC-close and click-outside-close, with `aria-expanded` / `aria-controls` for screen readers.
+- **No live data in glossary.** Definitional only — keeps content from rotting when thresholds or capacities change.

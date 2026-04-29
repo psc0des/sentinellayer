@@ -30,6 +30,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import { validatePlaybook } from '../api'
+import InfoIcon from './glossary/InfoIcon'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -162,7 +163,10 @@ export default function ConfirmationModal({
             <div className="flex items-center gap-2">
               <RiskBadge level={brief.risk_level} />
               {brief.validator_status === 'ok' && (
-                <span className="text-[10px] text-slate-500">reviewed by A2 Validator</span>
+                <span className="text-[10px] text-slate-500 inline-flex items-center gap-1">
+                  reviewed by A2 Validator
+                  <InfoIcon termId="a2-validator" size={11} />
+                </span>
               )}
             </div>
           )}

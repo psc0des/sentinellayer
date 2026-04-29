@@ -323,7 +323,7 @@ Set `USE_WORKFLOWS=false` only to opt back to the deprecated legacy path:
 
 ## Dashboard
 
-A 6-page React governance UI with real-time SSE streaming, custom design tokens, and animated components.
+A 7-page React governance UI with real-time SSE streaming, custom design tokens, and animated components. Includes an **inline Glossary & FAQ**: every page exposes contextual `i` icons next to verdicts, agents, and key terms; clicking opens a popover with a short definition and a deep link into the full glossary page (top-bar Glossary entry).
 
 ### Overview — Ops Nerve Center
 <p align="center">

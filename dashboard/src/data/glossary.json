@@ -1,0 +1,194 @@
+[
+  {
+    "id": "governance-verdict",
+    "term": "Governance Verdict",
+    "category": "concept",
+    "short": "RuriSkry's final ruling on a proposed action: Approved, Approved-If, Escalated, or Denied.",
+    "long": "Every action proposed by an operational agent is evaluated by RuriSkry's four governance agents and assigned one of four verdicts. The verdict is computed from the SRI™ Composite score plus policy-violation rules, and is recorded in the audit trail regardless of what happens next.",
+    "related": ["approved", "approved-if", "escalated", "denied", "sri-score"]
+  },
+  {
+    "id": "approved",
+    "term": "Approved",
+    "category": "verdict",
+    "short": "Action is safe to execute. SRI Composite ≤ 25 with no policy violations and no contextual conditions required.",
+    "long": "An Approved verdict means the proposed action passed all four governance checks and the human operator can run it (Terraform PR, agent fix, or portal). Approved actions are still logged in the audit trail. They are not auto-executed — a human still picks the execution path.",
+    "related": ["governance-verdict", "approved-if", "remediation-playbook"]
+  },
+  {
+    "id": "approved-if",
+    "term": "Approved-If (Conditional)",
+    "category": "verdict",
+    "short": "Approved in principle, but gated on one or more structured conditions being met first (Rule 3.75).",
+    "long": "The action would be Approved (Composite ≤ 25), but the governance engine derived contextual conditions that must be satisfied before execution. Conditions can be auto-satisfied by the ConditionWatcher (every 60s) or require an explicit human sign-off. Condition types include TIME_WINDOW, BLAST_RADIUS_CONFIRMED, METRIC_THRESHOLD, OWNER_NOTIFIED, and DEPENDENCY_CONFIRMED.",
+    "related": ["approved", "escalated", "governance-verdict"]
+  },
+  {
+    "id": "escalated",
+    "term": "Escalated",
+    "category": "verdict",
+    "short": "Risk is non-trivial — a human must review before execution. Composite > 25, or any HIGH policy violation (Rule 3.5).",
+    "long": "Escalated verdicts surface in the Decisions queue for operator review. The action is not blocked — a human can still approve and execute it via the four-button panel — but RuriSkry has flagged enough risk signal (blast radius, policy, historical similarity, or cost) that automatic approval is not safe. Rule 3.5 enforces an Escalated floor when a HIGH policy violation exists, even if the composite score would otherwise be low.",
+    "related": ["denied", "approved-if", "governance-verdict", "sri-score"]
+  },
+  {
+    "id": "denied",
+    "term": "Denied",
+    "category": "verdict",
+    "short": "Action is blocked. Composite > 60, or any CRITICAL policy violation (regardless of composite).",
+    "long": "Denied actions cannot be executed through RuriSkry. A CRITICAL policy violation triggers Denied even if the composite score is low — for example, opening an NSG rule to 0.0.0.0/0 (POL-SEC-002). The proposing agent receives the verdict and the rationale; nothing reaches the execution layer.",
+    "related": ["escalated", "governance-verdict", "nsg-rule"]
+  },
+  {
+    "id": "sri-score",
+    "term": "SRI™ Composite Score",
+    "category": "score",
+    "short": "Skry Risk Index — weighted 0–100 score combining four risk dimensions. Higher = riskier.",
+    "long": "The SRI™ Composite is a weighted sum of four sub-scores: Infrastructure (0.30 — blast radius), Policy (0.25 — governance violations), Historical (0.25 — similarity to past incidents), and Cost (0.20 — financial impact). Verdict thresholds: ≤ 25 Approved, > 25 Escalated, > 60 Denied. Policy-violation overrides can promote a verdict regardless of the composite.",
+    "related": ["governance-verdict", "blast-radius-agent", "policy-agent", "historical-agent", "financial-agent"]
+  },
+  {
+    "id": "blast-radius-agent",
+    "term": "Blast Radius Agent",
+    "category": "agent",
+    "short": "Governance agent that scores SRI:Infrastructure — how many dependent resources an action could affect.",
+    "long": "One of the four governance agents. It analyzes the resource graph and topology to estimate how widely an action's impact would spread (e.g., an NSG rule change affecting many subnets, a VM restart breaking a dependency chain). Returns a 0–100 SRI:Infrastructure score weighted at 0.30 of the composite.",
+    "related": ["sri-score", "policy-agent", "historical-agent", "financial-agent"]
+  },
+  {
+    "id": "policy-agent",
+    "term": "Policy Agent",
+    "category": "agent",
+    "short": "Governance agent that scores SRI:Policy — checks the action against 15 governance policies.",
+    "long": "One of the four governance agents. It evaluates the proposed action against the policy library in data/policies.json (15 policies covering security, cost, compliance, and operations) and detects remediation intent. Critical violations force Denied; High violations force at least Escalated. Returns a 0–100 SRI:Policy score weighted at 0.25 of the composite.",
+    "related": ["sri-score", "denied", "escalated", "nsg-rule"]
+  },
+  {
+    "id": "historical-agent",
+    "term": "Historical Agent",
+    "category": "agent",
+    "short": "Governance agent that scores SRI:Historical — similarity to past incidents and prior verdicts.",
+    "long": "One of the four governance agents. It searches the audit trail (and Azure AI Search in live mode) for actions that resemble the current proposal, weighting recent similar denials or rollbacks as risk signal. Returns a 0–100 SRI:Historical score weighted at 0.25 of the composite.",
+    "related": ["sri-score", "override"]
+  },
+  {
+    "id": "financial-agent",
+    "term": "Financial Agent (SRI:Cost)",
+    "category": "agent",
+    "short": "Governance agent that scores SRI:Cost — the financial impact and volatility of the proposed action.",
+    "long": "One of the four governance agents. It uses the Azure Retail Prices API to estimate monthly cost delta and flags actions that increase spend significantly or operate on high-cost resources. Returns a 0–100 SRI:Cost score weighted at 0.20 of the composite. Distinct from the operational Cost Agent, which proposes savings opportunities.",
+    "related": ["sri-score", "cost-agent"]
+  },
+  {
+    "id": "monitoring-agent",
+    "term": "Monitoring Agent",
+    "category": "agent",
+    "short": "Operational agent that proposes remediations from SRE signals — anomalies, stopped VMs, unhealthy resources.",
+    "long": "One of the operational (proposing) agents. It runs a six-step enterprise scan and handles five alert types from Azure Monitor. For stopped VMs it immediately proposes a restart_service action without waiting for activity-log corroboration. Its proposals flow into RuriSkry for governance evaluation like any other agent's.",
+    "related": ["cost-agent", "deploy-agent", "governance-verdict"]
+  },
+  {
+    "id": "cost-agent",
+    "term": "Cost Agent",
+    "category": "agent",
+    "short": "Operational agent that proposes savings — VM rightsizing, unattached disks, orphaned public IPs.",
+    "long": "One of the operational (proposing) agents. It scans the inventory for waste signals and proposes deletions or downsizings. Distinct from the Financial Agent, which scores the cost impact of any proposed action during governance evaluation.",
+    "related": ["financial-agent", "monitoring-agent", "deploy-agent"]
+  },
+  {
+    "id": "deploy-agent",
+    "term": "Deploy Agent",
+    "category": "agent",
+    "short": "Operational agent that proposes infrastructure-security fixes across seven domains.",
+    "long": "One of the operational (proposing) agents. It uses ten async Azure investigation tools (Resource Graph, Defender, Advisor, Policy, Resource Health, etc.) to surface security gaps and propose remediations across NSG, storage, DB/KV, VM posture, activity log, and tagging. Its proposals are the most common source of Escalated and Denied verdicts because they touch security-sensitive surfaces.",
+    "related": ["monitoring-agent", "cost-agent", "nsg-rule", "policy-agent"]
+  },
+  {
+    "id": "a2-validator",
+    "term": "A2 Validator",
+    "category": "agent",
+    "short": "Pre-execution second-opinion agent. Reviews a remediation about to run and produces a short brief.",
+    "long": "Runs immediately before execution (Phase 34F) with a 5-second timeout. Returns a ValidatorBrief that summarizes risks the operator should sanity-check before clicking through the confirmation modal. Falls back gracefully to an 'unavailable' brief on timeout or error so it never blocks execution.",
+    "related": ["remediation-playbook", "dry-run", "approved"]
+  },
+  {
+    "id": "tier-1",
+    "term": "Tier 1 (Deterministic)",
+    "category": "tier",
+    "short": "Low-risk actions evaluated by deterministic rules only — LLM bypassed for speed and predictability.",
+    "long": "The triage system classifies every proposed action into one of three tiers based on its fingerprint. Tier 1 actions short-circuit the LLM path across all four governance agents (force_deterministic = true) — they are scored by rule code alone. Verdicts are stamped with triage_mode = 'deterministic'.",
+    "related": ["tier-2", "tier-3", "triage-mode"]
+  },
+  {
+    "id": "tier-2",
+    "term": "Tier 2 (LLM-Assisted)",
+    "category": "tier",
+    "short": "Standard actions evaluated by the full LLM-assisted governance pipeline.",
+    "long": "Tier 2 is the default path: each governance agent calls the LLM with policy context, evidence, and override history to produce its sub-score. Most user-facing decisions in the Decisions queue come from Tier 2 evaluations.",
+    "related": ["tier-1", "tier-3", "triage-mode"]
+  },
+  {
+    "id": "tier-3",
+    "term": "Tier 3 (Playbook-Generated)",
+    "category": "tier",
+    "short": "High-risk or novel actions that get a generated remediation playbook with step-by-step guidance.",
+    "long": "Tier 3 actions trigger the Playbook Generator (10 templates) on top of the standard LLM evaluation, producing a step-by-step Remediation Playbook the operator can follow. These are the actions where the cost of getting it wrong is highest.",
+    "related": ["tier-1", "tier-2", "remediation-playbook", "triage-mode"]
+  },
+  {
+    "id": "triage-mode",
+    "term": "Triage Mode",
+    "category": "tier",
+    "short": "How the verdict was produced: 'deterministic' (Tier 1, no LLM) or 'llm' (Tier 2/3, LLM-assisted).",
+    "long": "Stamped on every GovernanceVerdict so auditors can trace which path produced the score. Combined with the tier number, it tells you exactly what evaluation logic ran. Deterministic mode is fully reproducible; LLM mode includes guardrails (±30 score clamp, policy_id matching) but adds non-determinism.",
+    "related": ["tier-1", "tier-2", "tier-3"]
+  },
+  {
+    "id": "remediation-playbook",
+    "term": "Remediation Playbook",
+    "category": "playbook",
+    "short": "Step-by-step recipe for executing a fix safely. Generated for Tier 3 and high-risk actions.",
+    "long": "A Playbook breaks an action into ordered steps with az CLI commands, expected outputs, and rollback notes. Operators can execute the whole playbook or step through it manually. All commands run through the az executor with a 13-pattern allowlist for safety.",
+    "related": ["dry-run", "tier-3", "a2-validator", "terraform-pr"]
+  },
+  {
+    "id": "dry-run",
+    "term": "Dry Run",
+    "category": "playbook",
+    "short": "Simulates the action without changing live infrastructure — surfaces what would happen.",
+    "long": "Dry-run is supported on Tier 1 SDK tools and inside playbook execution. It returns the same structured response shape as a real run but with no mutation, so operators can verify the target resource, parameters, and side effects before committing.",
+    "related": ["remediation-playbook", "terraform-pr", "a2-validator"]
+  },
+  {
+    "id": "terraform-pr",
+    "term": "Terraform PR",
+    "category": "playbook",
+    "short": "Execution path that opens a pull request against the IaC repo instead of mutating Azure directly.",
+    "long": "When an operator picks 'Create Terraform PR' on an Approved action, RuriSkry patches the relevant Terraform module (e.g., the existing NSG rule) and opens a PR for human merge + CI/CD. This keeps IaC state and live infra in sync. Other paths — Fix using Agent, Fix in Azure Portal, Decline — are alternatives on the same four-button panel.",
+    "related": ["remediation-playbook", "drift", "approved"]
+  },
+  {
+    "id": "nsg-rule",
+    "term": "NSG Rule",
+    "category": "concept",
+    "short": "Azure Network Security Group rule. Direction 'open' (e.g., 0.0.0.0/0) is treated as CRITICAL by Policy Agent.",
+    "long": "Network Security Groups gate inbound and outbound traffic at the subnet or NIC level. RuriSkry's Policy Agent flags any 'open' direction change against POL-SEC-002 as a CRITICAL violation, which forces a Denied verdict regardless of composite score. 'Restrict' direction changes are allowed through.",
+    "related": ["policy-agent", "denied", "deploy-agent"]
+  },
+  {
+    "id": "drift",
+    "term": "Drift",
+    "category": "concept",
+    "short": "When live Azure state diverges from declared Terraform/IaC state — a key risk signal.",
+    "long": "Drift happens when changes are made directly in the Azure portal or via az CLI without going through IaC. RuriSkry's preferred execution path (Terraform PR) prevents drift; the other paths can introduce it, which is why operators see them in the four-button panel only after a verdict is rendered.",
+    "related": ["terraform-pr", "governance-verdict"]
+  },
+  {
+    "id": "override",
+    "term": "Override",
+    "category": "concept",
+    "short": "When an operator forces a verdict different from RuriSkry's recommendation — captured for future learning.",
+    "long": "Every force-execute, dismiss, and condition-satisfy action is captured as a VerdictOverride keyed by the action's fingerprint hash. The Historical Agent uses this signal: similar past overrides increase the chance the current proposal is judged the same way (Phase 35B retrieval, three-tier fallback).",
+    "related": ["historical-agent", "governance-verdict"]
+  }
+]

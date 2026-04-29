@@ -15,6 +15,14 @@ import {
 } from 'lucide-react'
 import GlowCard from './magicui/GlowCard'
 import VerdictBadge from './magicui/VerdictBadge'
+import InfoIcon from './glossary/InfoIcon'
+
+// Map agent type → glossary term id
+const AGENT_TERM = {
+  cost: 'cost-agent',
+  monitoring: 'monitoring-agent',
+  deploy: 'deploy-agent',
+}
 import {
   fetchAgentLastRun,
   fetchAgentHistory,
@@ -320,8 +328,9 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
           : 'bg-slate-600'
         }`} />
         <Icon className="w-4 h-4 text-slate-400 shrink-0" />
-        <span className="text-sm font-medium text-slate-200 truncate flex-1" title={agent.name}>
-          {meta.label}
+        <span className="text-sm font-medium text-slate-200 truncate flex-1 flex items-center gap-1" title={agent.name}>
+          <span className="truncate">{meta.label}</span>
+          {AGENT_TERM[agentType] && <InfoIcon termId={AGENT_TERM[agentType]} size={12} />}
         </span>
         {/* ··· button */}
         <div className="relative shrink-0">
