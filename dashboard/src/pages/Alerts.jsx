@@ -1085,7 +1085,24 @@ export default function Alerts() {
     })
   }, [alerts, filterStatus, filterSeverity, searchText])
 
+  const [expandedGroups, setExpandedGroups] = useState(new Set())
   const [investigatingId, setInvestigatingId] = useState(null)
+
+  const grouped = useMemo(() => {
+    const map = new Map()
+    for (const alert of filtered) {
+      const k = `${alert.resource_name ?? ''}|${alert.metric ?? ''}`
+      if (!map.has(k)) map.set(k, [])
+      map.get(k).push(alert)
+    }
+    const groups = []
+    for (const [key, alerts] of map) {
+      alerts.sort((a, b) => new Date(b.fired_at) - new Date(a.fired_at))
+      groups.push({ key, alerts })
+    }
+    groups.sort((a, b) => new Date(b.alerts[0].fired_at) - new Date(a.alerts[0].fired_at))
+    return groups
+  }, [filtered])
 
   async function handleInvestigate(e, alertId) {
     e.stopPropagation()
@@ -1192,119 +1209,307 @@ export default function Alerts() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(alert => {
-                const isActive   = alert.status === 'firing' || alert.status === 'investigating'
-                const isSelected = selectedAlert?.alert_id === alert.alert_id
-                const totals     = alert.totals ?? {}
-                // Show "Action Required" indicator if any finding needs remediation
-                const hasAction  = (alert.verdicts ?? []).some(v =>
-                  v.execution_status === 'manual_required' || v.execution_status === 'awaiting_review'
-                )
+              {grouped.map(({ key, alerts: grp }) => {
+                const isSingle = grp.length === 1
+                const latest   = grp[0]
 
-                return (
-                  <tr
-                    key={alert.alert_id}
-                    onClick={() => setSelectedAlert(alert)}
-                    className={`border-b border-slate-800/60 cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-blue-500/8 ring-1 ring-inset ring-blue-500/20'
-                        : 'hover:bg-slate-800/30'
-                    } ${isActive ? 'bg-amber-500/[0.03]' : ''}`}
-                  >
-                    {/* Status */}
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1.5">
-                        {statusIcon(alert.status)}
-                        <span className={`font-medium ${statusColor(alert.status)}`}>
-                          {statusLabel(alert.status)}
-                        </span>
-                        {hasAction && (
-                          <span className="text-[10px] font-semibold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-1.5 py-0.5 rounded-full ml-1">
-                            Action
+                // ── Single alert ─────────────────────────────────────────────
+                if (isSingle) {
+                  const alert      = latest
+                  const isActive   = alert.status === 'firing' || alert.status === 'investigating'
+                  const isSelected = selectedAlert?.alert_id === alert.alert_id
+                  const totals     = alert.totals ?? {}
+                  const hasAction  = (alert.verdicts ?? []).some(v =>
+                    v.execution_status === 'manual_required' || v.execution_status === 'awaiting_review'
+                  )
+                  return (
+                    <tr
+                      key={alert.alert_id}
+                      onClick={() => setSelectedAlert(alert)}
+                      className={`border-b border-slate-800/60 cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-blue-500/8 ring-1 ring-inset ring-blue-500/20'
+                          : 'hover:bg-slate-800/30'
+                      } ${isActive ? 'bg-amber-500/[0.03]' : ''}`}
+                    >
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          {statusIcon(alert.status)}
+                          <span className={`font-medium ${statusColor(alert.status)}`}>
+                            {statusLabel(alert.status)}
                           </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Resource */}
-                    <td className="px-4 py-2.5">
-                      <span className="font-mono text-slate-200 truncate block max-w-[200px]" title={alert.resource_id}>
-                        {alert.resource_name || shortResource(alert.resource_id)}
-                      </span>
-                    </td>
-
-                    {/* Metric */}
-                    <td className="px-4 py-2.5 text-slate-400">
-                      {alert.metric || '—'}
-                    </td>
-
-                    {/* Value / Threshold */}
-                    <td className="px-4 py-2.5 text-center tabular-nums">
-                      {alert.value != null ? (
-                        <span className="text-slate-200">
-                          {Number(alert.value).toFixed(1)}
-                          <span className="text-slate-600"> / {alert.threshold ?? '?'}</span>
-                        </span>
-                      ) : '—'}
-                    </td>
-
-                    {/* Severity */}
-                    <td className="px-4 py-2.5 text-center">
-                      <span className={`font-bold ${severityColor(alert.severity)}`}>
-                        {severityLabel(alert.severity)}
-                      </span>
-                    </td>
-
-                    {/* Fired */}
-                    <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
-                      <div>{formatTime(alert.fired_at)}</div>
-                      <div className="text-slate-600 text-[10px]">{formatRelative(alert.fired_at)}</div>
-                    </td>
-
-                    {/* Outcome */}
-                    <td className="px-4 py-2.5 text-center">
-                      {alert.status === 'resolved' ? (
-                        <div className="flex items-center justify-center gap-1.5">
-                          {(totals.approved ?? 0) > 0 && <span className="text-emerald-400">✓{totals.approved}</span>}
-                          {(totals.escalated ?? 0) > 0 && <span className="text-amber-400">⚠{totals.escalated}</span>}
-                          {(totals.denied ?? 0) > 0 && <span className="text-rose-400">✗{totals.denied}</span>}
-                          {(totals.approved ?? 0) === 0 && (totals.escalated ?? 0) === 0 && (totals.denied ?? 0) === 0 && (
-                            <span className="text-emerald-500">Clean</span>
+                          {hasAction && (
+                            <span className="text-[10px] font-semibold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-1.5 py-0.5 rounded-full ml-1">
+                              Action
+                            </span>
                           )}
                         </div>
-                      ) : alert.status === 'error' ? (
-                        <span className="text-rose-400">Failed</span>
-                      ) : (
-                        <span className="text-slate-600">—</span>
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-4 py-2.5 text-center">
-                      {alert.status === 'pending' && (
-                        <button
-                          onClick={e => handleInvestigate(e, alert.alert_id)}
-                          disabled={investigatingId === alert.alert_id}
-                          className="flex items-center gap-1 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50 mx-auto"
-                        >
-                          {investigatingId === alert.alert_id
-                            ? <><span className="w-2.5 h-2.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> Starting…</>
-                            : <>🔍 Investigate</>}
-                        </button>
-                      )}
-                      {alert.status === 'investigating' && (
-                        <span className="flex items-center gap-1.5 text-[11px] text-blue-400 font-medium justify-center">
-                          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
-                          Investigating…
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className="font-mono text-slate-200 truncate block max-w-[200px]" title={alert.resource_id}>
+                          {alert.resource_name || shortResource(alert.resource_id)}
                         </span>
-                      )}
-                    </td>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400">{alert.metric || '—'}</td>
+                      <td className="px-4 py-2.5 text-center tabular-nums">
+                        {alert.value != null ? (
+                          <span className="text-slate-200">
+                            {Number(alert.value).toFixed(1)}
+                            <span className="text-slate-600"> / {alert.threshold ?? '?'}</span>
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`font-bold ${severityColor(alert.severity)}`}>
+                          {severityLabel(alert.severity)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
+                        <div>{formatTime(alert.fired_at)}</div>
+                        <div className="text-slate-600 text-[10px]">{formatRelative(alert.fired_at)}</div>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {alert.status === 'resolved' ? (
+                          <div className="flex items-center justify-center gap-1.5">
+                            {(totals.approved ?? 0) > 0 && <span className="text-emerald-400">✓{totals.approved}</span>}
+                            {(totals.escalated ?? 0) > 0 && <span className="text-amber-400">⚠{totals.escalated}</span>}
+                            {(totals.denied ?? 0) > 0 && <span className="text-rose-400">✗{totals.denied}</span>}
+                            {(totals.approved ?? 0) === 0 && (totals.escalated ?? 0) === 0 && (totals.denied ?? 0) === 0 && (
+                              <span className="text-emerald-500">Clean</span>
+                            )}
+                          </div>
+                        ) : alert.status === 'error' ? (
+                          <span className="text-rose-400">Failed</span>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {alert.status === 'pending' && (
+                          <button
+                            onClick={e => handleInvestigate(e, alert.alert_id)}
+                            disabled={investigatingId === alert.alert_id}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50 mx-auto"
+                          >
+                            {investigatingId === alert.alert_id
+                              ? <><span className="w-2.5 h-2.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> Starting…</>
+                              : <>🔍 Investigate</>}
+                          </button>
+                        )}
+                        {alert.status === 'investigating' && (
+                          <span className="flex items-center gap-1.5 text-[11px] text-blue-400 font-medium justify-center">
+                            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                            Investigating…
+                          </span>
+                        )}
+                      </td>
+                      <td className="pr-3 text-slate-600">
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </td>
+                    </tr>
+                  )
+                }
 
-                    {/* Chevron */}
-                    <td className="pr-3 text-slate-600">
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </td>
-                  </tr>
+                // ── Multi-alert group ────────────────────────────────────────
+                const isExpanded   = expandedGroups.has(key)
+                const groupStatus  = grp.find(a => a.status === 'investigating')?.status
+                  ?? grp.find(a => a.status === 'pending')?.status
+                  ?? grp.find(a => a.status === 'error')?.status
+                  ?? 'resolved'
+                const worstSev     = Math.min(...grp.map(a => Number(a.severity ?? 3)))
+                const hasAnyAction = grp.some(a => (a.verdicts ?? []).some(v =>
+                  v.execution_status === 'manual_required' || v.execution_status === 'awaiting_review'
+                ))
+                const anyPending   = grp.some(a => a.status === 'pending')
+                const totalTotals  = grp.reduce((acc, a) => {
+                  const t = a.totals ?? {}
+                  return {
+                    approved:  acc.approved  + (t.approved  ?? 0),
+                    escalated: acc.escalated + (t.escalated ?? 0),
+                    denied:    acc.denied    + (t.denied    ?? 0),
+                  }
+                }, { approved: 0, escalated: 0, denied: 0 })
+                const allResolved  = grp.every(a => a.status === 'resolved')
+
+                return (
+                  <React.Fragment key={key}>
+                    <tr
+                      onClick={() => setExpandedGroups(prev => {
+                        const next = new Set(prev)
+                        next.has(key) ? next.delete(key) : next.add(key)
+                        return next
+                      })}
+                      className="border-b border-slate-800/60 cursor-pointer hover:bg-slate-800/30 bg-slate-900/40"
+                    >
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          {statusIcon(groupStatus)}
+                          <span className={`font-medium ${statusColor(groupStatus)}`}>
+                            {statusLabel(groupStatus)}
+                          </span>
+                          {hasAnyAction && (
+                            <span className="text-[10px] font-semibold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-1.5 py-0.5 rounded-full ml-1">
+                              Action
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-slate-200 truncate block max-w-[160px]" title={latest.resource_id}>
+                            {latest.resource_name || shortResource(latest.resource_id)}
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-400 bg-slate-700/60 px-1.5 py-0.5 rounded-full shrink-0">
+                            ×{grp.length}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400">{latest.metric || '—'}</td>
+                      <td className="px-4 py-2.5 text-center tabular-nums">
+                        {latest.value != null ? (
+                          <span className="text-slate-200">
+                            {Number(latest.value).toFixed(1)}
+                            <span className="text-slate-600"> / {latest.threshold ?? '?'}</span>
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`font-bold ${severityColor(worstSev)}`}>
+                          {severityLabel(worstSev)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">
+                        <div>{formatTime(latest.fired_at)}</div>
+                        <div className="text-slate-600 text-[10px]">{grp.length} occurrences · latest {formatRelative(latest.fired_at)}</div>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {allResolved ? (
+                          <div className="flex items-center justify-center gap-1.5">
+                            {totalTotals.approved  > 0 && <span className="text-emerald-400">✓{totalTotals.approved}</span>}
+                            {totalTotals.escalated > 0 && <span className="text-amber-400">⚠{totalTotals.escalated}</span>}
+                            {totalTotals.denied    > 0 && <span className="text-rose-400">✗{totalTotals.denied}</span>}
+                            {totalTotals.approved === 0 && totalTotals.escalated === 0 && totalTotals.denied === 0 && (
+                              <span className="text-emerald-500">Clean</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {anyPending && (
+                          <button
+                            onClick={e => handleInvestigate(e, grp.find(a => a.status === 'pending').alert_id)}
+                            disabled={grp.some(a => investigatingId === a.alert_id)}
+                            className="flex items-center gap-1 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50 mx-auto"
+                          >
+                            🔍 Investigate
+                          </button>
+                        )}
+                        {!anyPending && grp.some(a => a.status === 'investigating') && (
+                          <span className="flex items-center gap-1.5 text-[11px] text-blue-400 font-medium justify-center">
+                            <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                            Investigating…
+                          </span>
+                        )}
+                      </td>
+                      <td className="pr-3 text-slate-600">
+                        <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                      </td>
+                    </tr>
+                    {isExpanded && grp.map(alert => {
+                      const isActive   = alert.status === 'firing' || alert.status === 'investigating'
+                      const isSelected = selectedAlert?.alert_id === alert.alert_id
+                      const totals     = alert.totals ?? {}
+                      const hasAction  = (alert.verdicts ?? []).some(v =>
+                        v.execution_status === 'manual_required' || v.execution_status === 'awaiting_review'
+                      )
+                      return (
+                        <tr
+                          key={alert.alert_id}
+                          onClick={() => setSelectedAlert(alert)}
+                          className={`border-b border-slate-800/40 cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-blue-500/8 ring-1 ring-inset ring-blue-500/20'
+                              : 'hover:bg-slate-800/20'
+                          } ${isActive ? 'bg-amber-500/[0.03]' : ''}`}
+                        >
+                          <td className="px-4 py-2 pl-8">
+                            <div className="flex items-center gap-1.5">
+                              {statusIcon(alert.status)}
+                              <span className={`font-medium ${statusColor(alert.status)}`}>
+                                {statusLabel(alert.status)}
+                              </span>
+                              {hasAction && (
+                                <span className="text-[10px] font-semibold text-orange-400 bg-orange-500/10 border border-orange-500/30 px-1.5 py-0.5 rounded-full ml-1">
+                                  Action
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-[11px] font-mono text-slate-500" title={alert.alert_id}>
+                            {alert.alert_id?.slice(-10) ?? '—'}
+                          </td>
+                          <td className="px-4 py-2 text-slate-500 text-[11px]">{alert.metric || '—'}</td>
+                          <td className="px-4 py-2 text-center tabular-nums text-[11px]">
+                            {alert.value != null ? (
+                              <span className="text-slate-300">
+                                {Number(alert.value).toFixed(1)}
+                                <span className="text-slate-600"> / {alert.threshold ?? '?'}</span>
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td className="px-4 py-2 text-center text-[11px]">
+                            <span className={`font-bold ${severityColor(alert.severity)}`}>
+                              {severityLabel(alert.severity)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-slate-500 whitespace-nowrap text-[11px]">
+                            <div>{formatTime(alert.fired_at)}</div>
+                            <div className="text-slate-600 text-[10px]">{formatRelative(alert.fired_at)}</div>
+                          </td>
+                          <td className="px-4 py-2 text-center text-[11px]">
+                            {alert.status === 'resolved' ? (
+                              <div className="flex items-center justify-center gap-1.5">
+                                {(totals.approved ?? 0) > 0 && <span className="text-emerald-400">✓{totals.approved}</span>}
+                                {(totals.escalated ?? 0) > 0 && <span className="text-amber-400">⚠{totals.escalated}</span>}
+                                {(totals.denied ?? 0) > 0 && <span className="text-rose-400">✗{totals.denied}</span>}
+                                {(totals.approved ?? 0) === 0 && (totals.escalated ?? 0) === 0 && (totals.denied ?? 0) === 0 && (
+                                  <span className="text-emerald-500">Clean</span>
+                                )}
+                              </div>
+                            ) : alert.status === 'error' ? (
+                              <span className="text-rose-400">Failed</span>
+                            ) : (
+                              <span className="text-slate-600">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-center">
+                            {alert.status === 'pending' && (
+                              <button
+                                onClick={e => handleInvestigate(e, alert.alert_id)}
+                                disabled={investigatingId === alert.alert_id}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 hover:text-blue-200 rounded text-[11px] font-medium transition-colors disabled:opacity-50 mx-auto"
+                              >
+                                {investigatingId === alert.alert_id
+                                  ? <><span className="w-2.5 h-2.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /> Starting…</>
+                                  : <>🔍 Investigate</>}
+                              </button>
+                            )}
+                            {alert.status === 'investigating' && (
+                              <span className="flex items-center gap-1.5 text-[11px] text-blue-400 font-medium justify-center">
+                                <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                                Investigating…
+                              </span>
+                            )}
+                          </td>
+                          <td className="pr-3 text-slate-600">
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </React.Fragment>
                 )
               })}
             </tbody>

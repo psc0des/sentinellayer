@@ -7,7 +7,9 @@
  *   3. Decision Explanation (summary, primary factor, risk highlights, violations)
  *   4. Counterfactual Analysis (cards with score transitions)
  *   5. Agent Reasoning (proposing agent + governance agents)
- *   6. Audit Trail (UUID, timestamp, collapsible JSON)
+ *   6. Execution Status (action buttons, PR link, conditions)
+ *   7. Tier 3 Remediation Playbook
+ *   8. Audit Trail + Override History (UUID, timestamp, collapsible JSON)
  *
  * Props:
  *   evaluation — the raw evaluation record from /api/evaluations
@@ -862,50 +864,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
-          Section 6 — Audit Trail + Override History (side-by-side on lg+)
-          ═══════════════════════════════════════════════════════════════ */}
-            <div className="grid lg:grid-cols-2 gap-6">
-                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
-                    <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
-                        Audit Trail
-                    </h2>
-
-                    <div className="grid grid-cols-2 gap-4 text-xs mb-4">
-                        <div>
-                            <span className="text-slate-500 block">Decision ID</span>
-                            <span className="text-slate-300 font-mono break-all">{ev.action_id ?? '—'}</span>
-                        </div>
-                        <div>
-                            <span className="text-slate-500 block">Timestamp</span>
-                            <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
-                        </div>
-                    </div>
-
-                    {/* Collapsible JSON */}
-                    <button
-                        onClick={() => setJsonExpanded(!jsonExpanded)}
-                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
-                    >
-                        <span className={`transition-transform ${jsonExpanded ? 'rotate-90' : ''}`}>▶</span>
-                        {jsonExpanded ? 'Hide' : 'Show'} Full Verdict JSON
-                    </button>
-
-                    {jsonExpanded && (
-                        <pre className="mt-3 text-xs text-slate-400 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-80 border border-slate-700">
-                            {JSON.stringify(ev, null, 2)}
-                        </pre>
-                    )}
-                </div>
-
-                {/* Override History sits alongside Audit Trail */}
-                <OverrideHistoryPanel
-                    actionType={ev.action_type ?? ev.proposed_action?.action_type}
-                    resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
-                />
-            </div>
-
-            {/* ═══════════════════════════════════════════════════════════════
-          Section 7 — Execution Status (Phase 21)
+          Section 6 — Execution Status (Phase 21)
           ═══════════════════════════════════════════════════════════════ */}
             <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
                 <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
@@ -1246,9 +1205,52 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════
-          Section 8 — Tier 3 Remediation Playbook (Phase 34D)
+          Section 7 — Tier 3 Remediation Playbook (Phase 34D)
           ═══════════════════════════════════════════════════════════════ */}
             <PlaybookPanel decisionId={ev.action_id} reviewedBy={reviewedBy} />
+
+            {/* ═══════════════════════════════════════════════════════════════
+          Section 8 — Audit Trail + Override History (side-by-side on lg+)
+          ═══════════════════════════════════════════════════════════════ */}
+            <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-slate-800 rounded-xl border border-slate-700 p-6">
+                    <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">
+                        Audit Trail
+                    </h2>
+
+                    <div className="grid grid-cols-2 gap-4 text-xs mb-4">
+                        <div>
+                            <span className="text-slate-500 block">Decision ID</span>
+                            <span className="text-slate-300 font-mono break-all">{ev.action_id ?? '—'}</span>
+                        </div>
+                        <div>
+                            <span className="text-slate-500 block">Timestamp</span>
+                            <span className="text-slate-300">{formatTime(ev.timestamp)}</span>
+                        </div>
+                    </div>
+
+                    {/* Collapsible JSON */}
+                    <button
+                        onClick={() => setJsonExpanded(!jsonExpanded)}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+                    >
+                        <span className={`transition-transform ${jsonExpanded ? 'rotate-90' : ''}`}>▶</span>
+                        {jsonExpanded ? 'Hide' : 'Show'} Full Verdict JSON
+                    </button>
+
+                    {jsonExpanded && (
+                        <pre className="mt-3 text-xs text-slate-400 bg-slate-900 rounded-lg p-4 overflow-x-auto max-h-80 border border-slate-700">
+                            {JSON.stringify(ev, null, 2)}
+                        </pre>
+                    )}
+                </div>
+
+                {/* Override History sits alongside Audit Trail */}
+                <OverrideHistoryPanel
+                    actionType={ev.action_type ?? ev.proposed_action?.action_type}
+                    resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
+                />
+            </div>
 
             {/* Satisfy condition inline modal */}
             {showSatisfyInput !== null && (
