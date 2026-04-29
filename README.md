@@ -9,7 +9,6 @@
 [![Azure](https://img.shields.io/badge/cloud-Azure-0078D4.svg)](https://azure.microsoft.com)
 [![AI Dev Days Hackathon 2026](https://img.shields.io/badge/hackathon-AI%20Dev%20Days%202026-purple.svg)](https://microsoft.com)
 
-> **`main` is production-ready** — validated through full end-to-end testing across Phases 32–35 (workflow graph, conditional approvals, Tier 3 playbook generator, A2 Validator, override feedback). The `v1` branch is kept for reference only.
 
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
