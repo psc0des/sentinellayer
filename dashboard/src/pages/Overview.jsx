@@ -125,7 +125,8 @@ function MetricCard({ label, numericValue, displayValue, decimals, suffix, sub, 
 
 function PendingCard({ review, onNavigate }) {
   const ev = review.verdict_snapshot ?? {}
-  const resourceName = ev.resource_id?.split('/').filter(Boolean).pop() ?? ev.resource_id ?? '—'
+  const rid = ev.proposed_action?.target?.resource_id ?? ev.resource_id
+  const resourceName = rid?.split('/').filter(Boolean).pop() ?? rid ?? '—'
   const isEscalated = review.status === 'awaiting_review'
 
   return (
@@ -139,7 +140,7 @@ function PendingCard({ review, onNavigate }) {
       onClick={() => onNavigate(`/decisions?exec=${review.execution_id}`)}
     >
       <div className="flex items-start justify-between gap-3 mb-2">
-        <span className="text-sm font-medium text-slate-200 font-mono truncate text-left" title={ev.resource_id}>
+        <span className="text-sm font-medium text-slate-200 font-mono truncate text-left" title={rid}>
           {resourceName}
         </span>
         <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full font-bold uppercase border ${
@@ -151,7 +152,7 @@ function PendingCard({ review, onNavigate }) {
         </span>
       </div>
       <p className="text-xs text-slate-500 text-left">
-        {ev.action_type?.replace(/_/g, ' ') ?? '—'}
+        {(ev.proposed_action?.action_type ?? ev.action_type ?? '—').replace(/_/g, ' ')}
         {ev.sri_composite != null && ` · SRI ${ev.sri_composite.toFixed(1)}`}
       </p>
       <p className="text-xs text-slate-600 mt-1 text-left">

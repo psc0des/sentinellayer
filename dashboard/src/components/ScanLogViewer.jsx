@@ -49,9 +49,10 @@ function eventStyle(event) {
     case 'evaluating':     return { icon: '\u2696\uFE0F', colour: 'text-yellow-400' }
     case 'verdict': {
       const d = event.decision?.toLowerCase()
-      if (d === 'approved')  return { icon: '\u2705', colour: 'text-green-400' }
-      if (d === 'escalated') return { icon: '\u26A0\uFE0F', colour: 'text-orange-400' }
-      if (d === 'denied')    return { icon: '\u{1F6AB}', colour: 'text-red-400' }
+      if (d === 'approved')    return { icon: '\u2705', colour: 'text-green-400' }
+      if (d === 'approved_if') return { icon: '\u{1F512}', colour: 'text-teal-400' }
+      if (d === 'escalated')   return { icon: '\u26A0\uFE0F', colour: 'text-orange-400' }
+      if (d === 'denied')      return { icon: '\u{1F6AB}', colour: 'text-red-400' }
       return { icon: '\u2696\uFE0F', colour: 'text-yellow-400' }
     }
     default: return { icon: '\u2022', colour: 'text-slate-400' }
@@ -110,10 +111,10 @@ function EvaluationRow({ ev }) {
     <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-700/50 flex items-start justify-between gap-3">
       <div className="min-w-0">
         <p className="text-sm font-mono text-slate-200 truncate">
-          {resourceName(ev.resource_id)}
+          {resourceName(ev.proposed_action?.target?.resource_id ?? ev.resource_id)}
         </p>
         <p className="text-xs text-slate-500 mt-0.5">
-          {ev.action_type?.replace(/_/g, ' ')}
+          {(ev.proposed_action?.action_type ?? ev.action_type)?.replace(/_/g, ' ')}
         </p>
         {(ev.reason || ev.verdict_reason || ev.action_reason) && (
           <p className="text-xs text-slate-600 mt-1 line-clamp-2">
@@ -283,6 +284,7 @@ function HistoricalLogBody({ scanId }) {
   const approved    = evaluations.filter(e => e.decision?.toLowerCase() === 'approved').length
   const denied      = evaluations.filter(e => e.decision?.toLowerCase() === 'denied').length
   const escalated   = evaluations.filter(e => e.decision?.toLowerCase() === 'escalated').length
+  const approvedIf  = evaluations.filter(e => e.decision?.toLowerCase() === 'approved_if').length
 
   return (
     <>
@@ -295,6 +297,7 @@ function HistoricalLogBody({ scanId }) {
           {evaluations.length > 0 && (
             <div className="flex items-center gap-3">
               <span className="text-emerald-400">{approved} approved</span>
+              {approvedIf > 0 && <span className="text-teal-400">{approvedIf} cond. approved</span>}
               <span className="text-amber-400">{escalated} escalated</span>
               <span className="text-rose-400">{denied} denied</span>
             </div>

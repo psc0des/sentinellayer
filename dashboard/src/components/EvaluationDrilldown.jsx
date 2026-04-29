@@ -357,7 +357,16 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     const [rollbackExecuting, setRollbackExecuting] = useState(false)
     const [rollbackResult, setRollbackResult] = useState(null)
 
-    const ev = evaluation
+    // Normalize: evaluation may be a flat tracker record OR a GovernanceVerdict
+    // snapshot (from ?exec= URL). Flatten proposed_action fields so the rest of
+    // the component can read resource_id / action_type / agent_id uniformly.
+    const ev = {
+        ...evaluation,
+        resource_id:   evaluation.resource_id   ?? evaluation.proposed_action?.target?.resource_id,
+        resource_type: evaluation.resource_type ?? evaluation.proposed_action?.target?.resource_type,
+        action_type:   evaluation.action_type   ?? evaluation.proposed_action?.action_type,
+        agent_id:      evaluation.agent_id      ?? evaluation.proposed_action?.agent_id,
+    }
     const decision = (ev.decision ?? 'approved').toLowerCase()
     const vc = VERDICT_CONFIG[decision] ?? VERDICT_CONFIG.approved
     // /api/evaluations returns flat tracker records: { sri_composite, sri_breakdown: { infrastructure, ... } }

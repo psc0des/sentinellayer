@@ -53,7 +53,7 @@ export default function Decisions() {
             </button>
             <ChevronRight className="w-3 h-3" />
             <span className="text-slate-300 font-medium truncate max-w-xs">
-              {drilldownEval.resource_id?.split('/').filter(Boolean).pop() ?? 'Detail'}
+              {(drilldownEval.resource_id ?? drilldownEval.proposed_action?.target?.resource_id)?.split('/').filter(Boolean).pop() ?? 'Detail'}
               {' '}
               <span className={
                 drilldownEval.decision?.toLowerCase() === 'approved'  ? 'text-emerald-400' :

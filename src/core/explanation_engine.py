@@ -177,7 +177,7 @@ class DecisionExplainer:
                 name = v.get("name", "Unknown Policy")
                 rule = v.get("rule", "")
                 severity = v.get("severity", "medium")
-                result.append(f"{pid} ({severity.upper()}) — {name}: {rule}")
+                result.append(f"{pid} ({severity.upper()}) — {name}{f': {rule}' if rule else ''}")
             else:
                 result.append(str(v))
         return result

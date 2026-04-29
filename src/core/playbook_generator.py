@@ -375,26 +375,32 @@ _TEMPLATES: dict[tuple[str, str], _Tmpl] = {
 
     ("update_config", "microsoft.compute/virtualmachines"): _Tmpl(
         cmd=(
-            "az vm boot-diagnostics enable --name {name} --resource-group {rg}"
+            "az vm update --resource-group {rg} --name {name} "
+            "--set osProfile.linuxConfiguration.disablePasswordAuthentication=true"
         ),
         args=[
-            "az", "vm", "boot-diagnostics", "enable",
-            "--name", "{name}", "--resource-group", "{rg}",
+            "az", "vm", "update",
+            "--resource-group", "{rg}",
+            "--name", "{name}",
+            "--set", "osProfile.linuxConfiguration.disablePasswordAuthentication=true",
         ],
         rollback=(
-            "az vm boot-diagnostics disable --name {name} --resource-group {rg}"
+            "az vm update --resource-group {rg} --name {name} "
+            "--set osProfile.linuxConfiguration.disablePasswordAuthentication=false"
         ),
         rollback_args=[
-            "az", "vm", "boot-diagnostics", "disable",
-            "--name", "{name}", "--resource-group", "{rg}",
+            "az", "vm", "update",
+            "--resource-group", "{rg}",
+            "--name", "{name}",
+            "--set", "osProfile.linuxConfiguration.disablePasswordAuthentication=false",
         ],
         outcome=(
-            "Boot diagnostics enabled on the VM — captures serial console output "
-            "and screenshots for post-restart debugging. Uses managed storage by "
-            "default in modern subscriptions. Append --storage <account> if an "
-            "explicit storage account is required."
+            "SSH password authentication disabled on the VM — only key-based "
+            "authentication will be accepted. Eliminates brute-force attack surface "
+            "on the SSH port. Ensure at least one SSH public key is installed before "
+            "applying to avoid locking out all access."
         ),
-        risk="low",
+        risk="medium",
         duration=60,
         downtime=False,
         what_if=False,
