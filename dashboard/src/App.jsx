@@ -162,6 +162,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   const [pendingReviews,  setPendingReviews]  = useState([])
   const [inventoryStatus, setInventoryStatus] = useState(null)
   const [loading,         setLoading]         = useState(true)
+  const [dataReady,       setDataReady]       = useState(false)
   const [error,           setError]           = useState(null)
   const [slackStatus,     setSlackStatus]     = useState(null)
   const [slackBtnLabel,   setSlackBtnLabel]   = useState('Slack Connected')
@@ -198,6 +199,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
     setScans(scansData.scans ?? [])
     setAlerts(alertsData.alerts ?? [])
     setInventoryStatus(invStatus)
+    setDataReady(true)
   }, [])
 
   const load = useCallback(async () => {
@@ -243,7 +245,7 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   if (error)   return <ErrorScreen message={error} onRetry={load} />
 
   const alertCount = alerts.filter(a => a.status === 'pending' || a.status === 'investigating').length
-  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll, loggedInUser }
+  const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll, loggedInUser, dataReady }
 
   return (
     <div className="min-h-screen text-slate-100 flex font-sans" style={{ background: 'var(--bg-base)', fontFamily: 'var(--font-ui)' }}>

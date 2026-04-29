@@ -1292,6 +1292,12 @@ export default function Alerts() {
                             : <>🔍 Investigate</>}
                         </button>
                       )}
+                      {alert.status === 'investigating' && (
+                        <span className="flex items-center gap-1.5 text-[11px] text-blue-400 font-medium justify-center">
+                          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0" />
+                          Investigating…
+                        </span>
+                      )}
                     </td>
 
                     {/* Chevron */}

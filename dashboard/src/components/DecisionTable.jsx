@@ -33,6 +33,14 @@ function formatTime(iso) {
   } catch { return iso }
 }
 
+// Cosmos DB internal fields that should never appear in user exports
+const _COSMOS_STRIP = ['_rid', '_self', '_etag', '_attachments', '_ts']
+
+function fmtSRI(val) {
+  if (val == null || isNaN(val)) return '—'
+  return (Math.round(val * 10) / 10).toFixed(1)
+}
+
 // Export helpers
 function exportCSV(rows) {
   const cols = ['action_id', 'timestamp', 'agent_id', 'action_type', 'resource_id', 'sri_composite', 'decision']
@@ -43,7 +51,12 @@ function exportCSV(rows) {
 }
 
 function exportJSON(rows) {
-  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' })
+  const clean = rows.map(r => {
+    const obj = { ...r }
+    _COSMOS_STRIP.forEach(f => delete obj[f])
+    return obj
+  })
+  const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json' })
   downloadBlob(blob, 'decisions.json')
 }
 
@@ -283,7 +296,7 @@ export default function DecisionTable({ evaluations, onSelect, onRefresh, initia
                     <AgentBadge agentId={ev.agent_id} />
                   </td>
                   <td className={`px-4 py-3 text-right font-bold tabular-nums text-xs ${sriColor(ev.sri_composite ?? 0)}`}>
-                    {(ev.sri_composite ?? 0).toFixed(1)}
+                    {fmtSRI(ev.sri_composite ?? 0)}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <VerdictBadge verdict={ev.decision} />

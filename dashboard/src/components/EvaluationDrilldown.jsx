@@ -15,7 +15,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react'
-import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub, rollbackAgentFix } from '../api'
+import { approveExecution, createPRFromManual, dismissExecution, executeAgentFix, fetchAgentFixPreview, fetchExecutionStatus, fetchExplanation, fetchTerraformStub, rollbackAgentFix, satisfyCondition } from '../api'
 import TerraformPROverlay from './TerraformPROverlay'
 import PlaybookPanel from './PlaybookPanel'
 import OverrideHistoryPanel from './OverrideHistoryPanel'
@@ -352,6 +352,8 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     const [agentFixResult, setAgentFixResult] = useState(null)
     const [terminalLines, setTerminalLines] = useState([])
     const [createPrLoading, setCreatePrLoading] = useState(false)
+    const [showDismissInput, setShowDismissInput] = useState(false)
+    const [dismissReasonDraft, setDismissReasonDraft] = useState('')
     const [createPrError, setCreatePrError] = useState(null)
     const [showPROverlay, setShowPROverlay] = useState(false)
     const [rollbackExecuting, setRollbackExecuting] = useState(false)
@@ -415,10 +417,16 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
         }
     }
 
-    async function handleDismiss(executionId, prefillReason = '') {
-        const reason = window.prompt('Reason for dismissal (optional):', prefillReason) ?? ''
+    function handleDismiss(executionId, prefillReason = '') {
+        setDismissReasonDraft(prefillReason)
+        setShowDismissInput(executionId)
+    }
+
+    async function confirmDismiss() {
+        const executionId = showDismissInput
+        setShowDismissInput(false)
         try {
-            const updated = await dismissExecution(executionId, reviewedBy || 'dashboard-user', reason)
+            const updated = await dismissExecution(executionId, reviewedBy || 'dashboard-user', dismissReasonDraft)
             setExecutionStatus(updated)
         } catch (err) {
             alert(`Dismiss failed: ${err.message}`)
@@ -1064,11 +1072,9 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                                     onClick={() => {
                                                         const who = prompt('Your name or email (for audit trail):')
                                                         if (!who) return
-                                                        fetch(`/api/execution/${executionStatus.execution_id}/condition/${idx}/satisfy`, {
-                                                            method: 'POST',
-                                                            headers: { 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify({ satisfied_by: who }),
-                                                        }).then(() => window.location.reload())
+                                                        satisfyCondition(executionStatus.execution_id, idx, who)
+                                                            .then(() => window.location.reload())
+                                                            .catch(err => alert(`Failed to satisfy condition: ${err.message}`))
                                                     }}
                                                     className="shrink-0 text-xs px-2.5 py-1 rounded bg-amber-500/20 border border-amber-400/30 text-amber-300 hover:bg-amber-500/30 transition-colors"
                                                 >
@@ -1219,6 +1225,30 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                 actionType={ev.action_type ?? ev.proposed_action?.action_type}
                 resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
             />
+
+            {/* Dismiss reason inline modal */}
+            {showDismissInput && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowDismissInput(false)}>
+                    <div className="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-md space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-sm font-semibold text-slate-200">Dismiss — add reason (optional)</h3>
+                        <textarea
+                            autoFocus
+                            rows={3}
+                            value={dismissReasonDraft}
+                            onChange={e => setDismissReasonDraft(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmDismiss() }}
+                            placeholder="Why is this being dismissed?"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 resize-none"
+                        />
+                        <div className="flex gap-2 justify-end">
+                            <button onClick={() => setShowDismissInput(false)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+                            <button onClick={confirmDismiss} className="px-4 py-1.5 text-sm bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 hover:text-red-200 rounded-lg font-medium transition-colors">
+                                Confirm Dismiss
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Terraform PR overlay — rendered at fixed position, outside scroll flow */}
             {showPROverlay && executionStatus && (

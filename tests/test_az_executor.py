@@ -93,6 +93,15 @@ def _in_memory_cosmos(tmp_path: Path) -> CosmosAzExecutionClient:
     ["az", "cosmosdb", "update", "--name", "my-cosmos", "--resource-group", "rg", "--default-consistency-level", "Session"],
     # Service Bus
     ["az", "servicebus", "namespace", "update", "--name", "my-sb", "--resource-group", "rg", "--sku", "Premium"],
+    # Virtual Machines
+    ["az", "vm", "restart", "--name", "vm-web-01", "--resource-group", "ruriskry-prod-rg"],
+    ["az", "vm", "update", "--resource-group", "ruriskry-prod-rg", "--name", "vm-web-01", "--set", "osProfile.linuxConfiguration.disablePasswordAuthentication=true"],
+    ["az", "vm", "update", "--resource-group", "rg", "--name", "vm-01", "--set", "osProfile.linuxConfiguration.disablePasswordAuthentication=false"],
+    ["az", "vm", "resize", "--name", "vm-dr-01", "--resource-group", "ruriskry-prod-rg", "--size", "Standard_DS2_v2"],
+    ["az", "vm", "delete", "--name", "vm-dr-01", "--resource-group", "ruriskry-prod-rg", "--yes"],
+    # NSG
+    ["az", "network", "nsg", "rule", "update", "--nsg-name", "nsg-east-prod", "--resource-group", "ruriskry-prod-rg", "--name", "AllowSSH", "--access", "Deny"],
+    ["az", "network", "nsg", "rule", "update", "--nsg-name", "nsg-east-prod", "--resource-group", "ruriskry-prod-rg", "--name", "AllowHTTP", "--access", "Allow"],
 ])
 def test_validate_command_allowlisted(args):
     assert validate_command(args) is True
@@ -106,7 +115,7 @@ def test_validate_command_allowlisted(args):
     # Not az
     (["bash", "-c", "rm -rf /"],                                     "not az"),
     # Unknown subcommand
-    (["az", "vm", "delete", "--name", "vm", "--resource-group", "rg"], "vm delete not in allowlist"),
+    (["az", "vm", "delete", "--name", "vm", "--resource-group", "rg"], "vm delete missing required --yes flag"),
     # Shell injection in resource name
     (["az", "webapp", "restart", "--name", "app; rm -rf /", "--resource-group", "rg"], "semicolon injection"),
     (["az", "webapp", "restart", "--name", "app$(whoami)", "--resource-group", "rg"], "subshell injection"),

@@ -89,6 +89,13 @@ _ALLOWLIST_PATTERNS: list[re.Pattern[str]] = [p for p in (re.compile(s) for s in
     rf'^az cosmosdb update --name {_RN} --resource-group {_RN} --default-consistency-level {_CL}$',
     # ── Service Bus ───────────────────────────────────────────────────────
     rf'^az servicebus namespace update --name {_RN} --resource-group {_RN} --sku {_SK}$',
+    # ── Virtual Machines ──────────────────────────────────────────────────
+    rf'^az vm restart --name {_RN} --resource-group {_RN}$',
+    rf'^az vm update --resource-group {_RN} --name {_RN} --set osProfile\.linuxConfiguration\.disablePasswordAuthentication=(?:true|false)$',
+    rf'^az vm resize --name {_RN} --resource-group {_RN} --size {_RN}$',
+    rf'^az vm delete --name {_RN} --resource-group {_RN} --yes$',
+    # ── Network Security Groups ───────────────────────────────────────────
+    rf'^az network nsg rule update --nsg-name {_RN} --resource-group {_RN} --name {_RN} --access (?:Allow|Deny)$',
 ])]
 
 
@@ -109,6 +116,11 @@ _TIMEOUT_OVERRIDES: dict[str, int] = {
     "acr update":                120,
     "webapp restart":            120,
     "functionapp restart":       120,
+    "vm restart":                300,
+    "vm update":                 120,
+    "vm resize":                 600,
+    "vm delete":                 300,
+    "network nsg rule update":    60,
 }
 
 

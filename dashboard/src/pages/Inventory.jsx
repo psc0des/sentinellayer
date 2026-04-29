@@ -315,34 +315,45 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Summary cards */}
+      {/* Summary cards — only render derived stats once inventory is loaded to avoid 0→N ticker flicker */}
       {invStatus?.exists && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <GlowCard glowColor="rgba(59,130,246,0.3)" className="p-4">
-            <div className="text-xs text-slate-500 mb-1">Total Resources</div>
-            <div className="text-2xl font-bold text-slate-100">
-              <NumberTicker value={invStatus.resource_count || 0} />
-            </div>
-          </GlowCard>
-          <GlowCard glowColor="rgba(16,185,129,0.3)" className="p-4">
-            <div className="text-xs text-slate-500 mb-1">Virtual Machines</div>
-            <div className="text-2xl font-bold text-slate-100">
-              <NumberTicker value={vmCount} />
-            </div>
-          </GlowCard>
-          <GlowCard glowColor="rgba(139,92,246,0.3)" className="p-4">
-            <div className="text-xs text-slate-500 mb-1">App Services</div>
-            <div className="text-2xl font-bold text-slate-100">
-              <NumberTicker value={appSvcCount} />
-            </div>
-          </GlowCard>
-          <GlowCard glowColor="rgba(245,158,11,0.3)" className="p-4">
-            <div className="text-xs text-slate-500 mb-1">Resource Types</div>
-            <div className="text-2xl font-bold text-slate-100">
-              <NumberTicker value={typeCount} />
-            </div>
-          </GlowCard>
-        </div>
+        loading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <GlowCard key={i} glowColor="rgba(59,130,246,0.15)" className="p-4">
+                <div className="h-3 w-24 bg-slate-700/60 rounded mb-2 animate-pulse" />
+                <div className="h-8 w-12 bg-slate-700/40 rounded animate-pulse" />
+              </GlowCard>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <GlowCard glowColor="rgba(59,130,246,0.3)" className="p-4">
+              <div className="text-xs text-slate-500 mb-1">Total Resources</div>
+              <div className="text-2xl font-bold text-slate-100">
+                <NumberTicker value={invStatus.resource_count || 0} />
+              </div>
+            </GlowCard>
+            <GlowCard glowColor="rgba(16,185,129,0.3)" className="p-4">
+              <div className="text-xs text-slate-500 mb-1">Virtual Machines</div>
+              <div className="text-2xl font-bold text-slate-100">
+                <NumberTicker value={vmCount} />
+              </div>
+            </GlowCard>
+            <GlowCard glowColor="rgba(139,92,246,0.3)" className="p-4">
+              <div className="text-xs text-slate-500 mb-1">App Services</div>
+              <div className="text-2xl font-bold text-slate-100">
+                <NumberTicker value={appSvcCount} />
+              </div>
+            </GlowCard>
+            <GlowCard glowColor="rgba(245,158,11,0.3)" className="p-4">
+              <div className="text-xs text-slate-500 mb-1">Resource Types</div>
+              <div className="text-2xl font-bold text-slate-100">
+                <NumberTicker value={typeCount} />
+              </div>
+            </GlowCard>
+          </div>
+        )
       )}
 
       {/* Filter row — only render after load to avoid count flicker (BUG-005) */}

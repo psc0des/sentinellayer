@@ -153,7 +153,7 @@ function PendingCard({ review, onNavigate }) {
       </div>
       <p className="text-xs text-slate-500 text-left">
         {(ev.proposed_action?.action_type ?? ev.action_type ?? '—').replace(/_/g, ' ')}
-        {ev.sri_composite != null && ` · SRI ${ev.sri_composite.toFixed(1)}`}
+        {ev.sri_composite != null && ` · SRI ${(Math.round(ev.sri_composite * 10) / 10).toFixed(1)}`}
       </p>
       <p className="text-xs text-slate-600 mt-1 text-left">
         {relativeTime(review.created_at ?? ev.timestamp)}
@@ -351,7 +351,7 @@ function OverrideMetricsCard({ data }) {
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function Overview() {
-  const { evaluations, metrics, agents, pendingReviews, alerts } = useOutletContext()
+  const { evaluations, metrics, agents, pendingReviews, alerts, dataReady } = useOutletContext()
   const navigate = useNavigate()
 
   const [recentScans, setRecentScans] = useState([])
@@ -579,7 +579,13 @@ export default function Overview() {
             )}
           </div>
 
-          {pendingReviews.length === 0 ? (
+          {!dataReady ? (
+            <div className="space-y-2">
+              {[...Array(2)].map((_, i) => (
+                <div key={i} className="h-16 rounded-lg bg-slate-800/60 border border-slate-700/40 animate-pulse" />
+              ))}
+            </div>
+          ) : pendingReviews.length === 0 ? (
             <div className="text-center py-8">
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-3">
                 <CheckCircle className="w-6 h-6 text-emerald-400" />
