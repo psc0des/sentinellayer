@@ -354,6 +354,8 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
     const [createPrLoading, setCreatePrLoading] = useState(false)
     const [showDismissInput, setShowDismissInput] = useState(false)
     const [dismissReasonDraft, setDismissReasonDraft] = useState('')
+    const [showSatisfyInput, setShowSatisfyInput] = useState(null) // condition index | null
+    const [satisfyWhoDraft, setSatisfyWhoDraft] = useState('')
     const [createPrError, setCreatePrError] = useState(null)
     const [showPROverlay, setShowPROverlay] = useState(false)
     const [rollbackExecuting, setRollbackExecuting] = useState(false)
@@ -430,6 +432,20 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
             setExecutionStatus(updated)
         } catch (err) {
             alert(`Dismiss failed: ${err.message}`)
+        }
+    }
+
+    async function confirmSatisfy() {
+        const idx = showSatisfyInput
+        const who = satisfyWhoDraft.trim() || reviewedBy || 'dashboard-user'
+        setShowSatisfyInput(null)
+        setSatisfyWhoDraft('')
+        try {
+            await satisfyCondition(executionStatus.execution_id, idx, who)
+            const fresh = await fetchExecutionStatus(executionStatus.execution_id)
+            setExecutionStatus(fresh)
+        } catch (err) {
+            alert(`Failed to satisfy condition: ${err.message}`)
         }
     }
 
@@ -1069,13 +1085,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                             </div>
                                             {!cond.satisfied && !cond.auto_checkable && (
                                                 <button
-                                                    onClick={() => {
-                                                        const who = prompt('Your name or email (for audit trail):')
-                                                        if (!who) return
-                                                        satisfyCondition(executionStatus.execution_id, idx, who)
-                                                            .then(() => window.location.reload())
-                                                            .catch(err => alert(`Failed to satisfy condition: ${err.message}`))
-                                                    }}
+                                                    onClick={() => { setSatisfyWhoDraft(''); setShowSatisfyInput(idx) }}
                                                     className="shrink-0 text-xs px-2.5 py-1 rounded bg-amber-500/20 border border-amber-400/30 text-amber-300 hover:bg-amber-500/30 transition-colors"
                                                 >
                                                     Confirm
@@ -1225,6 +1235,30 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                 actionType={ev.action_type ?? ev.proposed_action?.action_type}
                 resourceType={ev.resource_type ?? ev.proposed_action?.target?.resource_type}
             />
+
+            {/* Satisfy condition inline modal */}
+            {showSatisfyInput !== null && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowSatisfyInput(null)}>
+                    <div className="bg-slate-800 border border-slate-600 rounded-xl p-5 w-full max-w-md space-y-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-sm font-semibold text-slate-200">Confirm condition — enter your name or email</h3>
+                        <textarea
+                            autoFocus
+                            rows={2}
+                            value={satisfyWhoDraft}
+                            onChange={e => setSatisfyWhoDraft(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmSatisfy() }}
+                            placeholder="Your name or email (for audit trail)"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 resize-none"
+                        />
+                        <div className="flex gap-2 justify-end">
+                            <button onClick={() => setShowSatisfyInput(null)} className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+                            <button onClick={confirmSatisfy} className="px-4 py-1.5 text-sm bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 rounded-lg font-medium transition-colors">
+                                Confirm Condition
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Dismiss reason inline modal */}
             {showDismissInput && (
