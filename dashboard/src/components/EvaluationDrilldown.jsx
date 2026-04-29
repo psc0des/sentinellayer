@@ -605,7 +605,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                     {/* SRI composite — large number */}
                     <div className="sm:ml-auto text-right">
                         <div className={`text-4xl font-black tabular-nums ${vc.text}`}>
-                            {(sri.sri_composite ?? 0).toFixed(1)}
+                            {(Math.round((sri.sri_composite ?? 0) * 10) / 10).toFixed(1)}
                         </div>
                         <p className="text-xs text-slate-500">SRI™ Composite</p>
                     </div>
@@ -767,7 +767,7 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                 {/* Score transition */}
                                 <div className="flex items-center gap-3 mb-3">
                                     <span className={`text-lg font-bold tabular-nums ${vc.text}`}>
-                                        {(sri.sri_composite ?? 0).toFixed(1)}
+                                        {(Math.round((sri.sri_composite ?? 0) * 10) / 10).toFixed(1)}
                                     </span>
                                     <span className="text-slate-600">→</span>
                                     <span className={`text-lg font-bold tabular-nums ${cf.predicted_new_verdict === 'APPROVED' ? 'text-green-400' :
