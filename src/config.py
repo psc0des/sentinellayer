@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     azure_openai_api_key: str = ""
     azure_openai_api_key_secret_name: str = "foundry-primary-key"
     azure_openai_deployment: str = "gpt-4.1-mini"
-    azure_openai_api_version: str = "2025-01-01-preview"
+    azure_openai_api_version: str = "2025-03-01-preview"
 
     # --- Azure AI Search ---
     azure_search_endpoint: str = ""

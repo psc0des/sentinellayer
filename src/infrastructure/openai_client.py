@@ -1,6 +1,6 @@
-"""Microsoft Foundry client wrapper — GPT-4.1 calls for governance reasoning.
+"""Microsoft Foundry client wrapper — gpt-4.1-mini calls for governance reasoning.
 
-The Foundry account and GPT-4.1 model deployment are Terraform-managed
+The Foundry account and gpt-4.1-mini model deployment are Terraform-managed
 (azurerm_ai_services + azurerm_cognitive_deployment in infrastructure/terraform-core/).
 After `terraform apply`, run `bash scripts/setup_env.sh` to auto-populate .env
 with the endpoint and key from Terraform outputs.
@@ -8,8 +8,8 @@ with the endpoint and key from Terraform outputs.
 Required env vars (written automatically by setup_env.sh):
     AZURE_OPENAI_ENDPOINT   — from Terraform output: foundry_endpoint
     AZURE_OPENAI_API_KEY    — from Terraform output: foundry_primary_key
-    AZURE_OPENAI_DEPLOYMENT — from Terraform output: foundry_deployment (default "gpt-41")
-    AZURE_OPENAI_API_VERSION — 2025-01-01-preview
+    AZURE_OPENAI_DEPLOYMENT — from Terraform output: foundry_deployment (default "gpt-4.1-mini")
+    AZURE_OPENAI_API_VERSION — 2025-03-01-preview
 
 Mode selection
 --------------
