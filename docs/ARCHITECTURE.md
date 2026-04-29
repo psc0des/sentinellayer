@@ -989,3 +989,29 @@ glossary.json
 - **Schema enforcement.** `dashboard/scripts/validate-glossary.mjs` checks unique ids, valid categories (`verdict | agent | tier | score | playbook | concept`), `short ≤ 140` chars, and that every `related` id resolves to a real entry.
 - **Click-only popovers.** No hover trigger — works on mobile and avoids accidental opens. Popovers ESC-close and click-outside-close, with `aria-expanded` / `aria-controls` for screen readers.
 - **No live data in glossary.** Definitional only — keeps content from rotting when thresholds or capacities change.
+
+## Dashboard Layout Conventions (Phase 37)
+
+These rules govern page-level width and layout decisions. Follow them for any new page or major card restructure.
+
+**Page width caps**
+
+| Context | Tailwind class | When to use |
+|---|---|---|
+| Data-dense pages (tables, grids, drilldowns) | `max-w-7xl` (1280px) | All dashboard pages except reading content |
+| Reading/reference content | `max-w-5xl` (1024px) | Glossary, docs-style pages |
+| Admin / config | `max-w-5xl` (1024px) | Functional but not table-heavy |
+
+No page uses `max-w-full` or edge-to-edge — dashboards look broken on ultrawide without a cap.
+
+**2-column sections (`lg:grid-cols-2 gap-6`)**
+
+Use when two cards are related but independent (e.g., System Config + Danger Zone on Admin, Audit Trail + Override History on Drilldown). Grid activates at `lg` (1024px+); below that cards stack.
+
+**3-column hero headers (`lg:grid-cols-3`)**
+
+Used in `EvaluationDrilldown` verdict header: left 2 cols = verdict badge + metadata grid, right 1 col = SRI composite hero + action reason. The `lg:col-span-2` / `lg:col-span-1` split gives the metadata area 2× the space of the summary panel.
+
+**Inline stat rows (label | bar | annotation)**
+
+For breakdown bars with a fixed label and a fixed annotation, use: `flex items-center gap-3` → `w-48 shrink-0` label → `flex-1` bar container → `w-36 shrink-0 text-right` annotation. Bars then fill the remaining width between label and annotation regardless of page width.
