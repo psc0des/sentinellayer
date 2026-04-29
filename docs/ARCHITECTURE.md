@@ -837,13 +837,15 @@ DecisionExplanation (cached by action_id)
 - ESCALATED → "if cost reduced → score drops to Y → APPROVED"
 - APPROVED → "if tagged critical → score rises to Z → ESCALATED"
 
-**Frontend — EvaluationDrilldown.jsx (6 sections):**
+**Frontend — EvaluationDrilldown.jsx (8 sections):**
 1. Verdict header — large badge, SRI composite score, resource/agent/timestamp
 2. SRI™ Dimensional Breakdown — 4 horizontal bars, ⭐ marks the primary factor
 3. Decision Explanation — gpt-4.1-mini summary, primary factor callout, risk highlights, policy violations
 4. Counterfactual Analysis — score-transition cards ("X.X → Y.Y → VERDICT pill")
 5. Agent Reasoning — proposing agent's reason + per-governance-agent assessments
-6. Audit Trail — UUID, timestamp, collapsible raw JSON
+6. Execution Status — action buttons (Create Terraform PR, Fix by Agent, Open Portal, Decline), PR link, conditions panel, rollback
+7. Tier 3 Remediation Playbook — PlaybookPanel (Phase 34D)
+8. Audit Trail + Override History — UUID, timestamp, collapsible raw JSON; side-by-side with OverrideHistoryPanel on lg+
 
 **SRI data format note** — the stored tracker record uses a flat format (`sri_composite` +
 `sri_breakdown.{infrastructure,policy,historical,cost}`). The frontend maps this to the
@@ -916,7 +918,8 @@ dashboard/
     │   ├── Overview.jsx          # Landing: NumberTicker metrics, gradient SRI AreaChart, AlertsCard (rose glow if firing), ExecutionMetricsCard, pending reviews, scan history
     │   ├── Agents.jsx            # Enterprise agents page — useScanManager + AgentCardGrid + ScanHistoryTable + ScanLogViewer (single-system architecture)
     │   ├── Decisions.jsx         # DecisionTable + EvaluationDrilldown (breadcrumb nav)
-    │   ├── Alerts.jsx             # Azure Monitor alert investigations — table + severity/status filters + drilldown panel;
+    │   ├── Alerts.jsx             # Azure Monitor alert investigations — grouped table (same resource+metric collapsed to ×N row,
+    │   │                          #   expand chevron reveals individual rows) + severity/status filters + drilldown panel;
     │   │                          #   "🔍 Investigate" button in table row AND AlertPanel (pending alerts only);
     │   │                          #   AlertPanel: live Investigation Log terminal (polls /api/alerts/{id}/status 1.5s);
     │   │                          #   AlertFindingActions: per-finding action buttons (📝 Terraform PR, 🤖 Fix by Agent,
