@@ -169,29 +169,29 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   const [slackStatus,     setSlackStatus]     = useState(null)
   const [slackBtnLabel,   setSlackBtnLabel]   = useState('Slack Connected')
 
-  // Stabilized alert badge — decreases are delayed 6 s so a single-poll dip
-  // (backend processing race) doesn't cause a visible flash in the sidebar.
+  // Stabilized alert badge — requires 3 consecutive polls agreeing on a lower
+  // count before the badge decreases. Increases apply immediately. This means
+  // a 1- or 2-poll backend blip (processing race, in-memory/Cosmos lag) never
+  // flashes in the sidebar; genuine decreases show after ~15 s.
   const [alertCount, setAlertCount] = useState(0)
-  const alertDecreaseTimerRef = useRef(null)
-  const nextAlertCountRef     = useRef(0)
+  const alertLowerSamplesRef = useRef([])   // consecutive lower-count readings
   useEffect(() => {
     const newCount = alerts.filter(a => a.status === 'pending' || a.status === 'investigating').length
     setAlertCount(prev => {
       if (newCount >= prev) {
-        if (alertDecreaseTimerRef.current) { clearTimeout(alertDecreaseTimerRef.current); alertDecreaseTimerRef.current = null }
+        alertLowerSamplesRef.current = []   // reset on increase
         return newCount
       }
-      nextAlertCountRef.current = newCount
-      if (!alertDecreaseTimerRef.current) {
-        alertDecreaseTimerRef.current = setTimeout(() => {
-          setAlertCount(nextAlertCountRef.current)
-          alertDecreaseTimerRef.current = null
-        }, 6000)
+      // Decrease: only apply after 3 consecutive polls with the same lower value
+      const samples = [...alertLowerSamplesRef.current.slice(-2), newCount]
+      alertLowerSamplesRef.current = samples
+      if (samples.length >= 3 && samples.every(s => s === newCount)) {
+        alertLowerSamplesRef.current = []
+        return newCount
       }
       return prev
     })
   }, [alerts])
-  useEffect(() => () => { if (alertDecreaseTimerRef.current) clearTimeout(alertDecreaseTimerRef.current) }, [])
 
   // Onboarding modal: shown once after fresh Setup → login flow.
   // Dismissed state is persisted to localStorage so it never appears again.
