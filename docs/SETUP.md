@@ -45,6 +45,8 @@ Security notes:
 - ACR `admin_enabled = false` — credentials never appear in tfstate or env vars
 - Foundry `local_authentication_enabled = false` — Managed Identity only; agents use `DefaultAzureCredential` so local dev (`az login`) still works unchanged. The Container App MI is granted the `Cognitive Services OpenAI User` role via `azurerm_role_assignment.foundry_openai_user` in Terraform — without this role, all agent scans fail with 401 PermissionDenied.
 - The Container App MI is granted `Reader` at subscription scope (`azurerm_role_assignment.subscription_reader`). This single role covers all Microsoft API safety nets used by all three operational agents: Azure Advisor (`Microsoft.Advisor/recommendations/read`), Microsoft Defender for Cloud (`Microsoft.Security/assessments/read`), and Azure Policy (`Microsoft.PolicyInsights/policyStates/read`). No additional role assignments are needed for these APIs.
+
+**Phase 40 — Rules engine coverage:** `GET /api/coverage/status` runs preflight checks against all five Microsoft APIs (resource_graph, advisor, policy_insights, defender, resource_health) and reports which are accessible. If any return `403`, a `CoverageStatusBanner` appears on the Agents page with the missing role. The 34-rule deterministic engine (Layer 1 + Layer 3) always runs regardless of API availability. To disable the rules engine entirely: `USE_RULES_ENGINE=false` (env var). Default: `true`.
 - Cosmos DB and Key Vault accessed via Managed Identity (no API keys in tfstate)
 - Slack webhook stored as a Key Vault secret, injected via Container App secret mechanism
 - CORS enforced at the FastAPI application layer using `DASHBOARD_URL` env var
@@ -305,7 +307,7 @@ pip install -r requirements.txt
 
 # 2. Run tests — no Azure credentials needed (mock mode)
 pytest tests/ -v
-# Expected: 1225 passed, 0 failed
+# Expected: 1397 passed, 0 failed
 
 # 3a. Mock mode (no Azure needed) — set in .env
 echo "USE_LOCAL_MOCKS=true" > .env

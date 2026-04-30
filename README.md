@@ -11,7 +11,7 @@
 
 RuriSkry is two systems in one: a team of **Azure AI Cloud Ops Agents** (Monitoring, Cost, Deploy) that propose fixes to your infrastructure — and an **AI Change Advisory Board** (Policy, Blast Radius, Historical, Financial) that simulates, scores, and adjudicates every proposed action *before* it touches production. Ops agents supply the changes; the CAB decides whether they ship.
 
-Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1243 automated tests.
+Born at the Microsoft AI Dev Days Hackathon 2026, RuriSkry has since matured into a fully async, enterprise-ready governance engine with live Azure topology analysis, a 34-rule deterministic rules engine, durable audit trails (Cosmos DB), Slack alerting, explainable AI verdicts with counterfactual analysis, operator override feedback capture, and 1397 automated tests.
 
 ---
 
@@ -111,6 +111,28 @@ cannot dominate. This enables **remediation intent detection**: when an ops agen
 security issue (not creating one), the LLM recognises that intent and reduces the risk score
 rather than blocking the fix.
 
+### Universal Rules Engine (Phase 40)
+Before any LLM call, a **34-rule deterministic engine** scans every resource in the inventory
+against a self-registering `@rule` decorator registry. Rules are organised into three layers:
+
+- **Layer 1 — Universal rules (UNIV-*):** 26 rules that fire on any resource sharing a common
+  property — public network access, TLS version, managed identity, missing tags, unattached
+  disks, single-region data services, and more. These give broad coverage across all 311+
+  Azure resource types without per-type special-casing.
+- **Layer 2 — Microsoft API enrichment:** Azure Advisor, Defender for Cloud, Policy Insights,
+  Resource Health — require `Reader` (or richer roles). A preflight check at `GET /api/coverage/status`
+  reports which APIs are accessible; 403 responses surface the missing role in an amber
+  `CoverageStatusBanner` on the Agents page.
+- **Layer 3 — Type-aware rules (TYPE-*):** 8 rules that inspect deep service-specific schema
+  fields — NSG inbound rules (SSH/RDP exposed to internet), AKS autoscaler state, SQL failover
+  groups, Cosmos auto-failover, App Service client certs.
+
+Rule findings are injected into the LLM prompt as confirmed context before the LLM runs.
+The LLM acts as an **enricher and validator**, not a discoverer. Post-scan, proposals are
+deduplicated by `(resource_id, action_type)` with rule-derived entries winning. A
+`coverage_manifest` (rules applied, matched, types uncovered) is stored in every scan record
+and rendered in the scan log modal.
+
 ### Two-Layer Intelligence
 Operational agents aren't blind action-proposers — they query **real Azure data** (Resource
 Graph tags, Monitor metrics, NSG rules, activity logs) via gpt-4.1-mini before proposing. RuriSkry
@@ -118,13 +140,15 @@ then provides an **independent second opinion** using 4 governance agents in par
 agent catches obvious risks; RuriSkry catches what the ops agent missed.
 
 Each operational agent has enterprise-grade system instructions:
-All three operational agents use a **three-phase detection pipeline**: (1) Microsoft APIs
-(Azure Advisor, Defender for Cloud, Azure Policy) run **first** — deterministic, confirmed
-findings injected into the LLM prompt as context; (2) LLM investigates confirmed findings
-with real metric data (CPU%, power state, activity log) and scans for anything the APIs missed
-using open-ended KQL (no hardcoded resource type filters — discovers all 200+ Azure types);
-(3) post-scan safety net auto-proposes any finding the LLM skipped, using the already-computed
-API results (no duplicate API calls). Each phase deduplicates against the others.
+All three operational agents use a **four-phase detection pipeline**: (0) Universal + type-aware
+rules engine runs deterministically against the full inventory before any API or LLM call —
+findings injected into the LLM prompt as confirmed context; (1) Microsoft APIs (Azure Advisor,
+Defender for Cloud, Azure Policy) run next — deterministic, confirmed findings further enriching
+the prompt; (2) LLM investigates confirmed findings with real metric data (CPU%, power state,
+activity log) and scans for anything the APIs missed using open-ended KQL (no hardcoded resource
+type filters — discovers all 200+ Azure types); (3) post-scan safety net auto-proposes any
+finding the LLM skipped, using already-computed results (no duplicate calls). Each phase
+deduplicates against the others — rule-derived proposals always win.
 The **Monitoring Agent** runs a 6-step proactive scan covering VM power state, database health,
 container app health, observability gaps, and orphaned resources — and handles 5 distinct Azure
 Monitor alert types with evidence-specific investigation steps. The **Deploy Agent** audits 9
