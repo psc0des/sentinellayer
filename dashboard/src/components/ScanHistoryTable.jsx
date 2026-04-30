@@ -6,7 +6,7 @@
  * ScanLogViewer in historical mode.
  */
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchScanHistory, cancelScan } from '../api'
 import {
@@ -84,6 +84,13 @@ function scanDuration(started, completed) {
   return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
+function elapsedSince(started) {
+  if (!started) return null
+  const s = Math.round((Date.now() - new Date(started).getTime()) / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
 function normalizeAgentType(scan) {
   // API returns agent_type or source, normalize for filtering
   return scan.agent_type || scan.source || ''
@@ -114,6 +121,22 @@ export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey
   const [statusFilter, setStatusFilter] = useState('')
   // Track scan IDs cancelled directly from this table (for immediate "Cancelling" display)
   const [tableCancelling, setTableCancelling] = useState(new Set())
+  // Tick every second to refresh elapsed time for running scans
+  const [, setTick] = useState(0)
+  const tickRef = useRef(null)
+
+  useEffect(() => {
+    const hasRunning = scans.some(s => s.status === 'running')
+    if (hasRunning && !tickRef.current) {
+      tickRef.current = setInterval(() => setTick(t => t + 1), 1000)
+    } else if (!hasRunning && tickRef.current) {
+      clearInterval(tickRef.current)
+      tickRef.current = null
+    }
+    return () => {}
+  }, [scans])
+
+  useEffect(() => () => { if (tickRef.current) clearInterval(tickRef.current) }, [])
 
   const loadScans = useCallback(() => {
     setLoading(true)
@@ -325,7 +348,9 @@ export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey
 
                     {/* Duration */}
                     <td className="py-3 pr-4 text-xs text-slate-400 tabular-nums">
-                      {scanDuration(scan.started_at, scan.completed_at) ?? '\u2014'}
+                      {scan.status === 'running'
+                        ? <span className="text-yellow-400">{elapsedSince(scan.started_at) ?? '\u2026'}</span>
+                        : (scanDuration(scan.started_at, scan.completed_at) ?? '\u2014')}
                     </td>
 
                     {/* Verdicts */}

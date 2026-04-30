@@ -7,7 +7,9 @@ Exclude resource types that cannot be tagged (e.g., extension child resources).
 from src.rules.base import Category, Finding, Severity, rule
 from src.rules.inventory_index import InventoryIndex
 
-# Resource types that legitimately have no tags and should not be flagged
+# Resource types that legitimately have no tags and should not be flagged.
+# Child/infrastructure resources inherit ownership from their parent and adding
+# tags independently would create maintenance burden without adding signal.
 _SKIP_TYPES = {
     "microsoft.compute/virtualmachines/extensions",
     "microsoft.insights/diagnosticsettings",
@@ -15,6 +17,16 @@ _SKIP_TYPES = {
     "microsoft.authorization/roleassignments",
     "microsoft.authorization/roledefinitions",
     "microsoft.network/networkwatchers/flowlogs",
+    # Child resources that inherit ownership from their parent VM/resource
+    "microsoft.compute/disks",                        # OS/data disks (child of VM)
+    "microsoft.network/networkinterfaces",            # NICs (child of VM)
+    # Monitoring infrastructure — auto-created, not independently ownable
+    "microsoft.insights/scheduledqueryrules",         # Alert rules
+    "microsoft.insights/activitylogalerts",           # Activity log alerts
+    "microsoft.insights/datacollectionrules",         # DCRs
+    "microsoft.devtestlab/schedules",                 # VM auto-shutdown schedules
+    "microsoft.maintenance/maintenanceconfigurations", # Maintenance configs
+    "microsoft.compute/snapshots",                    # Snapshots (point-in-time, ephemeral)
 }
 
 

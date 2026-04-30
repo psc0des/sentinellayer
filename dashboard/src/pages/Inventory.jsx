@@ -266,6 +266,9 @@ export default function Inventory() {
             <p className="text-xs text-slate-500 mt-0.5">
               Last refreshed: {formatAge(ageHours)}
               {invStatus.refreshed_at && ` (${new Date(invStatus.refreshed_at).toLocaleString()})`}
+              {' '}· This is the shared Cosmos snapshot. Each agent may use a
+              different internal cache during scanning — use <strong>Run All Agents</strong> to
+              ensure all agents operate on the same snapshot.
             </p>
           )}
         </div>

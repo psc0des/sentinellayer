@@ -499,8 +499,11 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
         setAgentFixLoading(true)
         setAgentFixExpanded(true)
         setTerminalLines([])
+        const timeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Request timed out after 30s — the execution plan endpoint is slow. Try again.')), 30_000)
+        )
         try {
-            const data = await fetchAgentFixPreview(executionId)
+            const data = await Promise.race([fetchAgentFixPreview(executionId), timeout])
             setAgentFixPreview(data)
         } catch (err) {
             setAgentFixPreview({ commands: [`# Error: ${err.message}`], warning: '' })
@@ -925,9 +928,13 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                                 <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={() => handleAgentFixPreview(executionStatus.execution_id)}
-                                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 rounded-lg text-sm font-medium transition-colors"
+                                        disabled={agentFixLoading}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
                                     >
-                                        🤖 {agentFixExpanded ? 'Hide' : 'Fix using'} Agent
+                                        {agentFixLoading
+                                            ? <><span className="w-3.5 h-3.5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" /> Generating plan…</>
+                                            : <>🤖 {agentFixExpanded ? 'Hide' : 'Fix using'} Agent</>
+                                        }
                                     </button>
                                     {ev.resource_id && (
                                         <a
@@ -1119,9 +1126,13 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
 
                                     <button
                                         onClick={() => handleAgentFixPreview(executionStatus.execution_id)}
-                                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 rounded-lg text-sm font-medium transition-colors"
+                                        disabled={agentFixLoading}
+                                        className="flex items-center gap-1.5 px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
                                     >
-                                        🤖 {agentFixExpanded ? 'Hide' : 'Fix using'} Agent
+                                        {agentFixLoading
+                                            ? <><span className="w-3.5 h-3.5 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" /> Generating plan…</>
+                                            : <>🤖 {agentFixExpanded ? 'Hide' : 'Fix using'} Agent</>
+                                        }
                                     </button>
 
                                     <button
@@ -1286,7 +1297,10 @@ export default function EvaluationDrilldown({ evaluation, onBack, reviewedBy }) 
                             rows={3}
                             value={dismissReasonDraft}
                             onChange={e => setDismissReasonDraft(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmDismiss() }}
+                            onKeyDown={e => {
+                                if (e.key === 'Escape') setShowDismissInput(false)
+                                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmDismiss()
+                            }}
                             placeholder="Why is this being dismissed?"
                             className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-slate-500 resize-none"
                         />

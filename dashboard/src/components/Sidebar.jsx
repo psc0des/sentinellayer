@@ -118,6 +118,7 @@ export default function Sidebar({ pendingCount = 0, alertCount = 0, loggedInUser
                   {/* Active alerts badge */}
                   {to === '/alerts' && alertCount > 0 && (
                     <span
+                      title="Active alerts (pending + investigating) — may decrease when agents auto-process alerts during scans"
                       className="text-[10px] font-bold text-white rounded-full px-1.5 min-w-[18px] text-center leading-[18px] font-mono"
                       style={{
                         background: 'linear-gradient(135deg, #ef4444, #dc2626)',
@@ -132,6 +133,7 @@ export default function Sidebar({ pendingCount = 0, alertCount = 0, loggedInUser
                   {/* Pending badge on Decisions */}
                   {to === '/decisions' && pendingCount > 0 && (
                     <span
+                      title="Human review queue — items needing manual approval or dismissal (ESCALATED + APPROVED_IF). Auto-approved verdicts are not counted here."
                       className="text-[10px] font-bold text-white rounded-full px-1.5 min-w-[18px] text-center leading-[18px] font-mono"
                       style={{
                         background: 'linear-gradient(135deg, #f59e0b, #d97706)',

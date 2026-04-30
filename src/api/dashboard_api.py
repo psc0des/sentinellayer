@@ -58,6 +58,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import uuid
@@ -578,6 +579,10 @@ _scan_events: dict[str, asyncio.Queue] = {}
 # Scan IDs whose background tasks should stop at the next checkpoint.
 _scan_cancelled: set[str] = set()
 
+# How many proposals to evaluate in parallel inside _run_agent_scan.
+# Override via PROPOSAL_BATCH_SIZE env var (default 4).
+_PROPOSAL_BATCH_SIZE = int(os.getenv("PROPOSAL_BATCH_SIZE", "4"))
+
 # ---------------------------------------------------------------------------
 # Inventory refresh in-memory state
 # Keyed by refresh_id (UUID str).  Values:
@@ -690,12 +695,162 @@ async def _snapshot_scanned_resources(resource_group: str | None) -> list[dict]:
         return []
 
 
+async def _evaluate_proposal(
+    scan_id: str,
+    agent_type: str,
+    action: "ProposedAction",
+    index: int,
+    total: int,
+    pipeline: Any,
+) -> "tuple[Any, dict]":
+    """Evaluate a single proposal through the governance pipeline and emit all SSE events.
+
+    Returns ``(verdict, eval_dict)`` where ``eval_dict`` is the JSON-serialised
+    verdict ready to append to ``evaluations``.  Caller is responsible for
+    ``tracker.record()``, ``update_agent_stats()``, and totals bookkeeping so
+    that those side-effects are never executed concurrently.
+    """
+    from src.core.models import GovernanceVerdict as _GV  # noqa: PLC0415
+
+    resource_name = action.target.resource_id.split("/")[-1]
+
+    await _emit_event(
+        scan_id,
+        "analysis",
+        agent=agent_type,
+        index=index,
+        total=total,
+        resource_id=resource_name,
+        action_type=action.action_type.value,
+        message=(
+            f"[{index}/{total}] Analysing {resource_name} "
+            f"for action {action.action_type.value}."
+        ),
+    )
+    await _emit_event(
+        scan_id,
+        "reasoning",
+        agent=agent_type,
+        resource_id=resource_name,
+        action_type=action.action_type.value,
+        message=f"Reasoning: {action.reason}",
+    )
+    await _emit_event(
+        scan_id,
+        "proposal",
+        agent=agent_type,
+        resource_id=resource_name,
+        action_type=action.action_type.value,
+        message=f"Proposing {action.action_type.value} on {resource_name}",
+    )
+    logger.info(
+        "scan %s (%s): evaluating %d/%d — %s %s",
+        scan_id[:8], agent_type, index, total,
+        action.action_type.value, resource_name,
+    )
+    await _emit_event(
+        scan_id, "evaluation",
+        agent=agent_type,
+        index=index, total=total,
+        resource_id=resource_name,
+        action_type=action.action_type.value,
+        message=f"[{index}/{total}] Evaluating {action.action_type.value} on {resource_name}…",
+    )
+
+    # ── Phase 33B: Streaming or legacy evaluation ──────────────────────────
+    if settings.use_workflows:
+        verdict = None
+        async for item in pipeline.evaluate_streaming(action):
+            if isinstance(item, _GV):
+                verdict = item
+            else:
+                event_type, ev_kwargs = item
+                await _emit_event(
+                    scan_id, event_type,
+                    agent=agent_type,
+                    index=index, total=total,
+                    **ev_kwargs,
+                )
+        if verdict is None:
+            raise RuntimeError(f"scan {scan_id[:8]}: workflow returned no verdict")
+    else:
+        verdict = await pipeline.evaluate(action)
+
+    decision = verdict.decision.value
+    sri = verdict.skry_risk_index.sri_composite
+    tier_label = (
+        " [Tier-1]" if getattr(verdict, "triage_mode", "") == "deterministic" else ""
+    )
+
+    logger.info(
+        "scan %s (%s): verdict for %s — %s (SRI %.1f)",
+        scan_id[:8], agent_type, resource_name, decision, sri,
+    )
+    await _emit_event(
+        scan_id, "verdict",
+        agent=agent_type,
+        resource_id=resource_name,
+        decision=decision,
+        sri_composite=sri,
+        triage_mode=getattr(verdict, "triage_mode", None),
+        message=f"RuriSkry verdict: {decision.upper()}{tier_label} (SRI {sri:.1f}) — {resource_name}",
+    )
+
+    # --- Execution Gateway (Phase 21) ---
+    try:
+        resource_tags = await _get_resource_tags(action.target.resource_id)
+        exec_record = await _get_execution_gateway().process_verdict(verdict, resource_tags)
+        logger.info(
+            "scan %s (%s): execution status=%s for %s",
+            scan_id[:8], agent_type,
+            exec_record.status.value, resource_name,
+        )
+        await _emit_event(
+            scan_id, "execution",
+            agent=agent_type,
+            resource_id=resource_name,
+            execution_id=exec_record.execution_id,
+            execution_status=exec_record.status.value,
+            iac_managed=exec_record.iac_managed,
+            pr_url=exec_record.pr_url,
+            message=(
+                f"Execution: {exec_record.status.value}"
+                + (f" — PR #{exec_record.pr_number}" if exec_record.pr_number else "")
+                + (
+                    f" — {exec_record.notes}"
+                    if exec_record.notes and exec_record.status.value in ("failed", "manual_required")
+                    else ""
+                )
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "scan %s (%s): execution gateway failed — %s (verdict still valid)",
+            scan_id[:8], agent_type, exc,
+        )
+
+    verdict_id = verdict.action_id
+    logger.info(
+        "scan %s (%s): verdict %s persisted to audit trail",
+        scan_id[:8], agent_type, str(verdict_id)[:8],
+    )
+    await _emit_event(
+        scan_id, "persisted",
+        agent=agent_type,
+        verdict_id=str(verdict_id),
+        message=f"Verdict persisted to audit trail (ID: {str(verdict_id)[:8]}…)",
+    )
+
+    return verdict, verdict.model_dump(mode="json")
+
+
 async def _run_agent_scan(
     scan_id: str,
     agent_type: str,
     resource_group: str | None,
     subscription_id: str | None = None,
     inventory_mode: str = "existing",
+    shared_inventory: list[dict] | None = None,
 ) -> None:
     """Background coroutine: run one ops agent, evaluate all proposals, persist results.
 
@@ -705,11 +860,14 @@ async def _run_agent_scan(
 
     Parameters
     ----------
-    scan_id:          UUID string used as the key in ``_scans``.
-    agent_type:       One of ``"cost"``, ``"monitoring"``, or ``"deploy"``.
-    resource_group:   Optional Azure resource group to scope the scan to.
-    subscription_id:  Optional override for the configured Azure subscription.
-    inventory_mode:   "existing" | "refresh" | "skip"
+    scan_id:           UUID string used as the key in ``_scans``.
+    agent_type:        One of ``"cost"``, ``"monitoring"``, or ``"deploy"``.
+    resource_group:    Optional Azure resource group to scope the scan to.
+    subscription_id:   Optional override for the configured Azure subscription.
+    inventory_mode:    "existing" | "refresh" | "skip"
+    shared_inventory:  Pre-fetched resource list (from /scan/all).  When set,
+                       the inventory build/fetch step is skipped entirely so all
+                       three agents operate on an identical snapshot.
     """
     from src.core.pipeline import RuriSkryPipeline
     from src.operational_agents.cost_agent import CostOptimizationAgent
@@ -727,6 +885,11 @@ async def _run_agent_scan(
         message=f"Starting {agent_type} scan for resource_group={rg_label}",
     )
 
+    # BUG #17: update last_seen at scan start so agent card reflects active scan
+    registry_name_start = _AGENT_REGISTRY_NAMES.get(agent_type)
+    if registry_name_start:
+        _get_registry().register_agent(registry_name_start)
+
     # Snapshot all resources in scope now, before the agent runs.
     # This gives the Audit Log a complete picture of what was examined —
     # not just the resources that were flagged.
@@ -742,7 +905,16 @@ async def _run_agent_scan(
     # Build or fetch inventory based on inventory_mode
     # ------------------------------------------------------------------
     inventory: list[dict] | None = None
-    if inventory_mode != "skip" and sub_id:
+    if shared_inventory is not None:
+        # Caller (e.g. /scan/all) already fetched a single snapshot — reuse it
+        # so all three agents see identical resource data and no redundant Azure
+        # calls are made.
+        inventory = shared_inventory
+        await _emit_event(
+            scan_id, "info", agent=agent_type,
+            message=f"Using shared inventory snapshot ({len(inventory)} resources).",
+        )
+    elif inventory_mode != "skip" and sub_id:
         try:
             cosmos_inv = _get_cosmos_inventory()
             if inventory_mode == "refresh":
@@ -791,6 +963,14 @@ async def _run_agent_scan(
 
     try:
         # --- Pick the right ops agent and run scan ---
+        inv_count = len(inventory) if inventory else 0
+        await _emit_event(
+            scan_id, "analysis", agent=agent_type,
+            message=(
+                f"Running rules pre-scan on {inv_count} resource(s) and starting "
+                f"LLM discovery… This may take several minutes for large subscriptions."
+            ),
+        )
         if agent_type == "cost":
             agent = CostOptimizationAgent()
             proposals = await agent.scan(target_resource_group=resource_group, inventory=inventory)
@@ -999,10 +1179,25 @@ async def _run_agent_scan(
         _scans[scan_id]["pending_proposals"] = [
             p.model_dump(mode="json") for p in proposals
         ]
+        # Persist proposals_count immediately so the Scan History table shows
+        # the real proposal count during the evaluation loop (not 0 until done).
+        _scans[scan_id]["proposals_count"] = len(proposals)
         _persist_scan_record(scan_id)
 
-        for i, action in enumerate(proposals, start=1):
-            # Check cancellation flag before each evaluation
+        # ── Batched parallel evaluation ────────────────────────────────────
+        # Proposals are evaluated in batches of _PROPOSAL_BATCH_SIZE.  Within
+        # each batch asyncio.gather() runs all coroutines concurrently so the
+        # LLM calls overlap, cutting wall-clock eval time by ~4×.
+        #
+        # Cancellation is checked BEFORE each batch (not per-proposal) to keep
+        # the check out of the concurrent helpers.  tracker.record() and
+        # update_agent_stats() happen here in the main loop (not inside
+        # _evaluate_proposal) to avoid race conditions on shared state.
+        # _persist_scan_record is called once per batch rather than per-proposal
+        # to reduce Cosmos write pressure.
+        total_proposals = len(proposals)
+        for batch_start in range(0, total_proposals, _PROPOSAL_BATCH_SIZE):
+            # Check cancellation flag before each batch
             if scan_id in _scan_cancelled:
                 _scan_cancelled.discard(scan_id)
                 logger.info("scan %s (%s): cancelled by request", scan_id[:8], agent_type)
@@ -1023,157 +1218,50 @@ async def _run_agent_scan(
                 await _emit_event(scan_id, "scan_error", message="Scan cancelled by user.")
                 return
 
-            resource_name = action.target.resource_id.split("/")[-1]
-            await _emit_event(
-                scan_id,
-                "analysis",
-                agent=agent_type,
-                index=i,
-                total=len(proposals),
-                resource_id=resource_name,
-                action_type=action.action_type.value,
-                message=(
-                    f"[{i}/{len(proposals)}] Analysing {resource_name} "
-                    f"for action {action.action_type.value}."
-                ),
-            )
-            await _emit_event(
-                scan_id,
-                "reasoning",
-                agent=agent_type,
-                resource_id=resource_name,
-                action_type=action.action_type.value,
-                message=f"Reasoning: {action.reason}",
-            )
-            await _emit_event(
-                scan_id,
-                "proposal",
-                agent=agent_type,
-                resource_id=resource_name,
-                action_type=action.action_type.value,
-                message=f"Proposing {action.action_type.value} on {resource_name}",
-            )
-            logger.info(
-                "scan %s (%s): evaluating %d/%d — %s %s",
-                scan_id[:8], agent_type, i, len(proposals),
-                action.action_type.value, resource_name,
-            )
-            await _emit_event(
-                scan_id, "evaluation",
-                agent=agent_type,
-                index=i, total=len(proposals),
-                resource_id=resource_name,
-                action_type=action.action_type.value,
-                message=f"[{i}/{len(proposals)}] Evaluating {action.action_type.value} on {resource_name}…",
-            )
-
-            # ── Phase 33B: Streaming or legacy evaluation ──────────────────
-            if settings.use_workflows:
-                # Workflow path: per-agent SSE events stream out as each of the
-                # 4 governance executors completes, then the verdict arrives last.
-                verdict = None
-                async for item in pipeline.evaluate_streaming(action):
-                    from src.core.models import GovernanceVerdict as _GV  # noqa: PLC0415
-                    if isinstance(item, _GV):
-                        verdict = item
-                    else:
-                        event_type, ev_kwargs = item
-                        await _emit_event(
-                            scan_id, event_type,
-                            agent=agent_type,
-                            index=i, total=len(proposals),
-                            **ev_kwargs,
-                        )
-                if verdict is None:
-                    raise RuntimeError(f"scan {scan_id[:8]}: workflow returned no verdict")
-            else:
-                verdict = await pipeline.evaluate(action)
-
-            decision = verdict.decision.value
-            sri = verdict.skry_risk_index.sri_composite
-
-            logger.info(
-                "scan %s (%s): verdict for %s — %s (SRI %.1f)",
-                scan_id[:8], agent_type, resource_name, decision, sri,
-            )
-            await _emit_event(
-                scan_id, "verdict",
-                agent=agent_type,
-                resource_id=resource_name,
-                decision=decision,
-                sri_composite=sri,
-                message=f"RuriSkry verdict: {decision.upper()} (SRI {sri:.1f}) — {resource_name}",
-            )
-
-            tracker.record(verdict)
-
-            # --- Execution Gateway (Phase 21) ---
-            # Routes verdict to IaC-safe execution path.
-            # Pass real resource tags so IaC-managed resources are detected and
-            # APPROVED verdicts route to Terraform PR, not manual_required.
-            # Wrapped in try/except — gateway failure must never break the scan.
-            try:
-                resource_tags = await _get_resource_tags(action.target.resource_id)
-                exec_record = await _get_execution_gateway().process_verdict(
-                    verdict, resource_tags
+            batch = proposals[batch_start : batch_start + _PROPOSAL_BATCH_SIZE]
+            batch_coros = [
+                _evaluate_proposal(
+                    scan_id, agent_type, action,
+                    index=batch_start + j + 1,
+                    total=total_proposals,
+                    pipeline=pipeline,
                 )
-                logger.info(
-                    "scan %s (%s): execution status=%s for %s",
-                    scan_id[:8], agent_type,
-                    exec_record.status.value, resource_name,
-                )
-                await _emit_event(
-                    scan_id, "execution",
-                    agent=agent_type,
-                    resource_id=resource_name,
-                    execution_id=exec_record.execution_id,
-                    execution_status=exec_record.status.value,
-                    iac_managed=exec_record.iac_managed,
-                    pr_url=exec_record.pr_url,
-                    message=(
-                        f"Execution: {exec_record.status.value}"
-                        + (f" — PR #{exec_record.pr_number}" if exec_record.pr_number else "")
-                        + (f" — {exec_record.notes}" if exec_record.notes and exec_record.status.value in ("failed", "manual_required") else "")
-                    ),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "scan %s (%s): execution gateway failed — %s "
-                    "(verdict still valid)",
-                    scan_id[:8], agent_type, exc,
-                )
+                for j, action in enumerate(batch)
+            ]
+            batch_results = await asyncio.gather(*batch_coros, return_exceptions=True)
 
-            verdict_id = verdict.action_id
-            logger.info(
-                "scan %s (%s): verdict %s persisted to audit trail",
-                scan_id[:8], agent_type, str(verdict_id)[:8],
-            )
-            await _emit_event(
-                scan_id, "persisted",
-                agent=agent_type,
-                verdict_id=str(verdict_id),
-                message=f"Verdict persisted to audit trail (ID: {str(verdict_id)[:8]}…)",
-            )
+            for result in batch_results:
+                if isinstance(result, BaseException):
+                    # Log and skip — one failed proposal must not abort the batch.
+                    logger.error(
+                        "scan %s (%s): proposal evaluation raised — %s",
+                        scan_id[:8], agent_type, result,
+                    )
+                    continue
 
-            evaluations.append(verdict.model_dump(mode="json"))
-            decision_lower = decision.lower()
-            if decision_lower == "approved":
-                approved += 1
-            elif decision_lower == "escalated":
-                escalated += 1
-            elif decision_lower == "approved_if":
-                approved_if += 1
-            else:
-                denied += 1
+                verdict, eval_dict = result
+                evaluations.append(eval_dict)
 
-            # --- Update Connected Agents panel ---
-            # Each call increments total_actions_proposed + the right verdict
-            # counter + refreshes last_seen in the AgentRegistry JSON file.
-            # Without this the dashboard card shows stale counts from the last
-            # A2A registration event.
-            registry_name = _AGENT_REGISTRY_NAMES.get(agent_type)
-            if registry_name:
-                _get_registry().update_agent_stats(registry_name, decision)
+                decision = verdict.decision.value
+                decision_lower = decision.lower()
+                if decision_lower == "approved":
+                    approved += 1
+                elif decision_lower == "escalated":
+                    escalated += 1
+                elif decision_lower == "approved_if":
+                    approved_if += 1
+                else:
+                    denied += 1
+
+                tracker.record(verdict)
+
+                # --- Update Connected Agents panel ---
+                registry_name = _AGENT_REGISTRY_NAMES.get(agent_type)
+                if registry_name:
+                    _get_registry().update_agent_stats(registry_name, decision)
+
+            # Persist after every completed batch (not per-proposal).
+            _persist_scan_record(scan_id)
 
         summary = f"{approved} approved, {escalated} escalated, {denied} denied, {approved_if} approved_if"
 
@@ -2468,10 +2556,27 @@ async def trigger_all_scans(
     _check_rate_limit(request.client.host if request.client else "unknown")
     rg = body.resource_group or settings.default_resource_group or None
     sub = body.subscription_id or settings.azure_subscription_id or None
+
+    # Fetch a single inventory snapshot up-front so all three agents share the
+    # same resource list.  This prevents divergent snapshots when inventory_mode
+    # is "refresh" (each agent would otherwise trigger its own full Azure refresh
+    # and could see different resource states).  A fast Cosmos read is safe here
+    # in the endpoint handler — it's synchronous and sub-second.
+    shared_inv: list[dict] | None = None
+    if sub:
+        try:
+            _inv_doc = _get_cosmos_inventory().get_latest(sub)
+            shared_inv = _inv_doc.get("resources", []) if _inv_doc else None
+        except Exception as _inv_exc:  # noqa: BLE001
+            logger.warning("/scan/all: could not pre-fetch shared inventory — %s", _inv_exc)
+
     scan_ids: list[str] = []
     for agent_type in ("cost", "monitoring", "deploy"):
         scan_id, _ = _make_scan_record(agent_type, rg)
-        background_tasks.add_task(_run_agent_scan, scan_id, agent_type, rg, sub, body.inventory_mode)
+        background_tasks.add_task(
+            _run_agent_scan, scan_id, agent_type, rg, sub,
+            body.inventory_mode, shared_inv,
+        )
         scan_ids.append(scan_id)
         logger.info("scan %s (%s) started via /scan/all rg=%s inv=%s", scan_id[:8], agent_type, rg, body.inventory_mode)
 

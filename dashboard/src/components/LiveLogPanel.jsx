@@ -152,9 +152,12 @@ export default function LiveLogPanel({ scanId, agentType, scanEntries, onClose, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, scanId, JSON.stringify(scanEntries)])
 
-  // Auto-scroll to bottom on new events
+  // Auto-scroll to bottom on new events.
+  // Use 'auto' (instant) instead of 'smooth' so the viewport always shows the
+  // newest event — smooth scrolling can't keep up when many events arrive at
+  // once (e.g., reconnecting to a mid-scan stream replays dozens of events).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({ behavior: 'auto' })
   }, [events])
 
   const handleClose = useCallback(() => {

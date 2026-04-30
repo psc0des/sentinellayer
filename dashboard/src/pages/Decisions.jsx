@@ -78,6 +78,11 @@ export default function Decisions() {
             <p className="text-sm text-slate-500 mt-1">
               Full history of governance verdicts — click any row to drill down
             </p>
+            <p className="text-xs text-slate-600 mt-1.5 flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber-500/70 shrink-0" />
+              The sidebar badge counts <strong className="text-slate-500">pending human reviews</strong> only (ESCALATED + APPROVED_IF).
+              Auto-approved verdicts are recorded here and in the Audit Log.
+            </p>
           </div>
 
           <DecisionTable

@@ -80,9 +80,21 @@ function statusColor(status) {
 // ── Export helpers ────────────────────────────────────────────────────────────
 
 function exportCSV(rows) {
-  const cols = ['scan_id', 'agent_type', 'status', 'started_at', 'completed_at', 'proposals_count', 'evaluations_count']
+  const cols = ['scan_id', 'agent_type', 'status', 'started_at', 'completed_at', 'proposals_count', 'evaluations_count', 'approved_count', 'escalated_count', 'denied_count', 'approved_if_count', 'total_resources_scanned', 'error_message']
   const header = cols.join(',')
-  const lines  = rows.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(','))
+  const lines  = rows.map(r => {
+    const totals = r.totals ?? {}
+    const extended = {
+      ...r,
+      approved_count:         totals.approved    ?? 0,
+      escalated_count:        totals.escalated   ?? 0,
+      denied_count:           totals.denied      ?? 0,
+      approved_if_count:      totals.approved_if ?? 0,
+      total_resources_scanned: r.scanned_resources_count ?? 0,
+      error_message:          r.scan_error ?? '',
+    }
+    return cols.map(c => JSON.stringify(extended[c] ?? '')).join(',')
+  })
   const blob   = new Blob([header + '\n' + lines.join('\n')], { type: 'text/csv' })
   downloadBlob(blob, 'ruriskry-scans.csv')
 }

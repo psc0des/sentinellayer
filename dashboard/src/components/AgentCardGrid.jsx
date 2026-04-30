@@ -356,7 +356,7 @@ function AgentCard({ agent, agentType, scan, onStart, onStop, onViewLive, onView
       {/* Total actions + bar */}
       <div>
         <span className="text-2xl font-bold text-white tabular-nums">{total}</span>
-        <span className="text-xs text-slate-500 ml-1.5">actions proposed</span>
+        <span className="text-xs text-slate-500 ml-1.5">total proposals (all-time)</span>
       </div>
       <div className="space-y-1.5">
         <div className="flex h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(30,41,59,0.8)' }}>

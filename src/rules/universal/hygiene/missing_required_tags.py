@@ -14,6 +14,17 @@ _SKIP_TYPES = {
     "microsoft.insights/diagnosticsettings",
     "microsoft.authorization/roleassignments",
     "microsoft.authorization/roledefinitions",
+    "microsoft.operationsmanagement/solutions",
+    "microsoft.network/networkwatchers/flowlogs",
+    # Child resources — inherit ownership from parent, tagging independently is noise
+    "microsoft.compute/disks",
+    "microsoft.network/networkinterfaces",
+    "microsoft.insights/scheduledqueryrules",
+    "microsoft.insights/activitylogalerts",
+    "microsoft.insights/datacollectionrules",
+    "microsoft.devtestlab/schedules",
+    "microsoft.maintenance/maintenanceconfigurations",
+    "microsoft.compute/snapshots",
 }
 
 

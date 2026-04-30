@@ -25,6 +25,7 @@ import GlowCard from '../components/magicui/GlowCard'
 import VerdictBadge from '../components/magicui/VerdictBadge'
 import TableSkeleton from '../components/magicui/TableSkeleton'
 import WorkflowDiagram from '../components/WorkflowDiagram'
+import CoverageStatusBanner from '../components/CoverageStatusBanner'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -404,6 +405,9 @@ export default function Overview() {
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+
+      {/* ── API coverage warnings (mirrors Agents page) ── */}
+      <CoverageStatusBanner />
 
       {/* ── Status banner ── */}
       <GlowCard

@@ -57,6 +57,25 @@ _DEFAULT_RESOURCES_PATH = (
 )
 
 
+async def query_resources_async(kql: str) -> list[dict]:
+    """Execute a raw KQL query against Azure Resource Graph (async).
+
+    In mock mode returns an empty list (no real API to call).
+    In Azure mode executes the KQL and returns the raw result rows.
+    Raises on authentication or network errors so callers can surface the issue.
+    """
+    client = ResourceGraphClient()
+    if client.is_mock:
+        return []
+    from azure.mgmt.resourcegraph.models import QueryRequest  # type: ignore[import]
+    request = QueryRequest(
+        subscriptions=[client._cfg.azure_subscription_id],
+        query=kql,
+    )
+    response = await client._async_rg_client.resources(request)
+    return list(response.data or [])
+
+
 class ResourceGraphClient:
     """Query Azure resource topology from Resource Graph or local JSON seed data.
 
