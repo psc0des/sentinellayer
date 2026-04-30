@@ -173,7 +173,7 @@ All endpoints are `async def` (FastAPI manages the event loop).
 | POST | `/api/scan/cost` | Start a background cost agent scan |
 | POST | `/api/scan/monitoring` | Start a background monitoring agent scan |
 | POST | `/api/scan/deploy` | Start a background deploy agent scan |
-| POST | `/api/scan/all` | Start background scans for all three agents |
+| POST | `/api/scan/all` | Start background scans for all three agents. Pre-fetches a single shared inventory snapshot from Cosmos before launching tasks — all three agents operate on identical resource data within the same session. |
 | GET | `/api/scan-history` | List all scan runs newest-first — operational audit log (one record per scan execution). Query: `limit` (1–500, default 50), `offset` (default 0) |
 | GET | `/api/scan/{scan_id}/status` | Poll the status and results of a background scan |
 | GET | `/api/scan/{scan_id}/stream` | SSE stream of real-time scan progress events |
@@ -507,7 +507,7 @@ Empty body `{}` is also accepted.
 | `POST /api/scan/cost` | `CostOptimizationAgent` |
 | `POST /api/scan/monitoring` | `MonitoringAgent` |
 | `POST /api/scan/deploy` | `DeployAgent` |
-| `POST /api/scan/all` | All three, as independent background tasks |
+| `POST /api/scan/all` | All three, sharing one pre-fetched inventory snapshot |
 
 ---
 

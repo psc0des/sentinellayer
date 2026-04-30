@@ -113,7 +113,7 @@ build_coverage_manifest(inventory, findings, categories)
     │
     ▼
 CoverageManifestPanel (UI) — visible in scan log viewer
-CoverageStatusBanner  (UI) — amber warning on Agents page when APIs degrade
+CoverageStatusBanner  (UI) — amber warning on Overview + Agents pages when APIs degrade
 ```
 
 **Config flag:** `USE_RULES_ENGINE=false` (env) → `use_rules_engine: bool` in `config.py` opts out.
@@ -610,15 +610,28 @@ POST /api/scan/cost
     ↓
 _run_agent_scan(scan_id, "cost", resource_group)     ← background asyncio task
     │
+    ├── register_agent(name)                                   ← update last_seen at scan START
     ├── _persist_scan_record(scan_id, {status: "running"})     ← write-through cache
     ├── agent.scan(resource_group)                             ← ops agent investigation
     │   ├── event → asyncio.Queue (producer)                   ← 9 event types
-    │   └── pipeline.evaluate(proposal) for each proposal
+    │   └── proposals[]                                        ← list of ProposedActions
+    │
+    ├── [batch loop] asyncio.gather(_evaluate_proposal × PROPOSAL_BATCH_SIZE)
+    │       ← proposals evaluated PROPOSAL_BATCH_SIZE (default 4) at a time in parallel
+    │       ← cancellation checked before each batch
+    │
     ├── _persist_scan_record(scan_id, {status: "complete"})
     │
 GET /api/scan/{id}/stream                            ← SSE consumer
     └── reads from asyncio.Queue → yields Server-Sent Events
         (late connections receive buffered events)
+
+POST /api/scan/all
+    ├── CosmosInventoryClient.get_latest(subscription_id)      ← ONE shared snapshot
+    ├── _run_agent_scan(cost_id,   "cost",       ..., shared_inventory=snapshot)
+    ├── _run_agent_scan(monitor_id,"monitoring", ..., shared_inventory=snapshot)
+    └── _run_agent_scan(deploy_id, "deploy",     ..., shared_inventory=snapshot)
+        all three agents see identical resource data within the session
 ```
 
 **Key design decisions:**
@@ -627,8 +640,19 @@ GET /api/scan/{id}/stream                            ← SSE consumer
   in-memory `_scans` dict is the fast path; `ScanRunTracker` is the durable fallback.
 - **asyncio.Queue bridges producer↔consumer** — the background task pushes events; the SSE
   generator awaits them. Events are buffered for late-connecting clients.
+- **Parallel proposal evaluation** — proposals are batched and evaluated with `asyncio.gather`
+  (`PROPOSAL_BATCH_SIZE` env var, default 4). Cancellation is checked before each batch, not
+  per-proposal. `tracker.record()` and `update_agent_stats()` run in the main loop after gather
+  to avoid concurrent writes to shared state. At batch=4, a 35-proposal scan drops from ~19 min
+  to ~5 min evaluation time.
+- **Shared inventory for Run All Agents** — `POST /api/scan/all` pre-fetches one Cosmos snapshot
+  before starting background tasks. All three agents receive it as `shared_inventory` and skip
+  their own fetch. Eliminates the case where Cost, Monitoring, and Deploy each see different
+  cached inventory states.
 - **Cancellation** — `PATCH /api/scan/{id}/cancel` sets a flag; the background task checks
-  it before each proposal evaluation and stops cleanly.
+  it before each proposal batch and stops cleanly.
+- **`last_seen` at scan start** — `register_agent()` is called at the top of `_run_agent_scan`
+  (not only at completion), so agent cards show a live timestamp during active scans.
 
 ---
 

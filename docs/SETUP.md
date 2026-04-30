@@ -741,6 +741,8 @@ Env vars and secrets are wired automatically by Terraform — you don't ship a `
 | `USE_LOCAL_MOCKS` | No | `false` | `false` = live Azure (production default). `true` = local JSON files for offline dev. Startup logs a prominent `⚠ MOCK MODE ACTIVE` warning when true. |
 | `USE_LIVE_TOPOLOGY` | No | `false` | `true` = governance agents query Azure Resource Graph for real dependency topology and SKU cost (Phase 19). Only effective when `USE_LOCAL_MOCKS=false` and `AZURE_SUBSCRIPTION_ID` is set. |
 | `USE_WORKFLOWS` | No | `true` | `true` (default as of Phase 33D) = pipeline uses the 7-executor WorkflowBuilder graph with ConditionGate and checkpointing. `false` = legacy `asyncio.gather()` path (deprecated — will be removed in a future release). |
+| `PROPOSAL_BATCH_SIZE` | No | `4` | Number of proposals evaluated concurrently via `asyncio.gather` inside each agent scan. Increase for faster scans on well-provisioned LLM endpoints; decrease if hitting 429 rate limits. A 35-proposal Deploy scan runs eval in ~5 min at batch=4 vs ~19 min sequential. |
+| `USE_RULES_ENGINE` | No | `true` | `true` = 34-rule deterministic engine runs before every LLM call (Phase 40 default). `false` = rules engine disabled; agents fall back to LLM-only discovery (pre-Phase 40 behaviour). |
 | `AZURE_OPENAI_ENDPOINT` | Live only | — | Foundry endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT` | Live only | `gpt-4.1-mini` | Model deployment name (set via `foundry_deployment_name` in terraform.tfvars) |
 | `AZURE_SEARCH_ENDPOINT` | Live only | — | Azure AI Search endpoint |

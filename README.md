@@ -122,7 +122,7 @@ against a self-registering `@rule` decorator registry. Rules are organised into 
 - **Layer 2 — Microsoft API enrichment:** Azure Advisor, Defender for Cloud, Policy Insights,
   Resource Health — require `Reader` (or richer roles). A preflight check at `GET /api/coverage/status`
   reports which APIs are accessible; 403 responses surface the missing role in an amber
-  `CoverageStatusBanner` on the Agents page.
+  `CoverageStatusBanner` on the Overview and Agents pages.
 - **Layer 3 — Type-aware rules (TYPE-*):** 8 rules that inspect deep service-specific schema
   fields — NSG inbound rules (SSH/RDP exposed to internet), AKS autoscaler state, SQL failover
   groups, Cosmos auto-failover, App Service client certs.
@@ -174,6 +174,8 @@ Agent scans are persisted to **Cosmos DB** (or local JSON) and survive server re
 `GET /api/scan/{id}/stream` provides **Server-Sent Events** for real-time scan progress —
 9 event types from discovery through verdict. Late-connecting clients receive buffered events.
 Scans are cancellable via `PATCH /api/scan/{id}/cancel`.
+
+Proposals are evaluated in **configurable parallel batches** (`PROPOSAL_BATCH_SIZE` env var, default 4) using `asyncio.gather` — a 35-proposal Deploy scan drops from ~19 min sequential to ~5 min evaluation time. `POST /api/scan/all` pre-fetches one shared inventory snapshot so all three agents operate on identical resource data.
 
 ### Slack Notifications
 DENIED and ESCALATED verdicts trigger an instant **Slack message** via Incoming Webhook —
@@ -242,7 +244,7 @@ Every plan is stamped with a **Remediation Confidence badge** shown next to the 
 - **Guided manual** (amber) — exact steps provided; human runs them
 - **Manual** (grey) — investigation required
 
-The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1243 tests pass, no Azure/OpenAI required) and live mode.
+The generic PATCH tool (`update_resource_property`) covers storage `allowBlobPublicAccess`, Key Vault `enableSoftDelete`, App Service `httpsOnly`, database `publicNetworkAccess`, and hundreds of other property-level fixes that previously fell to "manual required". Works in mock mode (1397 tests pass, no Azure/OpenAI required) and live mode.
 
 <p align="center">
   <img src="docs/screenshots/execution-status.png" alt="Execution Status — LLM-Driven Fix with Live Terminal" width="100%">
@@ -493,7 +495,7 @@ python examples/demo_live.py                # two-layer intelligence demo
 ### Run Tests
 
 ```bash
-# Expected: 1243 passed, 0 failed
+# Expected: 1397 passed, 0 failed
 # Tests use mock mode by default — no Azure credentials needed.
 pytest tests/ -v
 
@@ -620,7 +622,7 @@ challenge track: *Automate and Optimize Software Delivery — Leverage Agentic D
 Since its hackathon origins, the project has matured into a production-grade governance engine
 with fully async internals, live Azure topology analysis (Resource Graph + Retail Prices API),
 durable Cosmos DB audit trails, Slack alerting, explainable AI with counterfactual
-drilldowns, and a comprehensive 1243-test suite.
+drilldowns, and a comprehensive 1397-test suite.
 
 ---
 
