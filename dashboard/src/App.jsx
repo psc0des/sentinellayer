@@ -9,7 +9,7 @@
  *   - Render the left Sidebar and top header bar
  */
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   BrowserRouter,
   Routes,
@@ -169,6 +169,30 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   const [slackStatus,     setSlackStatus]     = useState(null)
   const [slackBtnLabel,   setSlackBtnLabel]   = useState('Slack Connected')
 
+  // Stabilized alert badge — decreases are delayed 6 s so a single-poll dip
+  // (backend processing race) doesn't cause a visible flash in the sidebar.
+  const [alertCount, setAlertCount] = useState(0)
+  const alertDecreaseTimerRef = useRef(null)
+  const nextAlertCountRef     = useRef(0)
+  useEffect(() => {
+    const newCount = alerts.filter(a => a.status === 'pending' || a.status === 'investigating').length
+    setAlertCount(prev => {
+      if (newCount >= prev) {
+        if (alertDecreaseTimerRef.current) { clearTimeout(alertDecreaseTimerRef.current); alertDecreaseTimerRef.current = null }
+        return newCount
+      }
+      nextAlertCountRef.current = newCount
+      if (!alertDecreaseTimerRef.current) {
+        alertDecreaseTimerRef.current = setTimeout(() => {
+          setAlertCount(nextAlertCountRef.current)
+          alertDecreaseTimerRef.current = null
+        }, 6000)
+      }
+      return prev
+    })
+  }, [alerts])
+  useEffect(() => () => { if (alertDecreaseTimerRef.current) clearTimeout(alertDecreaseTimerRef.current) }, [])
+
   // Onboarding modal: shown once after fresh Setup → login flow.
   // Dismissed state is persisted to localStorage so it never appears again.
   const [showOnboarding, setShowOnboarding] = useState(
@@ -246,7 +270,6 @@ function AppShell({ loggedInUser, onLogout, isNewSetup }) {
   if (loading) return <LoadingScreen />
   if (error)   return <ErrorScreen message={error} onRetry={load} />
 
-  const alertCount = alerts.filter(a => a.status === 'pending' || a.status === 'investigating').length
   const context = { evaluations, scans, alerts, metrics, agents, pendingReviews, inventoryStatus, fetchAll, loggedInUser, dataReady }
 
   return (

@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom'
 import { fetchScanHistory, cancelScan } from '../api'
 import {
   RefreshCw, CheckCircle, AlertTriangle, ChevronRight,
-  ScrollText, Filter, XCircle, Square,
+  ScrollText, Filter, XCircle, Square, Download,
 } from 'lucide-react'
 import TableSkeleton from './magicui/TableSkeleton'
 
@@ -110,6 +110,33 @@ function toScanStateKey(agentType) {
   return null
 }
 
+// ── CSV export ───────────────────────────────────────────────────────────────
+
+function exportCSV(rows) {
+  const cols = ['scan_id', 'agent_type', 'status', 'started_at', 'completed_at', 'proposals_count', 'evaluations_count', 'approved_count', 'escalated_count', 'denied_count', 'approved_if_count', 'total_resources_scanned', 'error_message']
+  const header = cols.join(',')
+  const lines = rows.map(r => {
+    const totals = r.totals ?? {}
+    const extended = {
+      ...r,
+      approved_count:          totals.approved    ?? 0,
+      escalated_count:         totals.escalated   ?? 0,
+      denied_count:            totals.denied      ?? 0,
+      approved_if_count:       totals.approved_if ?? 0,
+      total_resources_scanned: r.scanned_resources_count ?? 0,
+      error_message:           r.scan_error ?? '',
+    }
+    return cols.map(c => JSON.stringify(extended[c] ?? '')).join(',')
+  })
+  const blob = new Blob([header + '\n' + lines.join('\n')], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'scan-history.csv'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey = 0 }) {
@@ -202,6 +229,16 @@ export default function ScanHistoryTable({ onViewLog, scanState = {}, refreshKey
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
+
+          {/* Export CSV */}
+          <button
+            onClick={() => exportCSV(filtered)}
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors px-2 py-1 rounded border border-slate-700 hover:border-slate-600"
+            title="Export visible rows as CSV"
+            disabled={filtered.length === 0}
+          >
+            <Download className="w-3 h-3" /> CSV
+          </button>
 
           {/* Refresh */}
           <button
